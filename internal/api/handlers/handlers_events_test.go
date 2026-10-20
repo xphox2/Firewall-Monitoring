@@ -158,12 +158,13 @@ func TestGetNetEventRollups_Shape(t *testing.T) {
 	var resp struct {
 		Success bool `json:"success"`
 		Data    struct {
-			PolicyHits    []json.RawMessage `json:"policy_hits"`
-			PolicyBytes   []json.RawMessage `json:"policy_bytes"`
-			Deny          []json.RawMessage `json:"deny"`
-			AppCategories []json.RawMessage `json:"app_categories"`
-			Directions    []json.RawMessage `json:"directions"`
-			Rulesets      []json.RawMessage `json:"rulesets"`
+			PolicyHits      []json.RawMessage `json:"policy_hits"`
+			PolicyBytes     []json.RawMessage `json:"policy_bytes"`
+			PolicyBytesFrom string            `json:"policy_bytes_from"`
+			Deny            []json.RawMessage `json:"deny"`
+			AppCategories   []json.RawMessage `json:"app_categories"`
+			Directions      []json.RawMessage `json:"directions"`
+			Rulesets        []json.RawMessage `json:"rulesets"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -185,6 +186,11 @@ func TestGetNetEventRollups_Shape(t *testing.T) {
 		if s == nil {
 			t.Fatalf("%s is null, want []", name)
 		}
+	}
+	// No retrofit marker on a normal install: the key is present and empty, so
+	// the UI never shows a "repaired from" date.
+	if resp.Data.PolicyBytesFrom != "" {
+		t.Fatalf("policy_bytes_from = %q, want empty without a marker", resp.Data.PolicyBytesFrom)
 	}
 }
 

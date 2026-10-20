@@ -496,6 +496,47 @@ func seedRollupRow(t *testing.T, db *Database, day time.Time, devID uint, ruleKe
 	}
 }
 
+// TestNetEventRollupStats_PolicyBytesRetrofitFloor: the optional
+// net_event_rollup_bytes_valid_from marker starts the byte series at the first
+// repaired day while the other series keep the full window.
+func TestNetEventRollupStats_PolicyBytesRetrofitFloor(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	today := utcDay(time.Now())
+	old := today.AddDate(0, 0, -10)
+
+	seedRollupRow(t, db, old, 1, "u:old", 1, 2, "Web", "root", 10, 1000, 2000)
+	seedRollupRow(t, db, today, 1, "u:new", 1, 2, "Web", "root", 5, 500, 1000)
+	if err := db.UpsertSetting(&models.SystemSetting{
+		Key: netEventRollupBytesValidFromKey, Value: today.Format(time.DateOnly),
+		Category: "system", Type: "string",
+	}); err != nil {
+		t.Fatalf("store marker: %v", err)
+	}
+
+	stats, err := db.NetEventRollupStats(NetEventRollupFilter{Days: 30})
+	if err != nil {
+		t.Fatalf("NetEventRollupStats: %v", err)
+	}
+	if stats.PolicyBytesFrom != today.Format(time.DateOnly) {
+		t.Fatalf("PolicyBytesFrom = %q, want %q", stats.PolicyBytesFrom, today.Format(time.DateOnly))
+	}
+	if len(stats.PolicyBytes) != 1 || stats.PolicyBytes[0].Day != today.Format(time.DateOnly) {
+		t.Fatalf("policy_bytes = %+v, want only today", stats.PolicyBytes)
+	}
+	// The ranking (hits) is not clamped: both rules remain, but the byte
+	// columns obey the floor too (the pre-floor rule reports zeros, not the
+	// old inflated sum).
+	if len(stats.PolicyHits) != 2 {
+		t.Fatalf("policy_hits = %+v, want both rules (counts are not affected by the byte bug)", stats.PolicyHits)
+	}
+	if r := stats.PolicyHits[0]; r.RuleKey != "u:old" || r.Hits != 10 || r.BytesIn != 0 || r.BytesOut != 0 {
+		t.Fatalf("policy_hits[0] = %+v, want u:old (10 hits, byte columns clamped to 0)", r)
+	}
+	if r := stats.PolicyHits[1]; r.RuleKey != "u:new" || r.Hits != 5 || r.BytesIn != 500 || r.BytesOut != 1000 {
+		t.Fatalf("policy_hits[1] = %+v, want u:new 5/500/1000", r)
+	}
+}
+
 // TestNetEventRollupStats_GroupingAndSums seeds a small rollup across two days
 // and two devices and asserts every series' sums and grouping.
 func TestNetEventRollupStats_GroupingAndSums(t *testing.T) {

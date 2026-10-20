@@ -993,8 +993,17 @@
     }
 
     function renderAnalytics(d) {
-        // Policy bytes: one line per direction of bytes, per day.
+        // Policy bytes: one line per direction of bytes, per day. FortiGate
+        // "accept" records repeat cumulative session counters, so ingest only
+        // stores bytes on records that end a session; a day's figure is what
+        // closed that day. A retrofit marker (policy_bytes_from) starts the
+        // series at the first day rebuilt from corrected data.
         var pb = d.policy_bytes || [];
+        var pbHint = document.getElementById('events-policy-bytes-hint');
+        if (pbHint) {
+            pbHint.textContent = 'per day · bytes at session close' +
+                (d.policy_bytes_from ? ' · repaired from ' + d.policy_bytes_from : '');
+        }
         eventsChart('events-policy-bytes-chart', 'line', pb.map(function(b) { return b.day; }), [
             { label: 'In', data: pb.map(function(b) { return b.bytes_in; }), borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.12)', fill: true, tension: 0.3 },
             { label: 'Out', data: pb.map(function(b) { return b.bytes_out; }), borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.12)', fill: true, tension: 0.3 }

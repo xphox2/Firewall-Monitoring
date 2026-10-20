@@ -168,6 +168,21 @@ or its recompute failed three cycles running;
 `fwmon_net_event_rollup_day_skips_total` counts the latter). Raw syslog
 retention is unchanged by any of this.
 
+**Byte counts are session totals, not per-log deltas (0.11.329).** FortiOS
+repeats a session's cumulative `sentbyte`/`rcvdbyte` on every `accept`
+(start/update) traffic log, so ingest stores bytes only on records that end the
+session (`close`, `client-rst`/`server-rst`, `timeout`, `deny`, `ip-conn`,
+`dns`); an open session reports no byte count until it closes. Summing every
+log instead counted a long-lived session once per update — one production
+session logged its 63 GB total roughly 700 times a day — and inflated the
+`net_events` / `net_event_rollups` byte sums and the Events page's Policy Bytes
+chart by orders of magnitude. Counts (hits, distinct sources, app categories)
+are unaffected. On an install that collected rows before 0.11.329 the
+already-written rollup bytes cannot be corrected from the aggregates; set
+`net_event_rollup_bytes_valid_from` while repairing (see
+[OPERATIONS.md](OPERATIONS.md#repairing-the-pre-011329-policy-bytes-history))
+so the byte series starts at the first rebuilt day.
+
 **Raw archive retention gate (0.11.304).** With `ARCHIVE_SYSLOG_ENABLED` /
 `ARCHIVE_FLOWS_ENABLED` on, the windows above still decide *when* a raw
 `syslog_messages`, `flow_samples` or `flow_if_counters` row may go, but it is
