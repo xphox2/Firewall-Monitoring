@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.336] - 2026-10-20
+
+### Added — Device telemetry charts in the Admin UI V2 preview
+
+- The device detail page now renders the classic console's uPlot charts (same engine, same palette) instead of numbers only:
+  - **System Overview** (CPU / memory / disk %), **Network Throughput** (in/out), and **CPU Breakdown** (user/system/nice/iowait/irq/softirq/idle) over 1h/6h/12h/24h/7d/30d/90d/365d.
+  - **Per-interface traffic** from the SNMP and sFlow counter series, choosing sFlow only when it is at least as fresh as SNMP (the classic console's rule), with cumulative octet counters converted to per-interval throughput so counter resets cannot produce negative spikes.
+  - **Per-tunnel traffic** via the VPN *group* endpoint, so a logical tunnel's counters are aggregated across its provisioned/dialup rows rather than charting one fractional row.
+- Added `uplot` (the engine already used by the classic console) and a reusable `<TimeSeriesChart>` wrapper with resize handling, theme-aware axes, and a `lib/chart.ts` conversion layer (17 unit tests; suite now 51).
+- `ParseChartWindow` now accepts the `6h`, `12h` and `365d` presets (previously they silently served a 24h window).
+- Removed the duplicate uPlot stylesheet from the V2 page (it is bundled with the console CSS now).
+- Still classic-only on the device page: the config diff viewer, HA, SD-WAN, ping SLA, AV/IPS/web-filter and licence panels, and per-core CPU/disk/load — tracked in `docs/V2-PARITY.md`.
+
 ## [0.11.335] - 2026-10-20
 
 ### Added — Event rule authoring in the Admin UI V2 preview

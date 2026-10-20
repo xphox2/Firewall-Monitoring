@@ -43,6 +43,9 @@ V2:
 - **v0.11.335** — Event rule create/edit/delete with a condition builder, source-specific
   dampening and preview. Event rule **profile** management (create/clone, On/Off/Inherit
   matrix, site/device assignments) is still classic-only.
+- **v0.11.336** — Device telemetry charts (system/network/CPU over 8 ranges), per-interface
+  traffic (SNMP + sFlow) and per-tunnel traffic (VPN group). Device config diff, HA,
+  SD-WAN, ping SLA, security/licence panels and per-core CPU/disk/load remain classic-only.
 
 ## Top gaps
 

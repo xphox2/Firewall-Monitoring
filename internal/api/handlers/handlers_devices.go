@@ -845,8 +845,8 @@ func (h *Handler) GetDeviceStatusHistory(c *gin.Context) {
 
 	// Zoom window (v0.11.270): ?from=&to= in epoch milliseconds, the range the
 	// user selected on the chart. Parsed here rather than by
-	// httputil.ParseChartWindow, whose preset table lacks 6h/12h/365d and
-	// which falls back to a 24h window on junk; a malformed window is a 400.
+	// httputil.ParseChartWindow, which silently falls back to a 24h window on a
+	// malformed window; this endpoint wants an explicit 400 instead.
 	// The response echoes the window actually served (clamped).
 	if c.Query("from") != "" {
 		fromMs, errF := strconv.ParseInt(c.Query("from"), 10, 64)
