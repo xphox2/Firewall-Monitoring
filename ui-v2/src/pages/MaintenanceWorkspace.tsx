@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Plus, Trash2, Edit3, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { formatDateTime } from '@/lib/utils';
+import { fromLocalInput, toLocalInput } from '@/lib/datetime';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
@@ -45,19 +46,27 @@ export function MaintenanceWorkspace() {
   const [editing, setEditing] = useState<Partial<MaintenanceWindow>>({
     name: '',
     notes: '',
-    start_time: new Date().toISOString().slice(0, 16),
-    end_time: new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 16),
+    start_time: toLocalInput(),
+    end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
     suppress_all: true,
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const startIso = fromLocalInput(editing.start_time);
+      const endIso = fromLocalInput(editing.end_time);
+      if (!startIso || !endIso) {
+        throw new Error('Start and end times are required');
+      }
+      if (new Date(endIso) <= new Date(startIso)) {
+        throw new Error('End time must be after the start time');
+      }
       const payload = {
         ...editing,
         notes: editing.notes ?? editing.description ?? '',
         suppress_all: editing.suppress_all ?? editing.suppress_alerts ?? true,
-        start_time: new Date(editing.start_time || Date.now()).toISOString(),
-        end_time: new Date(editing.end_time || Date.now() + 3600_000).toISOString(),
+        start_time: startIso,
+        end_time: endIso,
       };
       if (editing.id) {
         return apiFetch(`/admin/api/maintenance-windows/${editing.id}`, {
@@ -151,8 +160,8 @@ export function MaintenanceWorkspace() {
                   ...row.original,
                   notes: row.original.notes ?? row.original.description ?? '',
                   suppress_all: row.original.suppress_all ?? row.original.suppress_alerts ?? true,
-                  start_time: row.original.start_time?.slice(0, 16),
-                  end_time: row.original.end_time?.slice(0, 16),
+                  start_time: toLocalInput(row.original.start_time),
+                  end_time: toLocalInput(row.original.end_time),
                 });
                 setDrawerOpen(true);
               }}
@@ -196,8 +205,8 @@ export function MaintenanceWorkspace() {
             setEditing({
               name: '',
               notes: '',
-              start_time: new Date().toISOString().slice(0, 16),
-              end_time: new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 16),
+              start_time: toLocalInput(),
+              end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
               suppress_all: true,
             });
             setDrawerOpen(true);

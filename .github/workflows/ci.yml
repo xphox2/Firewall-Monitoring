@@ -312,3 +312,41 @@ jobs:
             git --no-pager diff -- cmd/api/static/css/tailwind.css
             exit 1
           fi
+
+  ui-v2-freshness:
+    name: Admin UI V2 bundle freshness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The V2 console is compiled from ui-v2/ into cmd/api/static/v2/ and
+      # embedded with //go:embed. `go build` happily embeds whatever is
+      # committed, so without this gate a source change that never ran
+      # `make ui-v2` ships an old bundle — the same regression class the
+      # tailwind-freshness job exists to prevent.
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+
+      - name: Install deps
+        working-directory: ui-v2
+        run: npm ci
+
+      - name: Typecheck and build
+        working-directory: ui-v2
+        run: npm run build
+
+      - name: Fail if committed V2 bundle is stale
+        run: |
+          if ! git diff --quiet -- cmd/api/static/v2; then
+            echo "::error::cmd/api/static/v2 is out of date — run 'make ui-v2' and commit the regenerated bundle."
+            git --no-pager diff --stat -- cmd/api/static/v2
+            exit 1
+          fi

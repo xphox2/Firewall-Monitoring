@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ScrollText, Search, Filter } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -11,7 +11,7 @@ interface SyslogRow {
   id: number;
   timestamp: string;
   device_id?: number;
-  device_name?: string;
+  hostname?: string;
   source_ip?: string;
   severity: number;
   facility?: number;
@@ -33,13 +33,20 @@ export function SyslogWorkspace() {
   const [severityFilter, setSeverityFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Full-text search is a LIKE scan over the retention window (the handler says
+  // so itself). Debounce so typing "severity" does not fire eight scans.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const { data: syslogRes, isLoading } = useQuery({
-    queryKey: ['raw-syslog', severityFilter, searchQuery],
+    queryKey: ['raw-syslog', severityFilter, debouncedSearch],
     queryFn: () => {
       const params = new URLSearchParams({ limit: '100' });
       if (severityFilter !== '') params.set('severity', severityFilter);
-      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
       return apiFetch<any>(`/admin/api/syslog?${params.toString()}`);
     },
     refetchInterval: 15_000,
@@ -79,11 +86,11 @@ export function SyslogWorkspace() {
         },
       },
       {
-        accessorKey: 'device_name',
+        accessorKey: 'hostname',
         header: 'Source',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.device_name || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
+            {row.original.hostname || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
           </span>
         ),
       },
@@ -152,7 +159,7 @@ export function SyslogWorkspace() {
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="font-mono text-xs font-semibold text-accent">
-                {msg.device_name || msg.source_ip}
+                {msg.hostname || msg.source_ip}
               </span>
               <span className="font-mono text-[11px] text-text-dim">
                 {formatRelativeTime(msg.timestamp)}

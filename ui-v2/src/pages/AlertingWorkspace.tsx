@@ -15,6 +15,7 @@ import {
   FlaskConical,
 } from 'lucide-react';
 import { apiFetch, ApiError, type MeResponse } from '@/lib/api';
+import { buildAlertPolicyBody, type AlertPolicy } from '@/lib/alert-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -42,27 +43,6 @@ interface AlertOverviewResponse {
   }>;
 }
 
-interface AlertPolicy {
-  id: number;
-  name: string;
-  description?: string;
-  is_default?: boolean;
-  email_enabled?: boolean;
-  slack_enabled?: boolean;
-  discord_enabled?: boolean;
-  teams_enabled?: boolean;
-  webhook_enabled?: boolean;
-  pagerduty_enabled?: boolean;
-  opsgenie_enabled?: boolean;
-  email_recipients?: string;
-  cooldown_minutes?: number;
-  rules?: Array<{
-    alert_type: string;
-    enabled: boolean;
-    min_severity?: string;
-  }>;
-}
-
 interface EventRuleProfile {
   id: number;
   name: string;
@@ -79,7 +59,7 @@ interface EventRule {
   description?: string;
   enabled: boolean;
   priority: number;
-  vendor?: string;
+  vendor_scope?: string;
   action: 'alert' | 'suppress' | 'customize';
   alert_type?: string;
   severity?: string;
@@ -498,15 +478,17 @@ export function AlertingWorkspace() {
   // SUB-TAB 2: Event Rules & Live Tester Drawer State
   // =========================================================================
   const [testerOpen, setTesterOpen] = useState(false);
-  const [testSampleLog, setTestSampleLog] = useState('');
+  const [testMatchJson, setTestMatchJson] = useState('');
   const [testResultJson, setTestResultJson] = useState<any>(null);
 
   const handleRunRuleTest = async () => {
-    if (!testSampleLog.trim()) return;
+    if (!testMatchJson.trim()) return;
     try {
+      // TestEventRule binds match_json and evaluates it against recent syslog;
+      // raw_message was ignored, so every "test" compiled a match-all rule.
       const res = await apiFetch('/admin/api/event-rules/test', {
         method: 'POST',
-        body: { raw_message: testSampleLog },
+        body: { match_json: testMatchJson.trim() },
       });
       setTestResultJson(res);
     } catch (err) {
@@ -537,12 +519,12 @@ export function AlertingWorkspace() {
       setPolicyName(pol.name || '');
       setPolicyDesc(pol.description || '');
       setPolicyCooldown(String(pol.cooldown_minutes ?? 15));
-      setPolicyEmail(!!pol.email_enabled);
-      setPolicySlack(!!pol.slack_enabled);
-      setPolicyDiscord(!!pol.discord_enabled);
-      setPolicyTeams(!!pol.teams_enabled);
-      setPolicyWebhook(!!pol.webhook_enabled);
-      setPolicyPagerduty(!!pol.pagerduty_enabled);
+      setPolicyEmail(!!pol.notify_email);
+      setPolicySlack(!!pol.notify_slack);
+      setPolicyDiscord(!!pol.notify_discord);
+      setPolicyTeams(!!pol.notify_teams);
+      setPolicyWebhook(!!pol.notify_webhook);
+      setPolicyPagerduty(!!pol.notify_pagerduty);
       setPolicyRecipients(pol.email_recipients || '');
     } else {
       setEditingPolicy({ id: 0, name: '' });
@@ -568,18 +550,18 @@ export function AlertingWorkspace() {
     }
     setSavingPolicy(true);
     try {
-      const body = {
-        name: policyName.trim(),
-        description: policyDesc.trim(),
-        cooldown_minutes: Number(policyCooldown) || 15,
-        email_enabled: policyEmail,
-        slack_enabled: policySlack,
-        discord_enabled: policyDiscord,
-        teams_enabled: policyTeams,
-        webhook_enabled: policyWebhook,
-        pagerduty_enabled: policyPagerduty,
-        email_recipients: policyRecipients.trim(),
-      };
+      const body = buildAlertPolicyBody(editingPolicy, {
+        name: policyName,
+        description: policyDesc,
+        cooldown: policyCooldown,
+        email: policyEmail,
+        slack: policySlack,
+        discord: policyDiscord,
+        teams: policyTeams,
+        webhook: policyWebhook,
+        pagerduty: policyPagerduty,
+        recipients: policyRecipients,
+      });
       if (editingPolicy.id === 0) {
         await apiFetch('/admin/api/alert-policies', { method: 'POST', body });
         toast.success('Notification profile created');
@@ -600,11 +582,13 @@ export function AlertingWorkspace() {
   // SUB-TAB 4: Effective Policy Simulator State
   // =========================================================================
   const [simDeviceId, setSimDeviceId] = useState<string>('');
+  // GetEffectiveAlertConfig REQUIRES alert_type and 400s without it.
+  const [simAlertType, setSimAlertType] = useState('CPU_HIGH');
   const { data: effectiveConfig } = useQuery({
-    queryKey: ['effective-alert-config', simDeviceId],
+    queryKey: ['effective-alert-config', simDeviceId, simAlertType],
     queryFn: () =>
       apiFetch<Record<string, any>>(
-        `/admin/api/alert-config/effective?device_id=${encodeURIComponent(simDeviceId)}`,
+        `/admin/api/alert-config/effective?device_id=${encodeURIComponent(simDeviceId)}&alert_type=${encodeURIComponent(simAlertType)}`,
       ),
     enabled: activeTab === 'effective' && !!simDeviceId,
   });
@@ -1090,7 +1074,7 @@ export function AlertingWorkspace() {
                           </span>
                         </td>
                         <td className="px-3 py-2.5 font-mono text-text-faint">
-                          {r.vendor || 'any'}
+                          {r.vendor_scope || 'any'}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <button
@@ -1124,8 +1108,8 @@ export function AlertingWorkspace() {
           <SlideOverDrawer
             open={testerOpen}
             onOpenChange={setTesterOpen}
-            title="Live Syslog Event Rule Tester"
-            subtitle="Paste a raw syslog line to verify which event rule matches and how it classifies."
+            title="Event Rule Match Tester"
+            subtitle="Test a match expression against the most recent syslog messages and see the sample matches."
             size="lg"
             footer={
               <>
@@ -1141,7 +1125,7 @@ export function AlertingWorkspace() {
                   onClick={handleRunRuleTest}
                   className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover"
                 >
-                  Evaluate Log Line
+                  Test Match Expression
                 </button>
               </>
             }
@@ -1152,16 +1136,20 @@ export function AlertingWorkspace() {
                   htmlFor="rule-test-input"
                   className="block text-xs font-medium text-text-dim mb-1"
                 >
-                  Raw Syslog Message
+                  Match Expression (JSON)
                 </label>
                 <textarea
                   id="rule-test-input"
                   rows={5}
-                  value={testSampleLog}
-                  onChange={(e) => setTestSampleLog(e.target.value)}
-                  placeholder="Paste FortiGate, Palo Alto, Cisco ASA, or SonicWall syslog line..."
+                  value={testMatchJson}
+                  onChange={(e) => setTestMatchJson(e.target.value)}
+                  placeholder='{"op":"contains","field":"src_ip","value":"198.51.100."}'
                   className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text focus:border-accent focus:outline-none"
                 />
+                <p className="mt-1 text-[11px] text-text-faint">
+                  Operators: and, or, in, regex, gt, lt over extracted fields such as src_ip,
+                  dst_ip, user, action, device, interface.
+                </p>
               </div>
 
               {testResultJson && (
@@ -1204,13 +1192,13 @@ export function AlertingWorkspace() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {policies.map((pol) => {
               const activeChannels = [
-                pol.email_enabled && 'Email',
-                pol.slack_enabled && 'Slack',
-                pol.discord_enabled && 'Discord',
-                pol.teams_enabled && 'Teams',
-                pol.webhook_enabled && 'Webhook',
-                pol.pagerduty_enabled && 'PagerDuty',
-                pol.opsgenie_enabled && 'Opsgenie',
+                pol.notify_email && 'Email',
+                pol.notify_slack && 'Slack',
+                pol.notify_discord && 'Discord',
+                pol.notify_teams && 'Teams',
+                pol.notify_webhook && 'Webhook',
+                pol.notify_pagerduty && 'PagerDuty',
+                pol.notify_opsgenie && 'Opsgenie',
               ].filter(Boolean);
 
               return (
@@ -1462,7 +1450,7 @@ export function AlertingWorkspace() {
                               : 'bg-sig-crit/15 text-sig-crit',
                           )}
                         >
-                          {r.enabled ? `Enabled (${r.min_severity || 'any'})` : 'Muted'}
+                          {r.enabled ? `Enabled (${r.severity || 'any'})` : 'Muted'}
                         </span>
                       </div>
                     ))}
@@ -1504,6 +1492,17 @@ export function AlertingWorkspace() {
                   {d.name} (#{d.id})
                 </option>
               ))}
+            </select>
+            <select
+              value={simAlertType}
+              onChange={(e) => setSimAlertType(e.target.value)}
+              aria-label="Alert type to simulate"
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+            >
+              <option value="CPU_HIGH">CPU high</option>
+              <option value="MEMORY_HIGH">Memory high</option>
+              <option value="DISK_HIGH">Disk high</option>
+              <option value="SESSIONS_HIGH">Sessions high</option>
             </select>
           </div>
 

@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.333] - 2026-10-20
+
+### Fixed — Admin UI V2 wire-contract and safety defects
+
+- **Notification profiles**: saves now send `notify_*` (the invented `*_enabled` keys were never bound) and round-trip every column, so editing a profile no longer disables all channels and erases its webhook URLs and escalation config.
+- **Archive settings**: save/test send `set` (not `values`); archive targets are configurable again and Test Connection now dials the typed endpoint instead of the saved one.
+- **Account admin**: creating a user surfaces the server-generated temporary password once; rotating a password keeps passkeys (`remove_passkeys:false`).
+- **Telemetry**: Flows (`top_sources`/`by_protocol`/`top_conversations`, `src_addr`), Events (`days`, `policy_hits`, `hits`, `key`/`count`), Threat Intel (`q`, `entries`, `status`, `cidr`) and the Topology VPN map now read the real response shapes instead of rendering empty panels.
+- **Devices**: the Config tab reads `{revisions}` (opening it no longer throws and blanks the console), reveal-secret reads `secret`, Test SNMP uses the revealed community instead of the `********` mask, and the phantom Syslog/Flow-IP tab and CPU/Mem column are gone.
+- **Collectors**: probe rows use `approval_status`/`listen_address`/`last_seen`, Reject collects the required reason, and Noop sends `type`.
+- **Alerts**: bulk acknowledge sends `ids`, snooze sends `hours`, and a rule created from a suggestion is enabled and honours `expires_hours`.
+- **Maintenance windows**: `datetime-local` values are converted to/from local time exactly once (no more timezone shift or edit drift) and `end > start` is validated.
+- **Safety**: users, sites, connections and IRC servers require confirmation before deletion; IPSec deploy is confirmed.
+- **Operations**: `make ui-v2-check` + a CI `ui-v2-freshness` job fail when `ui-v2/` changes ship without the regenerated `cmd/api/static/v2` bundle; Node >= 20 is pinned; the V2 console has a vitest harness and an ErrorBoundary.
+
 ## [0.11.332] - 2026-10-20
 
 ### Added — Side-by-Side Admin UI V2 Console (`/admin/v2`)

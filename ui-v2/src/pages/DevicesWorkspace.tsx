@@ -51,9 +51,6 @@ export interface DeviceRecord {
   ssh_port?: number;
   ssh_username?: string;
   api_port?: number;
-  syslog_source_ips?: string;
-  flow_source_ips?: string;
-  trap_source_ips?: string;
   enabled: boolean;
   retired_at?: string | null;
   last_polled?: string | null;
@@ -133,7 +130,7 @@ function DeviceInventoryView() {
 
   // Tabbed Device Editor Drawer State (replaces the 1,599px #device-modal)
   const [editorOpen, setEditorOpen] = useState(false);
-  const [editorTab, setEditorTab] = useState<'general' | 'snmp' | 'credentials' | 'telemetry' | 'test'>('general');
+  const [editorTab, setEditorTab] = useState<'general' | 'snmp' | 'credentials' | 'test'>('general');
   const [editingDevice, setEditingDevice] = useState<Partial<DeviceRecord>>({
     name: '',
     ip_address: '',
@@ -204,11 +201,19 @@ function DeviceInventoryView() {
   });
 
   const testConnectionMutation = useMutation({
-    mutationFn: async () =>
-      apiFetch<{ success: boolean; message: string }>('/admin/api/devices/test', {
+    mutationFn: async () => {
+      // The list/detail read paths mask snmp_community as "********", so testing
+      // an existing device without revealing it dialed the literal mask and
+      // always failed. Prefer the revealed value when the operator has it.
+      const body = { ...editingDevice, ...revealedSecrets };
+      if (body.snmp_community === '********') {
+        throw new Error('Reveal the stored SNMP community first — testing with the mask always fails.');
+      }
+      return apiFetch<{ success: boolean; message: string }>('/admin/api/devices/test', {
         method: 'POST',
-        body: editingDevice,
-      }),
+        body,
+      });
+    },
     onSuccess: (res) => {
       setTestResult(res);
       if (res?.success) {
@@ -254,32 +259,6 @@ function DeviceInventoryView() {
         ),
       },
       {
-        accessorKey: 'cpu_usage',
-        header: 'CPU / Mem',
-        cell: ({ row }) => {
-          const cpu = Math.round(row.original.cpu_usage ?? 0);
-          const mem = Math.round(row.original.memory_usage ?? 0);
-          return (
-            <div className="space-y-1 w-28 font-mono text-[11px]">
-              <div className="flex items-center justify-between">
-                <span className="text-text-faint">CPU</span>
-                <span>{cpu}%</span>
-              </div>
-              <div className="h-1.5 w-full rounded-full bg-bg-panel overflow-hidden">
-                <div
-                  className={cn('h-full', cpu > 85 ? 'bg-sig-crit' : cpu > 70 ? 'bg-sig-warn' : 'bg-accent')}
-                  style={{ width: `${Math.min(100, cpu)}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-text-faint">MEM</span>
-                <span>{mem}%</span>
-              </div>
-            </div>
-          );
-        },
-      },
-      {
         accessorKey: 'last_polled',
         header: 'Last Polled',
         cell: ({ row }) => (
@@ -319,7 +298,6 @@ function DeviceInventoryView() {
     { id: 'general', label: 'General & Site' },
     { id: 'snmp', label: 'SNMP Polling' },
     { id: 'credentials', label: 'SSH & API Keys' },
-    { id: 'telemetry', label: 'Syslog / Flow IPs' },
     { id: 'test', label: 'Test Connection' },
   ];
 
@@ -402,7 +380,10 @@ function DeviceInventoryView() {
               <span className="font-mono text-xs text-text-dim">{dev.ip_address}</span>
             </div>
             <div className="flex items-center justify-between text-xs text-text-dim">
-              <span>CPU: {Math.round(dev.cpu_usage ?? 0)}% • Mem: {Math.round(dev.memory_usage ?? 0)}%</span>
+              <span>
+                {dev.vendor || 'generic'}
+                {dev.retired_at ? ' • retired' : dev.status ? ` • ${dev.status}` : ''}
+              </span>
               <button
                 type="button"
                 onClick={(e) => {
@@ -692,37 +673,6 @@ function DeviceInventoryView() {
           </div>
         )}
 
-        {editorTab === 'telemetry' && (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">
-                Additional Syslog Source IPs (comma-separated)
-              </label>
-              <input
-                type="text"
-                value={editingDevice.syslog_source_ips ?? ''}
-                onChange={(e) =>
-                  setEditingDevice((p) => ({ ...p, syslog_source_ips: e.target.value }))
-                }
-                placeholder="e.g. 10.255.0.1, 172.16.1.1"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">
-                Additional sFlow / NetFlow Source IPs
-              </label>
-              <input
-                type="text"
-                value={editingDevice.flow_source_ips ?? ''}
-                onChange={(e) => setEditingDevice((p) => ({ ...p, flow_source_ips: e.target.value }))}
-                placeholder="e.g. 10.255.0.1"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
-            </div>
-          </div>
-        )}
-
         {editorTab === 'test' && (
           <div className="space-y-4">
             <p className="text-xs text-text-dim">
@@ -769,15 +719,15 @@ function DeviceInventoryView() {
         confirmLabel="Decrypt & Reveal"
         onConfirm={async ({ password, totp_code }) => {
           if (!editingDevice.id || !revealField) return;
-          const res = await apiFetch<{ value: string }>(
+          const res = await apiFetch<{ secret: string }>(
             `/admin/api/devices/${editingDevice.id}/reveal-secret`,
             {
               method: 'POST',
               body: { field: revealField, password, totp_code },
             }
           );
-          if (res?.value) {
-            setRevealedSecrets((prev) => ({ ...prev, [revealField]: res.value }));
+          if (res?.secret) {
+            setRevealedSecrets((prev) => ({ ...prev, [revealField]: res.secret }));
           }
           setRevealField(null);
         }}
@@ -815,11 +765,19 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     refetchInterval: 15_000,
   });
 
-  const { data: configRevs } = useQuery({
+  // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
+  // this as an array made `.map` throw and (before the ErrorBoundary) blanked
+  // the whole console when the Config tab opened.
+  const { data: configHistory } = useQuery({
     queryKey: ['device-config-history', deviceId],
-    queryFn: () => apiFetch<any[]>(`/admin/api/devices/${deviceId}/config-history`),
+    queryFn: () =>
+      apiFetch<{
+        revisions?: Array<{ id: number; timestamp: string; checksum: string }>;
+        total_all?: number;
+      }>(`/admin/api/devices/${deviceId}/config-history`),
     enabled: activeTab === 'config',
   });
+  const configRevs = configHistory?.revisions ?? [];
 
   const { data: capabilities } = useQuery({
     queryKey: ['device-capabilities', deviceId],
@@ -1039,21 +997,23 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           {activeTab === 'config' && (
             <div className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
               <h2 className="text-sm font-semibold text-text">
-                Configuration Revisions ({(configRevs ?? []).length})
+                Configuration Revisions ({configRevs.length})
               </h2>
-              {(configRevs ?? []).length === 0 ? (
+              {configRevs.length === 0 ? (
                 <p className="text-xs text-text-dim">No configuration backups archived yet.</p>
               ) : (
                 <div className="space-y-2">
-                  {(configRevs ?? []).map((rev: any) => (
+                  {configRevs.map((rev) => (
                     <div
                       key={rev.id}
                       className="flex items-center justify-between rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs"
                     >
                       <span className="font-mono text-text">
-                        Revision #{rev.id} • {formatRelativeTime(rev.created_at)}
+                        Revision #{rev.id} • {formatRelativeTime(rev.timestamp)}
                       </span>
-                      <span className="font-mono text-text-dim">{rev.hash?.slice(0, 12)}</span>
+                      <span className="font-mono text-text-dim">
+                        {rev.checksum?.slice(0, 12)}
+                      </span>
                     </div>
                   ))}
                 </div>

@@ -11,7 +11,6 @@ interface TrapRow {
   id: number;
   timestamp: string;
   device_id?: number;
-  device_name?: string;
   source_ip?: string;
   trap_oid: string;
   trap_type?: string;
@@ -24,18 +23,26 @@ export function TrapsWorkspace() {
   const [selectedTrap, setSelectedTrap] = useState<TrapRow | null>(null);
 
   const { data: trapsRes, isLoading } = useQuery({
-    queryKey: ['snmp-traps', searchQuery],
-    queryFn: () => {
-      const params = new URLSearchParams({ limit: '100' });
-      if (searchQuery.trim()) params.set('search', searchQuery.trim());
-      return apiFetch<any>(`/admin/api/traps?${params.toString()}`);
-    },
+    // GetTraps only filters by device_id/severity/trap_type — it ignores
+    // `search`, so the old server-side filter did nothing. Filter the loaded
+    // page client-side instead (and do not refetch per keystroke).
+    queryKey: ['snmp-traps'],
+    queryFn: () => apiFetch<any>('/admin/api/traps?limit=100'),
     refetchInterval: 15_000,
   });
 
-  const traps: TrapRow[] = Array.isArray(trapsRes)
+  const allTraps: TrapRow[] = Array.isArray(trapsRes)
     ? trapsRes
     : trapsRes?.traps ?? trapsRes?.items ?? trapsRes?.data ?? [];
+
+  const needle = searchQuery.trim().toLowerCase();
+  const traps = needle
+    ? allTraps.filter((t) =>
+        [t.trap_oid, t.trap_type, t.source_ip, t.severity]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(needle)),
+      )
+    : allTraps;
 
   const columns = useMemo<ColumnDef<TrapRow, unknown>[]>(
     () => [
@@ -49,11 +56,11 @@ export function TrapsWorkspace() {
         ),
       },
       {
-        accessorKey: 'device_name',
+        accessorKey: 'source_ip',
         header: 'Source Device',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.device_name || row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
+            {row.original.source_ip || `Dev #${row.original.device_id ?? '?'}`}
           </span>
         ),
       },

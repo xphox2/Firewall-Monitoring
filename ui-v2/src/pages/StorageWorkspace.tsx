@@ -143,13 +143,15 @@ interface ArchiveSettingsResponse {
 interface ArchiveRestoreJob {
   id: number;
   stream: string;
-  start_time: string;
-  end_time: string;
-  state: string;
-  chunks_total: number;
-  chunks_done: number;
-  rows_restored: number;
-  last_error?: string;
+  // models.ArchiveRestoreJob wire names. The previous start_time/state/
+  // chunks_*/rows_restored keys rendered every row as "undefined".
+  from_day: string;
+  to_day: string;
+  status: string;
+  objects_total: number;
+  objects_done: number;
+  rows_loaded: number;
+  error?: string;
   created_at: string;
   expires_at?: string;
 }
@@ -426,7 +428,11 @@ export function StorageWorkspace() {
   const [testingArchive, setTestingArchive] = useState(false);
   const [testResult, setTestResult] = useState<{
     ok: boolean;
-    summary?: string;
+    // TestArchiveSettings answers with `message` (the refusal/failure reason)
+    // and `warnings`; `checks` only exists on the local-target path. Reading
+    // `summary` hid every S3 preflight failure.
+    message?: string;
+    warnings?: string[];
     checks?: Array<{ name: string; ok: boolean; detail?: string }>;
   } | null>(null);
   const [folderPickerKey, setFolderPickerKey] = useState<string | null>(null);
@@ -478,25 +484,28 @@ export function StorageWorkspace() {
     setTestingArchive(true);
     setTestResult(null);
     try {
-      const values: Record<string, string> = {};
+      const set: Record<string, string> = {};
       for (const f of archiveSettings?.fields || []) {
         const val = getArchVal(f.key);
         if (f.kind === 'secret' && !val) continue;
-        values[f.key] = val;
+        set[f.key] = val;
       }
       const res = await apiFetch<{
         ok: boolean;
-        summary?: string;
+        message?: string;
+        warnings?: string[];
         checks?: Array<{ name: string; ok: boolean; detail?: string }>;
       }>('/admin/api/archive/settings/test', {
         method: 'POST',
-        body: { values, revert: Object.keys(archReverts).filter((k) => archReverts[k]) },
+        // The handler binds `set`, not `values`. With the wrong key the test
+        // silently preflighted the SAVED config instead of the typed one.
+        body: { set, revert: Object.keys(archReverts).filter((k) => archReverts[k]) },
       });
       setTestResult(res);
       if (res.ok) {
-        toast.success('Archive target preflight passed', res.summary || 'All checks succeeded.');
+        toast.success('Archive target preflight passed', res.message || 'All checks succeeded.');
       } else {
-        toast.warning('Archive target preflight reported issues', res.summary || 'Check details below.');
+        toast.warning('Archive target preflight reported issues', res.message || 'Check details below.');
       }
     } catch (err) {
       toast.error(
@@ -517,16 +526,16 @@ export function StorageWorkspace() {
       } requires admin password verification.`,
       confirmLabel: 'Verify & Save Archive Config',
       action: async (creds) => {
-        const values: Record<string, string> = {};
+        const set: Record<string, string> = {};
         for (const k of dirtyArchiveKeys) {
           if (!archReverts[k]) {
-            values[k] = getArchVal(k);
+            set[k] = getArchVal(k);
           }
         }
         await apiFetch('/admin/api/archive/settings', {
           method: 'POST',
           body: {
-            values,
+            set,
             revert: Object.keys(archReverts).filter((k) => archReverts[k]),
             password: creds.password,
             totp_code: creds.totp_code,
@@ -1302,12 +1311,17 @@ export function StorageWorkspace() {
                         <td className="px-4 py-2.5 font-mono">#{job.id}</td>
                         <td className="px-3 py-2.5 font-medium capitalize">{job.stream}</td>
                         <td className="px-3 py-2.5 font-mono text-text-dim">
-                          {job.start_time?.slice(0, 10)} → {job.end_time?.slice(0, 10)}
+                          {job.from_day} → {job.to_day}
                         </td>
-                        <td className="px-3 py-2.5 font-mono uppercase">{job.state}</td>
+                        <td
+                          className="px-3 py-2.5 font-mono uppercase"
+                          title={job.error || undefined}
+                        >
+                          {job.status}
+                        </td>
                         <td className="px-3 py-2.5 font-mono">
-                          {job.chunks_done}/{job.chunks_total} chunks (
-                          {formatNumber(job.rows_restored)} rows)
+                          {job.objects_done}/{job.objects_total} objects (
+                          {formatNumber(job.rows_loaded)} rows)
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <button
@@ -1386,8 +1400,15 @@ export function StorageWorkspace() {
                 <ShieldCheck
                   className={cn('h-4 w-4', testResult.ok ? 'text-sig-ok' : 'text-sig-warn')}
                 />
-                <span>{testResult.summary || 'Preflight Check Results'}</span>
+                <span>{testResult.message || 'Preflight Check Results'}</span>
               </div>
+              {testResult.warnings && testResult.warnings.length > 0 && (
+                <ul className="space-y-1 text-xs text-sig-warn pl-6 list-disc">
+                  {testResult.warnings.map((w, idx) => (
+                    <li key={idx}>{w}</li>
+                  ))}
+                </ul>
+              )}
               {testResult.checks && testResult.checks.length > 0 && (
                 <ul className="space-y-1 text-xs text-text-dim pl-6 list-disc">
                   {testResult.checks.map((c, idx) => (

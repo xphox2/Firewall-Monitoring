@@ -19,9 +19,10 @@ import {
   Lock,
 } from 'lucide-react';
 import { apiFetch, SystemSetting, type MeResponse } from '@/lib/api';
-import { cn, formatRelativeTime } from '@/lib/utils';
+import { cn, formatRelativeTime, setDisplayTimezone } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
@@ -36,7 +37,6 @@ interface AdminUser {
   email?: string;
   display_name?: string;
   totp_enabled: boolean;
-  passkey_count?: number;
   must_change_password?: boolean;
   last_login_at?: string;
   created_at?: string;
@@ -45,7 +45,7 @@ interface AdminUser {
 interface APITokenRow {
   id: number;
   name: string;
-  token_prefix: string;
+  prefix: string;
   scope: 'read' | 'write' | 'admin';
   expires_at?: string | null;
   last_used_at?: string | null;
@@ -54,16 +54,17 @@ interface APITokenRow {
 
 interface AuditLogEntry {
   id: number;
-  timestamp: string;
+  // models.AuditLog wire names. `timestamp`/`status_code`/`path` do not exist,
+  // so every row showed a blank time and a red "undefined" status.
+  created_at: string;
   actor: string;
-  role: string;
-  action: string;
-  resource: string;
+  actor_id: number;
   method: string;
-  path: string;
-  status_code: number;
+  action: string;
+  target: string;
+  status: number;
   ip_address: string;
-  details?: string;
+  user_agent: string;
 }
 
 interface PasskeyEntry {
@@ -155,27 +156,33 @@ function UsersRbacSubTab() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<'admin' | 'operator' | 'viewer'>('operator');
-  const [newEmail, setNewEmail] = useState('');
+  // The backend generates the temporary password and returns it exactly once;
+  // there is no reset-password UI, so losing it here meant creating an account
+  // nobody could ever sign in to.
+  const [createdCred, setCreatedCred] = useState<{ username: string; password: string } | null>(
+    null,
+  );
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
 
   const createUserMutation = useMutation({
     mutationFn: async () =>
-      apiFetch('/admin/api/users', {
+      apiFetch<{ user?: { username?: string }; temp_password?: string }>('/admin/api/users', {
         method: 'POST',
         body: {
           username: newUsername.trim(),
-          password: newPassword,
           role: newRole,
-          email: newEmail.trim(),
         },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setCreatedCred({
+        username: data?.user?.username ?? newUsername.trim(),
+        password: data?.temp_password ?? '',
+      });
       toast({ title: 'User created', variant: 'success' });
       setDrawerOpen(false);
       setNewUsername('');
-      setNewPassword('');
-      setNewEmail('');
+      setNewRole('operator');
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
     onError: (err: Error) => {
@@ -259,11 +266,6 @@ function UsersRbacSubTab() {
             >
               {row.original.totp_enabled ? 'TOTP Active' : 'No TOTP'}
             </span>
-            {(row.original.passkey_count ?? 0) > 0 && (
-              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent">
-                {row.original.passkey_count} Passkey
-              </span>
-            )}
           </div>
         ),
       },
@@ -283,7 +285,7 @@ function UsersRbacSubTab() {
             )}
             <button
               type="button"
-              onClick={() => deleteUserMutation.mutate(row.original.id)}
+              onClick={() => setUserToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit hover:bg-sig-crit/20"
               title="Delete user"
             >
@@ -349,7 +351,7 @@ function UsersRbacSubTab() {
             </button>
             <button
               type="button"
-              disabled={!newUsername.trim() || newPassword.length < 8 || createUserMutation.isPending}
+              disabled={!newUsername.trim() || createUserMutation.isPending}
               onClick={() => createUserMutation.mutate()}
               className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
             >
@@ -370,17 +372,6 @@ function UsersRbacSubTab() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              Initial Password (min 8 chars)
-            </label>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-            />
-          </div>
-          <div>
             <label className="block text-xs font-medium text-text-dim mb-1">RBAC Role</label>
             <select
               value={newRole}
@@ -392,18 +383,83 @@ function UsersRbacSubTab() {
               <option value="admin">Admin (Full Control)</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Email (optional)</label>
-            <input
-              type="email"
-              value={newEmail}
-              onChange={(e) => setNewEmail(e.target.value)}
-              placeholder="jdoe@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
-          </div>
+          <p className="text-[11px] leading-relaxed text-text-dim">
+            The server generates a temporary password and shows it once after the account is
+            created. The account is forced to rotate it at first login.
+          </p>
         </div>
       </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!createdCred}
+        onOpenChange={(open) => {
+          if (!open) setCreatedCred(null);
+        }}
+        title="Account created"
+        subtitle="Copy the temporary password now — it is not stored in plaintext and cannot be shown again."
+        footer={
+          <button
+            type="button"
+            onClick={() => setCreatedCred(null)}
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            I have copied it
+          </button>
+        }
+      >
+        {createdCred && (
+          <div className="space-y-3">
+            <div>
+              <span className="block text-xs font-medium text-text-dim">Username</span>
+              <span className="font-mono text-sm text-text">{createdCred.username}</span>
+            </div>
+            <div>
+              <span className="block text-xs font-medium text-text-dim">Temporary password</span>
+              <div className="mt-1 flex items-center gap-2">
+                <code className="flex-1 break-all rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text">
+                  {createdCred.password || '(server returned no password)'}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard
+                      ?.writeText(createdCred.password)
+                      .then(() => toast({ title: 'Password copied', variant: 'success' }))
+                      .catch(() =>
+                        toast({
+                          title: 'Copy failed',
+                          description: 'Select the password and copy it manually.',
+                          variant: 'error',
+                        }),
+                      );
+                  }}
+                  className="rounded-md border border-border px-2.5 py-2 text-xs text-text-dim hover:text-text"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!userToDelete}
+        onOpenChange={(open) => {
+          if (!open) setUserToDelete(null);
+        }}
+        title={`Delete user ${userToDelete?.username ?? ''}?`}
+        description="The account and its API tokens stop working immediately. This cannot be undone."
+        confirmLabel="Delete user"
+        destructive
+        pending={deleteUserMutation.isPending}
+        onConfirm={() => {
+          if (!userToDelete) return;
+          deleteUserMutation.mutate(userToDelete.id, {
+            onSuccess: () => setUserToDelete(null),
+          });
+        }}
+      />
     </div>
   );
 }
@@ -462,11 +518,11 @@ function ApiTokensSubTab() {
         cell: ({ row }) => <span className="font-semibold text-text">{row.original.name}</span>,
       },
       {
-        accessorKey: 'token_prefix',
+        accessorKey: 'prefix',
         header: 'Prefix',
         cell: ({ row }) => (
           <code className="rounded bg-bg-panel px-2 py-0.5 text-xs font-mono text-text-dim">
-            {row.original.token_prefix}…
+            {row.original.prefix}…
           </code>
         ),
       },
@@ -580,7 +636,7 @@ function ApiTokensSubTab() {
                 {t.scope}
               </span>
             </div>
-            <div className="text-xs font-mono text-text-dim">{t.token_prefix}…</div>
+            <div className="text-xs font-mono text-text-dim">{t.prefix}…</div>
           </div>
         )}
       />
@@ -642,6 +698,9 @@ function DisplayAndFlowsSubTab() {
 
   useEffect(() => {
     setDraft(serverMap);
+    // Hydrate the shared display-timezone store from the server value so
+    // timestamps elsewhere in the console render in the configured zone.
+    if (serverMap.display_timezone) setDisplayTimezone(serverMap.display_timezone);
   }, [serverMap]);
 
   const dirtyKeys = useMemo(() => {
@@ -658,6 +717,9 @@ function DisplayAndFlowsSubTab() {
       return apiFetch('/admin/api/settings', { method: 'POST', body: payload });
     },
     onSuccess: () => {
+      if (dirtyKeys.includes('display_timezone')) {
+        setDisplayTimezone(draft.display_timezone);
+      }
       toast({ title: 'Display & classification settings saved', variant: 'success' });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
@@ -938,9 +1000,12 @@ function EmailReportsSubTab() {
 
   const loadPreview = async () => {
     try {
+      // PreviewReport returns {success, data:{subject, html}} as JSON; putting
+      // the raw body in srcDoc rendered the JSON, not the report.
       const res = await fetch('/admin/api/reports/preview', { credentials: 'same-origin' });
-      const text = await res.text();
-      setPreviewHtml(text);
+      if (!res.ok) throw new Error(`Preview failed (${res.status})`);
+      const body = (await res.json()) as { data?: { html?: string } };
+      setPreviewHtml(body.data?.html ?? '<p>Report preview returned no HTML.</p>');
       setPreviewOpen(true);
     } catch (err) {
       toast({
@@ -1115,11 +1180,11 @@ function AuditLogSubTab() {
   const columns = useMemo<ColumnDef<AuditLogEntry, unknown>[]>(
     () => [
       {
-        accessorKey: 'timestamp',
+        accessorKey: 'created_at',
         header: 'When',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text-dim">
-            {formatRelativeTime(row.original.timestamp)}
+            {formatRelativeTime(row.original.created_at)}
           </span>
         ),
       },
@@ -1127,14 +1192,7 @@ function AuditLogSubTab() {
         accessorKey: 'actor',
         header: 'Actor',
         cell: ({ row }) => (
-          <div>
-            <span className="font-semibold text-text">{row.original.actor}</span>
-            {row.original.role && (
-              <span className="ml-1.5 rounded bg-bg-panel px-1.5 py-0.5 text-[10px] uppercase text-text-dim">
-                {row.original.role}
-              </span>
-            )}
-          </div>
+          <span className="font-semibold text-text">{row.original.actor}</span>
         ),
       },
       {
@@ -1143,7 +1201,9 @@ function AuditLogSubTab() {
         cell: ({ row }) => (
           <div className="font-mono text-xs">
             <span className="font-semibold text-accent">{row.original.method}</span>{' '}
-            <span className="text-text">{row.original.path || row.original.action}</span>
+            <span className="text-text" title={row.original.action}>
+              {row.original.target || row.original.action}
+            </span>
           </div>
         ),
       },
@@ -1153,18 +1213,18 @@ function AuditLogSubTab() {
         cell: ({ row }) => <span className="font-mono text-xs text-text-dim">{row.original.ip_address}</span>,
       },
       {
-        accessorKey: 'status_code',
+        accessorKey: 'status',
         header: 'Status',
         cell: ({ row }) => (
           <span
             className={cn(
               'rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold',
-              row.original.status_code < 400
+              row.original.status < 400
                 ? 'bg-sig-ok/15 text-sig-ok'
                 : 'bg-sig-crit/15 text-sig-crit'
             )}
           >
-            {row.original.status_code}
+            {row.original.status}
           </span>
         ),
       },
@@ -1201,11 +1261,11 @@ function AuditLogSubTab() {
             <div className="flex items-center justify-between">
               <span className="font-semibold text-xs text-text">{entry.actor}</span>
               <span className="font-mono text-[11px] text-text-dim">
-                {formatRelativeTime(entry.timestamp)}
+                {formatRelativeTime(entry.created_at)}
               </span>
             </div>
             <div className="font-mono text-xs text-accent">
-              {entry.method} {entry.path || entry.action}
+              {entry.method} {entry.target || entry.action}
             </div>
           </div>
         )}
@@ -1217,7 +1277,9 @@ function AuditLogSubTab() {
           if (!open) setSelectedEntry(null);
         }}
         title="Audit Log Event Inspector"
-        subtitle={selectedEntry ? `${selectedEntry.method} ${selectedEntry.path}` : undefined}
+        subtitle={
+          selectedEntry ? `${selectedEntry.method} ${selectedEntry.target || selectedEntry.action}` : undefined
+        }
       >
         {selectedEntry && (
           <div className="space-y-3 text-xs">
@@ -1232,21 +1294,20 @@ function AuditLogSubTab() {
               </div>
               <div>
                 <div className="text-text-faint">Timestamp</div>
-                <div className="font-mono text-text">{selectedEntry.timestamp}</div>
+                <div className="font-mono text-text">{selectedEntry.created_at}</div>
               </div>
               <div>
                 <div className="text-text-faint">HTTP Status</div>
-                <div className="font-mono text-text">{selectedEntry.status_code}</div>
+                <div className="font-mono text-text">{selectedEntry.status}</div>
               </div>
             </div>
-            {selectedEntry.details && (
-              <div>
-                <div className="text-xs font-semibold text-text-dim mb-1">Recorded Details</div>
-                <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto whitespace-pre-wrap">
-                  {selectedEntry.details}
-                </pre>
-              </div>
-            )}
+            <div>
+              <div className="text-xs font-semibold text-text-dim mb-1">Route & User Agent</div>
+              <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto whitespace-pre-wrap">
+                {selectedEntry.action}
+                {selectedEntry.user_agent ? `\n${selectedEntry.user_agent}` : ''}
+              </pre>
+            </div>
           </div>
         )}
       </SlideOverDrawer>
@@ -1265,12 +1326,15 @@ function MyProfileSubTab() {
     queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
   });
 
-  const { data: passkeysList } = useQuery({
+  const { data: passkeysRes } = useQuery({
     queryKey: ['my-passkeys'],
-    queryFn: () => apiFetch<PasskeyEntry[]>('/admin/api/passkeys'),
+    // ListPasskeys returns {passkeys, notices, max}; typing it as an array made
+    // passkeys.map throw and blank this tab.
+    queryFn: () =>
+      apiFetch<{ passkeys?: PasskeyEntry[]; max?: number }>('/admin/api/passkeys'),
   });
 
-  const passkeys = passkeysList ?? [];
+  const passkeys = passkeysRes?.passkeys ?? [];
 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -1303,10 +1367,21 @@ function MyProfileSubTab() {
     mutationFn: async () =>
       apiFetch('/admin/api/settings/password', {
         method: 'POST',
-        body: { current_password: currentPassword, new_password: newPassword },
+        body: {
+          current_password: currentPassword,
+          new_password: newPassword,
+          // The handler treats an ABSENT remove_passkeys as TRUE. A routine
+          // password rotation must not silently delete every registered
+          // passkey, so be explicit rather than relying on the default.
+          remove_passkeys: false,
+        },
       }),
     onSuccess: () => {
-      toast({ title: 'Password updated', variant: 'success' });
+      toast({
+        title: 'Password updated',
+        description: 'Your passkeys were kept.',
+        variant: 'success',
+      });
       setCurrentPassword('');
       setNewPassword('');
     },

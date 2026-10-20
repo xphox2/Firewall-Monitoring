@@ -147,10 +147,18 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
 
   const snoozeMutation = useMutation({
     mutationFn: async ({ id, minutes }: { id: number; minutes: number }) =>
-      apiFetch(`/admin/api/alerts/${id}/snooze`, { method: 'POST', body: { duration_minutes: minutes } }),
+      // SnoozeAlert binds `hours`; duration_minutes was ignored and the server
+      // fell back to its 1h clamp, so any other duration silently snoozed 1h.
+      apiFetch(`/admin/api/alerts/${id}/snooze`, {
+        method: 'POST',
+        body: { hours: Math.max(1, Math.round(minutes / 60)) },
+      }),
     onSuccess: () => {
-      toast({ title: 'Alert snoozed for 1 hour', variant: 'info' });
+      toast({ title: 'Alert snoozed', variant: 'info' });
       queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Snooze failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -158,11 +166,15 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
     mutationFn: async () =>
       apiFetch('/admin/api/alerts/bulk-acknowledge', {
         method: 'POST',
-        body: { alert_ids: alerts.map((a) => a.id) },
+        // BulkAcknowledgeAlerts binds `ids`; alert_ids made every call 400.
+        body: { ids: alerts.map((a) => a.id) },
       }),
     onSuccess: () => {
       toast({ title: 'All visible alerts acknowledged', variant: 'success' });
       queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Bulk acknowledge failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -194,14 +206,41 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
   };
 
   const createSuggestedRuleMutation = useMutation({
-    mutationFn: async () =>
-      apiFetch('/admin/api/event-rules', {
+    mutationFn: async () => {
+      // The endpoint returns SuggestResult {supported, rule, …}; posting the
+      // envelope (or rule.suggested_name) to CreateEventRule failed binding
+      // because EventRule requires `name`.
+      const rule = suggestedRule?.rule;
+      if (!rule) throw new Error('No suggested rule to create');
+      // expires_hours/profile_name are suggestion metadata, not EventRule
+      // columns: EventRule takes an absolute expires_at. Leaving expires_hours
+      // in the body silently turned a 24h mute into a permanent one.
+      const { suggested_name: suggestedName, expires_hours: expiresHours, profile_name, ...rest } =
+        rule;
+      void profile_name;
+      const expiresAt =
+        typeof expiresHours === 'number' && expiresHours > 0
+          ? new Date(Date.now() + expiresHours * 3600_000).toISOString()
+          : undefined;
+      return apiFetch('/admin/api/event-rules', {
         method: 'POST',
-        body: suggestedRule,
-      }),
+        body: {
+          ...rest,
+          name: suggestedName || 'Suppress similar alerts',
+          // GORM omits the false zero value on INSERT and the table default is
+          // true, but CreateEventRule force-disables when Enabled is false —
+          // so an omitted field produced a rule that never fires.
+          enabled: true,
+          ...(expiresAt ? { expires_at: expiresAt } : {}),
+        },
+      });
+    },
     onSuccess: () => {
       toast({ title: 'Suppression rule created from alert', variant: 'success' });
       setSuggestedRule(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Rule creation failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -385,12 +424,13 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
               {suggestedRule && (
                 <div className="space-y-2">
                   <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto">
-                    {JSON.stringify(suggestedRule, null, 2)}
+                    {JSON.stringify(suggestedRule?.rule ?? suggestedRule, null, 2)}
                   </pre>
                   <button
                     type="button"
+                    disabled={!suggestedRule?.rule || createSuggestedRuleMutation.isPending}
                     onClick={() => createSuggestedRuleMutation.mutate()}
-                    className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
+                    className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
                     Create Event Rule
                   </button>

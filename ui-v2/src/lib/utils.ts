@@ -54,11 +54,46 @@ export function formatRelativeTime(iso: string | null | undefined): string {
   return `${diffDay}d ago`;
 }
 
+// Display timezone: shared app state, not a per-render localStorage read. The
+// V1 console hydrated this and then re-rendered; V2 read localStorage in
+// formatDateTime but nothing ever wrote it, so the setting was inert and
+// timestamps never followed a change.
+const TZ_STORAGE_KEY = 'display_timezone';
+let tzVersion = 0;
+const tzSubscribers = new Set<() => void>();
+
+export function setDisplayTimezone(tz: string | null | undefined) {
+  try {
+    if (tz) localStorage.setItem(TZ_STORAGE_KEY, tz);
+    else localStorage.removeItem(TZ_STORAGE_KEY);
+  } catch {
+    // storage blocked: keep the in-memory version bump so the UI still follows
+  }
+  tzVersion += 1;
+  tzSubscribers.forEach((fn) => fn());
+}
+
+export function subscribeDisplayTimezone(fn: () => void): () => void {
+  tzSubscribers.add(fn);
+  return () => {
+    tzSubscribers.delete(fn);
+  };
+}
+
+export function getDisplayTimezoneVersion(): number {
+  return tzVersion;
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '—';
-  const tz = localStorage.getItem('display_timezone') || undefined;
+  let tz: string | undefined;
+  try {
+    tz = localStorage.getItem(TZ_STORAGE_KEY) || undefined;
+  } catch {
+    tz = undefined;
+  }
   try {
     return new Intl.DateTimeFormat('en-US', {
       year: 'numeric',

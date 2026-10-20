@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Waves, Check, ArrowRight } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { cn, formatBytes, formatRelativeTime, countryCodeToFlag } from '@/lib/utils';
+import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
@@ -115,8 +115,11 @@ function TopTalkersSubTab({ windowRange }: { windowRange: TimeWindow }) {
     );
   }
 
-  const talkers: any[] = stats?.top_talkers ?? stats?.sources ?? [];
-  const protocols: any[] = stats?.protocols ?? [];
+  // GetFlowStats emits top_sources / by_protocol as {key,count} where key is
+  // the address or protocol name and count is BYTES. The invented
+  // top_talkers/protocols names rendered both cards permanently empty.
+  const talkers: Array<{ key: string; count: number }> = stats?.top_sources ?? [];
+  const protocols: Array<{ key: string; count: number }> = stats?.by_protocol ?? [];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -126,16 +129,15 @@ function TopTalkersSubTab({ windowRange }: { windowRange: TimeWindow }) {
           <p className="text-xs text-text-dim">No flow talkers recorded in this window.</p>
         ) : (
           <div className="space-y-2">
-            {talkers.slice(0, 12).map((t: any, idx: number) => (
+            {talkers.slice(0, 12).map((t, idx) => (
               <div
                 key={idx}
                 className="flex items-center justify-between rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs font-mono"
               >
                 <div className="flex items-center gap-2">
-                  {t.country && <span className="fwmon-flag">{countryCodeToFlag(t.country)}</span>}
-                  <span className="text-text font-semibold">{t.src_ip || t.ip}</span>
+                  <span className="text-text font-semibold">{t.key}</span>
                 </div>
-                <span className="text-accent">{formatBytes(t.bytes ?? t.total_bytes ?? 0)}</span>
+                <span className="text-accent">{formatBytes(t.count ?? 0)}</span>
               </div>
             ))}
           </div>
@@ -148,10 +150,10 @@ function TopTalkersSubTab({ windowRange }: { windowRange: TimeWindow }) {
           <p className="text-xs text-text-dim">No protocol distribution available.</p>
         ) : (
           <div className="space-y-2">
-            {protocols.map((p: any, idx: number) => (
+            {protocols.map((p, idx) => (
               <div key={idx} className="flex items-center justify-between text-xs font-mono">
-                <span className="uppercase text-text">{p.protocol || p.name}</span>
-                <span className="text-text-dim">{formatBytes(p.bytes ?? 0)}</span>
+                <span className="uppercase text-text">{p.key}</span>
+                <span className="text-text-dim">{formatBytes(p.count ?? 0)}</span>
               </div>
             ))}
           </div>
@@ -168,7 +170,16 @@ function ConversationsSubTab({ windowRange }: { windowRange: TimeWindow }) {
     queryFn: () => apiFetch<any>(`/admin/api/flows/stats?range=${windowRange}&hours=${hours}`),
   });
 
-  const convos: any[] = stats?.conversations ?? stats?.pairs ?? [];
+  // FlowConversation serializes src_addr/dst_addr (flow_samples has no
+  // src_ip/dst_ip columns). Reading src_ip produced an empty pair column.
+  const convos: Array<{
+    src_addr: string;
+    dst_addr: string;
+    src_port: number;
+    dst_port: number;
+    protocol: string;
+    bytes: number;
+  }> = stats?.top_conversations ?? [];
 
   const columns = useMemo<ColumnDef<any, unknown>[]>(
     () => [
@@ -177,9 +188,13 @@ function ConversationsSubTab({ windowRange }: { windowRange: TimeWindow }) {
         header: 'Conversation Pair',
         cell: ({ row }) => (
           <div className="font-mono text-xs flex items-center gap-1.5">
-            <span className="text-text">{row.original.src_ip}</span>
+            <span className="text-text">
+              {row.original.src_addr}:{row.original.src_port}
+            </span>
             <ArrowRight className="h-3 w-3 text-accent" />
-            <span className="text-text">{row.original.dst_ip}</span>
+            <span className="text-text">
+              {row.original.dst_addr}:{row.original.dst_port}
+            </span>
           </div>
         ),
       },
@@ -188,7 +203,7 @@ function ConversationsSubTab({ windowRange }: { windowRange: TimeWindow }) {
         header: 'Estimated Volume',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-accent">
-            {formatBytes(row.original.bytes ?? row.original.total_bytes ?? 0)}
+            {formatBytes(row.original.bytes ?? 0)}
           </span>
         ),
       },
@@ -205,7 +220,7 @@ function ConversationsSubTab({ windowRange }: { windowRange: TimeWindow }) {
       renderMobileCard={(c) => (
         <div className="flex items-center justify-between font-mono text-xs">
           <span>
-            {c.src_ip} → {c.dst_ip}
+            {c.src_addr} → {c.dst_addr}
           </span>
           <span className="text-accent">{formatBytes(c.bytes ?? 0)}</span>
         </div>
@@ -239,20 +254,20 @@ function FlowSamplesSubTab() {
         ),
       },
       {
-        accessorKey: 'src_ip',
+        accessorKey: 'src_addr',
         header: 'Source',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.src_ip}:{row.original.src_port}
+            {row.original.src_addr}:{row.original.src_port}
           </span>
         ),
       },
       {
-        accessorKey: 'dst_ip',
+        accessorKey: 'dst_addr',
         header: 'Destination',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text">
-            {row.original.dst_ip}:{row.original.dst_port}
+            {row.original.dst_addr}:{row.original.dst_port}
           </span>
         ),
       },
@@ -278,7 +293,7 @@ function FlowSamplesSubTab() {
         renderMobileCard={(s) => (
           <div className="space-y-1 font-mono text-xs">
             <div className="text-text">
-              {s.src_ip}:{s.src_port} → {s.dst_ip}:{s.dst_port}
+              {s.src_addr}:{s.src_port} → {s.dst_addr}:{s.dst_port}
             </div>
             <div className="text-text-dim">{formatBytes(s.bytes ?? 0)}</div>
           </div>
@@ -333,18 +348,18 @@ function FlowDetectionsSubTab() {
         ),
       },
       {
-        accessorKey: 'detector_type',
+        accessorKey: 'detector',
         header: 'Detector',
         cell: ({ row }) => (
           <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
-            {row.original.detector_type || row.original.type || 'Anomaly'}
+            {row.original.detector || 'Anomaly'}
           </span>
         ),
       },
       {
-        accessorKey: 'src_ip',
+        accessorKey: 'src_addr',
         header: 'Subject IP',
-        cell: ({ row }) => <span className="font-mono text-xs text-text">{row.original.src_ip || '—'}</span>,
+        cell: ({ row }) => <span className="font-mono text-xs text-text">{row.original.src_addr || '—'}</span>,
       },
       {
         id: 'actions',
@@ -375,8 +390,8 @@ function FlowDetectionsSubTab() {
       emptyTitle="No sFlow anomaly detections triggered."
       renderMobileCard={(d) => (
         <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-sig-warn">{d.detector_type || 'Anomaly'}</span>
-          <span className="font-mono text-text">{d.src_ip}</span>
+          <span className="font-semibold text-sig-warn">{d.detector || 'Anomaly'}</span>
+          <span className="font-mono text-text">{d.src_addr}</span>
         </div>
       )}
     />

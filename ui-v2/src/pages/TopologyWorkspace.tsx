@@ -16,6 +16,7 @@ import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -130,9 +131,44 @@ function NetworkMapSubTab() {
     queryFn: () => apiFetch<any>('/admin/api/connections/vpn-map'),
     refetchInterval: 20_000,
   });
+  const { data: deviceList } = useQuery({
+    queryKey: ['devices-for-topology'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string; ip_address?: string }>>('/admin/api/devices'),
+  });
 
-  const nodes: any[] = mapData?.nodes ?? mapData?.devices ?? [];
-  const edges: any[] = mapData?.edges ?? mapData?.connections ?? [];
+  // GetVPNMapData returns a map keyed by device ID ("7" -> {total, up, down,
+  // tunnels:[...]}), not {nodes, edges}. Reading nodes/edges rendered an empty
+  // map on every install.
+  const vpnMap: Record<
+    string,
+    {
+      total?: number;
+      up?: number;
+      down?: number;
+      tunnels?: Array<{
+        tunnel_name: string;
+        status: string;
+        remote_ip?: string;
+        matched_name?: string;
+        bytes_in?: number;
+        bytes_out?: number;
+      }>;
+    }
+  > = mapData ?? {};
+  const devicesById = new Map((deviceList ?? []).map((d) => [String(d.id), d]));
+
+  const nodes = Object.entries(vpnMap).map(([id, vpn]) => {
+    const device = devicesById.get(id);
+    return {
+      id,
+      name: device?.name ?? `Device ${id}`,
+      ip_address: device?.ip_address ?? '',
+      status: (vpn.up ?? 0) > 0 ? 'up' : 'down',
+    };
+  });
+  const edges = Object.entries(vpnMap).flatMap(([deviceId, vpn]) =>
+    (vpn.tunnels ?? []).map((t) => ({ ...t, device_id: deviceId })),
+  );
 
   return (
     <div className="space-y-4">
@@ -144,13 +180,13 @@ function NetworkMapSubTab() {
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Active Links</div>
           <div className="text-xl font-mono font-bold text-sig-ok mt-0.5">
-            {edges.filter((e) => e.status === 'up' || e.status === 'online').length}
+            {edges.filter((e) => e.status === 'up').length}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Degraded / Down Links</div>
           <div className="text-xl font-mono font-bold text-sig-crit mt-0.5">
-            {edges.filter((e) => e.status && e.status !== 'up' && e.status !== 'online').length}
+            {edges.filter((e) => e.status && e.status !== 'up').length}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
@@ -230,11 +266,18 @@ function ConnectionsSubTab() {
     enabled: Boolean(selectedConn?.id),
   });
 
+  const [connToDelete, setConnToDelete] = useState<ConnectionRecord | null>(null);
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => apiFetch(`/admin/api/connections/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       toast({ title: 'Connection deleted', variant: 'info' });
+      setConnToDelete(null);
+      // The drawer would otherwise keep re-fetching detail for a deleted row.
+      setSelectedConn(null);
       queryClient.invalidateQueries({ queryKey: ['device-connections'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Delete failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -296,7 +339,7 @@ function ConnectionsSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => deleteMutation.mutate(row.original.id)}
+              onClick={() => setConnToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -358,6 +401,19 @@ function ConnectionsSubTab() {
           {JSON.stringify(connDetail ?? selectedConn ?? {}, null, 2)}
         </pre>
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!connToDelete}
+        onOpenChange={(open) => {
+          if (!open) setConnToDelete(null);
+        }}
+        title={`Delete connection ${connToDelete?.name || `#${connToDelete?.id ?? ''}`}?`}
+        description="Discovery will re-add this link if the devices still report it. This cannot be undone."
+        confirmLabel="Delete connection"
+        destructive
+        pending={deleteMutation.isPending}
+        onConfirm={() => connToDelete && deleteMutation.mutate(connToDelete.id)}
+      />
     </div>
   );
 }
@@ -378,6 +434,7 @@ function IpsecTunnelsSubTab() {
   const tunnels = tunnelsList ?? [];
 
   const [selectedTunnel, setSelectedTunnel] = useState<IPSecTunnelIntent | null>(null);
+  const [tunnelToDeploy, setTunnelToDeploy] = useState<IPSecTunnelIntent | null>(null);
   const [previewText, setPreviewText] = useState<any>(null);
 
   const actionMutation = useMutation({
@@ -446,7 +503,7 @@ function IpsecTunnelsSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => actionMutation.mutate({ id: row.original.id, action: 'deploy' })}
+              onClick={() => setTunnelToDeploy(row.original)}
               className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok"
             >
               <Play className="h-3 w-3" /> Deploy
@@ -506,6 +563,22 @@ function IpsecTunnelsSubTab() {
           {JSON.stringify(previewText ?? {}, null, 2)}
         </pre>
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!tunnelToDeploy}
+        onOpenChange={(open) => {
+          if (!open) setTunnelToDeploy(null);
+        }}
+        title={`Deploy ${tunnelToDeploy?.name ?? 'this tunnel'} to the live firewall?`}
+        description="Deploy pushes the validated Phase 1/Phase 2 configuration and can interrupt traffic on the tunnel."
+        confirmLabel="Deploy tunnel"
+        pending={actionMutation.isPending}
+        onConfirm={() => {
+          if (!tunnelToDeploy) return;
+          actionMutation.mutate({ id: tunnelToDeploy.id, action: 'deploy' });
+          setTunnelToDeploy(null);
+        }}
+      />
     </div>
   );
 }

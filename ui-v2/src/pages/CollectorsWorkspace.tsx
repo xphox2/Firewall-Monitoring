@@ -18,28 +18,33 @@ import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
 type CollectorsTab = 'probes' | 'sites';
 
+// Wire shape of models.Probe. The previous approved/location/ip_address/
+// last_heartbeat names do not exist on the JSON payload, so every probe
+// rendered as "Pending Approval" with dead IP/heartbeat cells and the
+// approve/reject buttons showed for already-approved collectors.
 interface ProbeRecord {
   id: number;
   name: string;
-  location?: string;
-  ip_address?: string;
+  description?: string;
+  listen_address?: string;
   status: string;
-  approved: boolean;
-  decommissioned?: boolean;
-  version?: string;
-  last_heartbeat?: string;
+  approval_status: string;
+  decommissioned_at?: string | null;
+  agent_version?: string;
+  last_seen?: string;
   registration_key?: string;
 }
 
 interface SiteRecord {
   id: number;
   name: string;
-  location?: string;
+  address?: string;
   description?: string;
   parent_site_id?: number | null;
   alert_policy_id?: number | null;
@@ -122,12 +127,18 @@ function ProbesSubTab() {
   const [probeName, setProbeName] = useState('');
   const [probeLocation, setProbeLocation] = useState('');
   const [mintedKey, setMintedKey] = useState<string | null>(null);
+  // RejectProbe requires a reason; the old one-click POST sent an empty body
+  // and always 400'd.
+  const [rejectTarget, setRejectTarget] = useState<ProbeRecord | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
 
   const createProbeMutation = useMutation({
     mutationFn: async () =>
       apiFetch<ProbeRecord & { registration_key?: string }>('/admin/api/probes', {
         method: 'POST',
-        body: { name: probeName.trim(), location: probeLocation.trim() },
+        // models.Probe has no `location` column; description is the free-text
+        // field the register form is actually filling in.
+        body: { name: probeName.trim(), description: probeLocation.trim() },
       }),
     onSuccess: (res) => {
       if (res?.registration_key) {
@@ -161,11 +172,30 @@ function ProbesSubTab() {
     },
   });
 
+  const rejectMutation = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) =>
+      apiFetch(`/admin/api/probes/${id}/reject`, {
+        method: 'POST',
+        body: { reason },
+      }),
+    onSuccess: () => {
+      toast({ title: 'Collector rejected', variant: 'info' });
+      setRejectTarget(null);
+      setRejectReason('');
+      queryClient.invalidateQueries({ queryKey: ['probes'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Reject failed', description: err.message, variant: 'error' });
+    },
+  });
+
   const pingCommandMutation = useMutation({
     mutationFn: async (id: number) =>
       apiFetch(`/admin/api/probes/${id}/commands`, {
         method: 'POST',
-        body: { command_type: 'noop' },
+        // CreateProbeCommand binds `type`; command_type was ignored and the
+        // request 400'd with "Unsupported command type".
+        body: { type: 'noop' },
       }),
     onSuccess: () => {
       toast({ title: 'Heartbeat noop command enqueued', variant: 'info' });
@@ -181,7 +211,8 @@ function ProbesSubTab() {
           <div>
             <div className="font-semibold text-text">{row.original.name}</div>
             <div className="text-[11px] font-mono text-text-dim">
-              {row.original.ip_address || 'Awaiting heartbeat'} • {row.original.location || 'Global'}
+              {row.original.listen_address || 'Awaiting heartbeat'} •{' '}
+              {row.original.description || 'No description'}
             </div>
           </div>
         ),
@@ -194,30 +225,30 @@ function ProbesSubTab() {
             <span
               className={cn(
                 'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                row.original.decommissioned
+                row.original.decommissioned_at
                   ? 'bg-bg-panel text-text-faint'
-                  : !row.original.approved
+                  : row.original.approval_status !== 'approved'
                     ? 'bg-sig-warn/15 text-sig-warn'
                     : row.original.status === 'online' || row.original.status === 'active'
                       ? 'bg-sig-ok/15 text-sig-ok'
                       : 'bg-sig-crit/15 text-sig-crit'
               )}
             >
-              {row.original.decommissioned
+              {row.original.decommissioned_at
                 ? 'Decommissioned'
-                : !row.original.approved
-                  ? 'Pending Approval'
+                : row.original.approval_status !== 'approved'
+                  ? row.original.approval_status || 'Pending Approval'
                   : row.original.status || 'offline'}
             </span>
           </div>
         ),
       },
       {
-        accessorKey: 'last_heartbeat',
+        accessorKey: 'last_seen',
         header: 'Last Heartbeat',
         cell: ({ row }) => (
           <span className="font-mono text-xs text-text-dim">
-            {formatRelativeTime(row.original.last_heartbeat)}
+            {formatRelativeTime(row.original.last_seen)}
           </span>
         ),
       },
@@ -226,7 +257,7 @@ function ProbesSubTab() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1.5">
-            {!row.original.approved && !row.original.decommissioned && (
+            {row.original.approval_status !== 'approved' && !row.original.decommissioned_at && (
               <>
                 <button
                   type="button"
@@ -237,7 +268,10 @@ function ProbesSubTab() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => actionMutation.mutate({ id: row.original.id, action: 'reject' })}
+                  onClick={() => {
+                    setRejectTarget(row.original);
+                    setRejectReason('');
+                  }}
                   className="flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] font-semibold text-sig-crit"
                 >
                   <X className="h-3 w-3" /> Reject
@@ -262,7 +296,7 @@ function ProbesSubTab() {
               <Key className="h-3 w-3 inline mr-1" />
               Rotate Key
             </button>
-            {row.original.decommissioned ? (
+            {row.original.decommissioned_at ? (
               <button
                 type="button"
                 onClick={() => actionMutation.mutate({ id: row.original.id, action: 'recommission' })}
@@ -328,7 +362,7 @@ function ProbesSubTab() {
               </span>
             </div>
             <div className="text-xs font-mono text-text-dim">
-              {p.ip_address || 'No IP'} • Last seen: {formatRelativeTime(p.last_heartbeat)}
+              {p.listen_address || 'No IP'} • Last seen: {formatRelativeTime(p.last_seen)}
             </div>
           </div>
         )}
@@ -382,6 +416,46 @@ function ProbesSubTab() {
           </div>
         </div>
       </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!rejectTarget}
+        onOpenChange={(open) => {
+          if (!open) setRejectTarget(null);
+        }}
+        title={`Reject collector: ${rejectTarget?.name ?? ''}`}
+        subtitle="The rejection reason is stored on the probe and shown to operators."
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRejectTarget(null)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!rejectReason.trim() || rejectMutation.isPending}
+              onClick={() =>
+                rejectTarget &&
+                rejectMutation.mutate({ id: rejectTarget.id, reason: rejectReason.trim() })
+              }
+              className="rounded-md bg-sig-crit px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Reject Collector
+            </button>
+          </div>
+        }
+      >
+        <label className="block text-xs font-medium text-text-dim mb-1">Reason</label>
+        <textarea
+          rows={3}
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          placeholder="Unknown host / failed change ticket CHG-1234"
+          className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+        />
+      </SlideOverDrawer>
     </div>
   );
 }
@@ -398,9 +472,10 @@ function SitesSubTab() {
   const sites = sitesList ?? [];
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<SiteRecord | null>(null);
   const [editingSite, setEditingSite] = useState<Partial<SiteRecord>>({
     name: '',
-    location: '',
+    address: '',
     description: '',
   });
 
@@ -431,7 +506,13 @@ function SitesSubTab() {
     mutationFn: async (id: number) => apiFetch(`/admin/api/sites/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       toast({ title: 'Site deleted', variant: 'info' });
+      setSiteToDelete(null);
       queryClient.invalidateQueries({ queryKey: ['sites'] });
+    },
+    onError: (err: Error) => {
+      // DeleteSite returns 409 when the site still has children or devices;
+      // without this the trash click looked like it did nothing.
+      toast({ title: 'Site was not deleted', description: err.message, variant: 'error' });
     },
   });
 
@@ -443,9 +524,9 @@ function SitesSubTab() {
         cell: ({ row }) => <span className="font-semibold text-text">{row.original.name}</span>,
       },
       {
-        accessorKey: 'location',
+        accessorKey: 'address',
         header: 'Location',
-        cell: ({ row }) => <span className="text-xs text-text-dim">{row.original.location || '—'}</span>,
+        cell: ({ row }) => <span className="text-xs text-text-dim">{row.original.address || '—'}</span>,
       },
       {
         accessorKey: 'description',
@@ -469,7 +550,7 @@ function SitesSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => deleteSiteMutation.mutate(row.original.id)}
+              onClick={() => setSiteToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -493,7 +574,7 @@ function SitesSubTab() {
         <button
           type="button"
           onClick={() => {
-            setEditingSite({ name: '', location: '', description: '' });
+            setEditingSite({ name: '', address: '', description: '' });
             setDrawerOpen(true);
           }}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
@@ -511,7 +592,7 @@ function SitesSubTab() {
         renderMobileCard={(s) => (
           <div className="space-y-1">
             <div className="font-semibold text-sm text-text">{s.name}</div>
-            <div className="text-xs text-text-dim">{s.location || s.description || 'No location'}</div>
+            <div className="text-xs text-text-dim">{s.address || s.description || 'No location'}</div>
           </div>
         )}
       />
@@ -555,8 +636,8 @@ function SitesSubTab() {
             <label className="block text-xs font-medium text-text-dim mb-1">Geographic Location</label>
             <input
               type="text"
-              value={editingSite.location ?? ''}
-              onChange={(e) => setEditingSite((p) => ({ ...p, location: e.target.value }))}
+              value={editingSite.address ?? ''}
+              onChange={(e) => setEditingSite((p) => ({ ...p, address: e.target.value }))}
               placeholder="New York, NY"
               className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
             />
@@ -572,6 +653,19 @@ function SitesSubTab() {
           </div>
         </div>
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!siteToDelete}
+        onOpenChange={(open) => {
+          if (!open) setSiteToDelete(null);
+        }}
+        title={`Delete site ${siteToDelete?.name ?? ''}?`}
+        description="Devices and child sites must be moved first. This cannot be undone."
+        confirmLabel="Delete site"
+        destructive
+        pending={deleteSiteMutation.isPending}
+        onConfirm={() => siteToDelete && deleteSiteMutation.mutate(siteToDelete.id)}
+      />
     </div>
   );
 }
