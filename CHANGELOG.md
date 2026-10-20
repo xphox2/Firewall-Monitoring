@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file.
 
 - `admin-events.js` reads `window.AdminCommon` (`AC.escapeHtml`, `AC.apiFetch`) at load, but its `<script>` tag sat **before** `admin-common.js`, so the module threw at load and never defined `window.FwmonEvents` — the page showed "Events module failed to load" and made no API calls. Moved the tag after `admin-common.js` (and kept it after `enums.js`, before `admin-main.js`). A guardrail test pins the order so a future edit cannot silently reintroduce it.
 
+### Tests
+
+- The archive-restore harness queued jobs with `ExpiresAt` taken from a fixed fixture clock (2026-10-05 + the 7-day TTL), while the worker's expiry sweep compares it to the real clock. Once wall-clock time passed that instant (2026-10-12 12:00 UTC) `TestRestore_WorkerDiskPrecheck` began failing everywhere — the job was dropped as expired before the disk-precheck scenario ran. The harness now pushes `ExpiresAt` out relative to the real clock; the tests that exercise expiry set it explicitly.
+
 ## [0.11.327] - 2026-10-11
 
 ### Added — the Events page gets an event detail view with a "View raw syslog" forensic bridge

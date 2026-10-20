@@ -116,6 +116,20 @@ func (h *harness) queueRestore(req database.ArchiveRestoreRequest) *models.Archi
 	if err != nil {
 		h.t.Fatalf("queue restore: %v", err)
 	}
+	// QueueArchiveRestore stamps ExpiresAt from the harness's fixed fixture
+	// clock (now + the TTL), while RestoreWorker.dropExpired compares it to the
+	// REAL clock. On a fixed fixture date that eventually makes a queued job
+	// look expired, and the worker drops it before the test's scenario runs
+	// (TestRestore_WorkerDiskPrecheck failed once wall-clock passed
+	// fixture+TTL). Push ExpiresAt out relative to the real clock: these tests
+	// exercise the restore flow, not the expiry sweep, and the explicit expiry
+	// tests set expires_at themselves.
+	future := time.Now().UTC().Add(30 * 24 * time.Hour)
+	if err := h.db.Gorm().Model(&models.ArchiveRestoreJob{}).Where("id = ?", job.ID).
+		Update("expires_at", future).Error; err != nil {
+		h.t.Fatalf("queue restore: set expires_at: %v", err)
+	}
+	job.ExpiresAt = future
 	return job
 }
 
