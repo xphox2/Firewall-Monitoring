@@ -19,6 +19,7 @@ import {
   RotateCcw,
   Trash2,
   CheckCircle2,
+  Download,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
@@ -27,6 +28,8 @@ import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
+import { ConfigDiffDrawer } from '@/components/devices/config-diff-drawer';
+import type { RevisionMeta } from '@/lib/config-diff';
 import {
   bucketSeconds,
   counterDeltasToBps,
@@ -785,12 +788,17 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     queryKey: ['device-config-history', deviceId],
     queryFn: () =>
       apiFetch<{
-        revisions?: Array<{ id: number; timestamp: string; checksum: string }>;
+        revisions?: RevisionMeta[];
         total_all?: number;
       }>(`/admin/api/devices/${deviceId}/config-history`),
     enabled: activeTab === 'config',
   });
   const configRevs = configHistory?.revisions ?? [];
+  const [diffFrom, setDiffFrom] = useState<number | null>(null);
+  const [diffTo, setDiffTo] = useState<number | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const selectedFrom = configRevs.find((r) => r.id === diffFrom) ?? null;
+  const selectedTo = configRevs.find((r) => r.id === diffTo) ?? null;
 
   const { data: capabilities } = useQuery({
     queryKey: ['device-capabilities', deviceId],
@@ -995,7 +1003,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     <div className="space-y-5">
       <ClassicFallback
         title="Device charts, config diff and diagnostics are still in the classic console"
-        description="Charts and per-interface/per-tunnel traffic are now in the preview. The full config diff viewer, HA, SD-WAN, ping SLA, AV/IPS/web-filter, licence panels and per-core CPU/disk/load are still classic-only."
+        description="Charts, per-interface/per-tunnel traffic and config diff are now in the preview. HA, SD-WAN, ping SLA, AV/IPS/web-filter, licence panels and per-core CPU/disk/load are still classic-only."
         href={`/admin/devices/${deviceId ?? ''}`}
         label="Open this device in classic"
       />
@@ -1304,28 +1312,108 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
 
           {activeTab === 'config' && (
             <div className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
-              <h2 className="text-sm font-semibold text-text">
-                Configuration Revisions ({configRevs.length})
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-text">
+                    Configuration Revisions ({configRevs.length})
+                  </h2>
+                  <p className="text-[11px] text-text-faint">
+                    Pick two revisions to compare. Volatile values (IV churn, save timestamps) are
+                    normalised before diffing.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-text-dim">
+                    {selectedFrom?.id ?? '—'} → {selectedTo?.id ?? '—'}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!selectedFrom || !selectedTo || selectedFrom.id === selectedTo.id}
+                    onClick={() => setDiffOpen(true)}
+                    className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40"
+                  >
+                    Compare revisions
+                  </button>
+                </div>
+              </div>
+
               {configRevs.length === 0 ? (
                 <p className="text-xs text-text-dim">No configuration backups archived yet.</p>
               ) : (
-                <div className="space-y-2">
-                  {configRevs.map((rev) => (
-                    <div
-                      key={rev.id}
-                      className="flex items-center justify-between rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs"
-                    >
-                      <span className="font-mono text-text">
-                        Revision #{rev.id} • {formatRelativeTime(rev.timestamp)}
-                      </span>
-                      <span className="font-mono text-text-dim">
-                        {rev.checksum?.slice(0, 12)}
-                      </span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
+                        <th className="px-2 py-2 text-center font-semibold">From</th>
+                        <th className="px-2 py-2 text-center font-semibold">To</th>
+                        <th className="px-3 py-2 font-semibold">Revision</th>
+                        <th className="px-3 py-2 font-semibold">Trigger / Quality</th>
+                        <th className="px-3 py-2 font-semibold">Changed by</th>
+                        <th className="px-3 py-2 font-semibold">Checksum</th>
+                        <th className="px-3 py-2" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {configRevs.map((rev) => (
+                        <tr key={rev.id} className="hover:bg-bg-hover">
+                          <td className="px-2 py-2 text-center">
+                            <input
+                              type="radio"
+                              name="cfg-diff-from"
+                              aria-label={`Use revision ${rev.id} as the diff base`}
+                              checked={diffFrom === rev.id}
+                              onChange={() => setDiffFrom(rev.id)}
+                            />
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <input
+                              type="radio"
+                              name="cfg-diff-to"
+                              aria-label={`Compare revision ${rev.id}`}
+                              checked={diffTo === rev.id}
+                              onChange={() => setDiffTo(rev.id)}
+                            />
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="font-mono text-text">#{rev.id}</div>
+                            <div className="text-[11px] text-text-faint">
+                              {formatRelativeTime(rev.timestamp)}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-[11px] text-text-dim">
+                            {rev.trigger_source || '—'}
+                            {rev.backup_quality ? ` · ${rev.backup_quality}` : ''}
+                          </td>
+                          <td className="px-3 py-2 text-[11px] text-text-dim">
+                            {rev.changed_by || (rev.attribution_checked ? 'out-of-band' : '—')}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-[11px] text-text-faint">
+                            {rev.checksum?.slice(0, 12)}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <a
+                              href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
+                              title="Download this revision"
+                              className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
+
+              <ConfigDiffDrawer
+                key={`${diffFrom ?? 0}:${diffTo ?? 0}`}
+                open={diffOpen}
+                onOpenChange={setDiffOpen}
+                deviceId={Number(deviceId)}
+                from={selectedFrom}
+                to={selectedTo}
+              />
             </div>
           )}
 

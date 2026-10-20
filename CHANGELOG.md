@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.337] - 2026-10-20
+
+### Added — Config diff viewer in the Admin UI V2 preview
+
+- The device **Config** tab can now compare any two revisions: pick a **From** and **To** row and open the diff drawer (same-normalized-hash revisions are called out up front).
+- **Verdict header** with added/removed/modified counts, max risk severity, impact, vendor, per-side attribution (`changed_by` / method / out-of-band) and trigger source.
+- **Object diff**: per-object kind/name/path, op badge, risk severity, and attribute old→new tables; searchable across names, paths and attributes, with severity filters.
+- **Line diff**: aligned rows with line numbers, insert/delete/volatile colouring, volatile-pattern labels, text search and a hide-unchanged toggle; large diffs render in 1,500-row pages.
+- **Download** either revision as a text file.
+- Fails closed: when the server withholds a diff (truncation or unverifiable secret masking) the header says **"Diff incomplete"**, never "No changes".
+- Pure helpers in `ui-v2/src/lib/config-diff.ts` with tests (suite now 58).
+- Still classic-only on the device page: HA, SD-WAN, ping SLA, AV/IPS/web-filter, licence panels and per-core CPU/disk/load.
+
 ## [0.11.336] - 2026-10-20
 
 ### Added — Device telemetry charts in the Admin UI V2 preview
