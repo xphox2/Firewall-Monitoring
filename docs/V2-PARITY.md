@@ -38,6 +38,12 @@ V2:
 | Maintenance | 1 | 3 | 0 | 3 | 7 |
 | **Total** | **44** | **81** | **9** | **162** | **296** |
 
+## Since the v0.11.333 audit
+
+- **v0.11.335** — Event rule create/edit/delete with a condition builder, source-specific
+  dampening and preview. Event rule **profile** management (create/clone, On/Off/Inherit
+  matrix, site/device assignments) is still classic-only.
+
 ## Top gaps
 
 1. **No charts in V2.** No charting dependency. V1 draws ~30 series (dashboard
