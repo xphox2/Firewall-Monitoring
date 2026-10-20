@@ -395,8 +395,15 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
 // ============================================================================
 // SUB-TAB 2: POLICY & GEO ANALYTICS (SEPARATED FROM STREAM!)
 // ============================================================================
+function windowToDays(w: TimeWindow): number {
+  // GetNetEventRollups only reads `days` (1..365, default 30), so the hour
+  // ranges have to be expressed as whole days or the pills did nothing.
+  return Math.min(365, Math.max(1, Math.ceil(windowToHours(w) / 24)));
+}
+
 function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const hours = windowToHours(windowRange);
+  const days = windowToDays(windowRange);
 
   const { data: analytics, isLoading } = useQuery({
     queryKey: ['net-event-analytics', hours],
@@ -404,8 +411,8 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   });
 
   const { data: rollups } = useQuery({
-    queryKey: ['net-event-rollups', hours],
-    queryFn: () => apiFetch<any>(`/admin/api/events/rollups?hours=${hours}`),
+    queryKey: ['net-event-rollups', days],
+    queryFn: () => apiFetch<any>(`/admin/api/events/rollups?days=${days}`),
   });
 
   if (isLoading) {
@@ -416,37 +423,28 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
     );
   }
 
-  const topPolicies: any[] =
-    rollups?.top_rules ??
-    rollups?.policies ??
-    analytics?.top_policies ??
-    analytics?.policies ??
-    [];
-  const topCountries: any[] =
-    analytics?.geo_dst ??
-    analytics?.top_countries ??
-    analytics?.countries ??
-    [];
-  const topApps: any[] =
-    analytics?.apps ??
-    analytics?.top_apps ??
-    analytics?.app_categories ??
-    [];
+  // Rollups emit policy_hits: [{rule_key, hits, bytes_in, bytes_out}].
+  const topPolicies: Array<{ rule_key: string; hits: number }> = rollups?.policy_hits ?? [];
+  // NetEventGeoStat is {country, hits, bytes_in, bytes_out}; KeyCount is
+  // {key, count} where key is the application name. The old reads (`count`,
+  // `app`, `bytes`) rendered 0 and "Unknown" for every row.
+  const topCountries: Array<{ country: string; hits: number }> = analytics?.geo_dst ?? [];
+  const topApps: Array<{ key: string; count: number }> = analytics?.apps ?? [];
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-text">Top Firewall Policies ({windowRange})</h2>
+        <h2 className="text-sm font-semibold text-text">
+          Top Firewall Policies ({days === 1 ? '24h rollup' : windowRange})
+        </h2>
         {topPolicies.length === 0 ? (
           <p className="text-xs text-text-dim">No policy rollup data in this window.</p>
         ) : (
           <div className="space-y-2">
-            {topPolicies.slice(0, 8).map((p: any, i: number) => (
+            {topPolicies.slice(0, 8).map((p, i) => (
               <div key={i} className="flex items-center justify-between text-xs font-mono">
-                <span className="text-text truncate">
-                  {p.rule_key || p.policy_name || p.policy_id || 'Default'}
-                </span>
-                <span className="text-text-dim">{p.hits ?? p.events ?? p.count ?? 0} hits</span>
+                <span className="text-text truncate">{p.rule_key || 'Default'}</span>
+                <span className="text-text-dim">{p.hits ?? 0} hits</span>
               </div>
             ))}
           </div>
@@ -459,13 +457,13 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
           <p className="text-xs text-text-dim">No country breakdown in this window.</p>
         ) : (
           <div className="space-y-2">
-            {topCountries.slice(0, 8).map((c: any, i: number) => (
+            {topCountries.slice(0, 8).map((c, i) => (
               <div key={i} className="flex items-center justify-between text-xs font-mono">
                 <span className="text-text">
-                  <span className="fwmon-flag mr-1.5">{countryCodeToFlag(c.country || c.cc)}</span>
-                  {c.country || c.cc || 'Unknown'}
+                  <span className="fwmon-flag mr-1.5">{countryCodeToFlag(c.country)}</span>
+                  {c.country || 'Unknown'}
                 </span>
-                <span className="text-text-dim">{c.count ?? c.events ?? 0}</span>
+                <span className="text-text-dim">{c.hits ?? 0}</span>
               </div>
             ))}
           </div>
@@ -478,10 +476,10 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
           <p className="text-xs text-text-dim">No application telemetry in this window.</p>
         ) : (
           <div className="space-y-2">
-            {topApps.slice(0, 8).map((a: any, i: number) => (
+            {topApps.slice(0, 8).map((a, i) => (
               <div key={i} className="flex items-center justify-between text-xs font-mono">
-                <span className="text-text truncate">{a.app || a.category || a.service || 'Unknown'}</span>
-                <span className="text-text-dim">{formatBytes(a.bytes ?? a.total_bytes ?? 0)}</span>
+                <span className="text-text truncate">{a.key || 'Unknown'}</span>
+                <span className="text-text-dim">{a.count ?? 0} hits</span>
               </div>
             ))}
           </div>

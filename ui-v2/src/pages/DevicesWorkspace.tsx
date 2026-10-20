@@ -815,11 +815,19 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     refetchInterval: 15_000,
   });
 
-  const { data: configRevs } = useQuery({
+  // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
+  // this as an array made `.map` throw and (before the ErrorBoundary) blanked
+  // the whole console when the Config tab opened.
+  const { data: configHistory } = useQuery({
     queryKey: ['device-config-history', deviceId],
-    queryFn: () => apiFetch<any[]>(`/admin/api/devices/${deviceId}/config-history`),
+    queryFn: () =>
+      apiFetch<{
+        revisions?: Array<{ id: number; timestamp: string; checksum: string }>;
+        total_all?: number;
+      }>(`/admin/api/devices/${deviceId}/config-history`),
     enabled: activeTab === 'config',
   });
+  const configRevs = configHistory?.revisions ?? [];
 
   const { data: capabilities } = useQuery({
     queryKey: ['device-capabilities', deviceId],
@@ -1039,21 +1047,23 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           {activeTab === 'config' && (
             <div className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
               <h2 className="text-sm font-semibold text-text">
-                Configuration Revisions ({(configRevs ?? []).length})
+                Configuration Revisions ({configRevs.length})
               </h2>
-              {(configRevs ?? []).length === 0 ? (
+              {configRevs.length === 0 ? (
                 <p className="text-xs text-text-dim">No configuration backups archived yet.</p>
               ) : (
                 <div className="space-y-2">
-                  {(configRevs ?? []).map((rev: any) => (
+                  {configRevs.map((rev) => (
                     <div
                       key={rev.id}
                       className="flex items-center justify-between rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs"
                     >
                       <span className="font-mono text-text">
-                        Revision #{rev.id} • {formatRelativeTime(rev.created_at)}
+                        Revision #{rev.id} • {formatRelativeTime(rev.timestamp)}
                       </span>
-                      <span className="font-mono text-text-dim">{rev.hash?.slice(0, 12)}</span>
+                      <span className="font-mono text-text-dim">
+                        {rev.checksum?.slice(0, 12)}
+                      </span>
                     </div>
                   ))}
                 </div>

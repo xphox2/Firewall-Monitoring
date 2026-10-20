@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldAlert, Search, Plus, Trash2, Globe, Sliders } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { cn, countryCodeToFlag } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
@@ -92,12 +92,15 @@ function IpLookupSubTab() {
     if (!ip) return;
     setLoading(true);
     try {
-      const [ti, geo] = await Promise.all([
-        apiFetch<any>(`/admin/api/threat-intel/lookup?ip=${encodeURIComponent(ip)}`),
+      // LookupThreatIntel reads ?q= (not ?ip=). Resolve both panels
+      // independently: a threat-lookup 400 used to take the geo panel down with
+      // it because the pair shared one Promise.all rejection.
+      const [ti, geo] = await Promise.allSettled([
+        apiFetch<any>(`/admin/api/threat-intel/lookup?q=${encodeURIComponent(ip)}`),
         apiFetch<any>(`/admin/api/geo/lookup?ips=${encodeURIComponent(ip)}`),
       ]);
-      setLookupResult(ti);
-      setGeoResult(geo);
+      setLookupResult(ti.status === 'fulfilled' ? ti.value : { error: ti.reason?.message });
+      setGeoResult(geo.status === 'fulfilled' ? geo.value : { error: geo.reason?.message });
     } finally {
       setLoading(false);
     }
@@ -164,10 +167,21 @@ function FeedsAndIndicatorsSubTab() {
     queryFn: () => apiFetch<any>('/admin/api/threat-intel/search?limit=50'),
   });
 
-  const feeds: any[] = Array.isArray(feedsRes) ? feedsRes : feedsRes?.feeds ?? [];
-  const indicators: any[] = Array.isArray(indicatorsRes)
-    ? indicatorsRes
-    : indicatorsRes?.indicators ?? indicatorsRes?.items ?? [];
+  // GetThreatFeeds returns the per-feed rows under `status`
+  // ({feeds, loaded_count, by_source}); SearchThreatIntel returns `entries`.
+  const feeds: Array<{
+    source: string;
+    entry_count: number;
+    enabled: boolean;
+    last_error?: string;
+  }> = feedsRes?.status ?? [];
+  const indicators: Array<{
+    id: number;
+    cidr: string;
+    category?: string;
+    source?: string;
+    severity?: string;
+  }> = indicatorsRes?.entries ?? [];
 
   const toggleFeedMutation = useMutation({
     mutationFn: async ({ source, enabled }: { source: string; enabled: boolean }) =>
@@ -185,7 +199,15 @@ function FeedsAndIndicatorsSubTab() {
     mutationFn: async () =>
       apiFetch('/admin/api/flows/threat-intel', {
         method: 'POST',
-        body: { ip_or_cidr: newIndicator.trim(), description: newLabel.trim(), severity: 'high' },
+        // AddThreatIntel requires `cidr`; the old ip_or_cidr/description body
+        // was silently dropped and every add 400'd. threat_intel has no
+        // description column, so the free-text box is the category.
+        body: {
+          cidr: newIndicator.trim(),
+          category: newLabel.trim(),
+          source: 'manual',
+          severity: 'warning',
+        },
       }),
     onSuccess: () => {
       toast({ title: 'Custom IOC indicator added', variant: 'success' });
@@ -215,12 +237,10 @@ function FeedsAndIndicatorsSubTab() {
         ),
       },
       {
-        accessorKey: 'indicator_count',
+        accessorKey: 'entry_count',
         header: 'Active IOCs',
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-accent">
-            {row.original.indicator_count ?? row.original.count ?? 0}
-          </span>
+          <span className="font-mono text-xs text-accent">{row.original.entry_count ?? 0}</span>
         ),
       },
       {
@@ -256,8 +276,8 @@ function FeedsAndIndicatorsSubTab() {
         emptyTitle="No threat feeds registered."
         renderMobileCard={(f) => (
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-text">{f.name || f.source}</span>
-            <span className="font-mono text-accent">{f.indicator_count ?? 0} IOCs</span>
+            <span className="font-semibold text-text">{f.source}</span>
+            <span className="font-mono text-accent">{f.entry_count ?? 0} IOCs</span>
           </div>
         )}
       />
@@ -276,7 +296,7 @@ function FeedsAndIndicatorsSubTab() {
             type="text"
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
-            placeholder="Reason / Ticket ID"
+            placeholder="Category / Ticket ID"
             className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
           />
           <button
@@ -291,14 +311,14 @@ function FeedsAndIndicatorsSubTab() {
 
         {indicators.length > 0 && (
           <div className="space-y-1.5 pt-2">
-            {indicators.slice(0, 15).map((ind: any) => (
+            {indicators.slice(0, 15).map((ind) => (
               <div
-                key={ind.id || ind.ip_or_cidr}
+                key={ind.id || ind.cidr}
                 className="flex items-center justify-between rounded border border-border bg-bg-panel px-3 py-1.5 text-xs"
               >
                 <span className="font-mono text-text">
-                  {ind.country && <span className="fwmon-flag mr-1">{countryCodeToFlag(ind.country)}</span>}
-                  {ind.ip_or_cidr || ind.ip} — <span className="text-text-dim">{ind.description || ind.source}</span>
+                  {ind.cidr} —{' '}
+                  <span className="text-text-dim">{ind.category || ind.source || 'manual'}</span>
                 </span>
                 {ind.id && (
                   <button
