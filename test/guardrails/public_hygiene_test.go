@@ -83,7 +83,13 @@ var (
 // files next to them (diagram-cytoscape.js, for example) are still scanned.
 var hygieneSkip = map[string]bool{
 	"package-lock.json":                            true,
+	"ui-v2/package-lock.json":                      true,
 	"cmd/api/static/css/tailwind.css":              true, // generated
+	"cmd/api/static/v2/v2.css":                     true, // generated
+	"cmd/api/static/v2/v2.js":                      true, // generated
+	"cmd/api/static/v2/chunks/vendor.js":           true, // vendored bundle
+	"cmd/api/static/v2/chunks/query.js":            true, // vendored bundle
+	"cmd/api/static/v2/chunks/icons.js":            true, // vendored bundle
 	"cmd/api/static/css/gridstack.min.css":         true,
 	"cmd/api/static/css/uPlot.min.css":             true,
 	"cmd/api/static/js/chart.umd.min.js":           true,

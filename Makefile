@@ -109,6 +109,14 @@ tailwind: node_modules ## Compile Tailwind CSS assets
 tailwind-check: tailwind ## Fail if the committed tailwind.css is stale (CI tailwind-freshness)
 	@git diff --quiet -- cmd/api/static/css/tailwind.css || { echo "tailwind.css is stale: commit the regenerated file (or rename a JS token like !badge that Tailwind reads as a class)"; exit 1; }
 
+ui-v2/node_modules: ui-v2/package.json ui-v2/package-lock.json
+	cd ui-v2 && npm install
+	@touch ui-v2/node_modules
+
+.PHONY: ui-v2
+ui-v2: ui-v2/node_modules ## Typecheck and compile the V2 React/TypeScript admin UI into cmd/api/static/v2
+	cd ui-v2 && npm run build
+
 .PHONY: build
 build: tailwind ## Build all binaries into ./bin (reproducible, canonical fwmon-* names)
 	@mkdir -p $(BIN_DIR)

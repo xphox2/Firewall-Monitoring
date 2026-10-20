@@ -2,7 +2,9 @@
 module.exports = {
   content: [
     "./web/**/*.html",
+    "!./web/admin/admin-v2.html",
     "./cmd/api/**/*.js",
+    "!./cmd/api/static/v2/**",
   ],
   theme: {
     extend: {

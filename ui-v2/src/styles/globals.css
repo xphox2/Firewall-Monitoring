@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+:root[data-theme="dark"] {
+  --fwmon-font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --fwmon-font-heading: "Archivo", var(--fwmon-font-ui);
+  --fwmon-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --fwmon-series-1: #4c8dff;
+  --fwmon-series-2: #f2555a;
+  --fwmon-series-3: #e7b53c;
+  --fwmon-series-4: #36c98a;
+  --fwmon-series-5: #c4b5fd;
+  --fwmon-series-6: #f0abfc;
+  --fwmon-series-7: #f4783b;
+  --fwmon-series-8: #5eead4;
+
+  --fwmon-accent: #4c8dff;
+  --fwmon-accent-hover: #6aa1ff;
+  --fwmon-accent-soft: rgba(76, 141, 255, 0.13);
+  --fwmon-accent-bg: rgba(76, 141, 255, 0.13);
+  --fwmon-accent-shadow: rgba(76, 141, 255, 0.22);
+  --fwmon-on-accent: #ffffff;
+
+  --fwmon-btn-ok: #218a5a;
+  --fwmon-btn-ok-hover: #28a06a;
+
+  --fwmon-sig-ok: #36c98a;
+  --fwmon-sig-info: #6ca8c4;
+  --fwmon-sig-warn: #e7b53c;
+  --fwmon-sig-error: #f4783b;
+  --fwmon-sig-crit: #f2555a;
+  --fwmon-sig-emerg: #ff3d8b;
+
+  --fwmon-bg: #0d1117;
+  --fwmon-card-bg: #161b22;
+  --fwmon-panel-bg: #1f2630;
+  --fwmon-elevated-bg: #242c37;
+  --fwmon-hover: #21282f;
+  --fwmon-row-hover: #21282f;
+  --fwmon-border: #2a313b;
+  --fwmon-border-subtle: #212730;
+  --fwmon-border-strong: #3b4654;
+
+  --fwmon-chart-arc-border: #ffffff;
+
+  /* AA-verified text tokens (AUDIT-066 / AUDIT-067 / v0.11.70) */
+  --fwmon-text: #e6edf3;
+  --fwmon-text-dim: #c9d1d9;
+  --fwmon-text-faint: #8b949e;
+  --fwmon-text-mute: #828d99;
+
+  --fwmon-radius: 8px;
+  --fwmon-radius-sm: 4px;
+  --fwmon-radius-lg: 12px;
+
+  --fwmon-elev-1: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 2px 10px rgba(0, 0, 0, 0.5);
+  --fwmon-elev-2: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 12px 34px rgba(0, 0, 0, 0.6);
+
+  --fwmon-axis-stroke: #828d99;
+  --fwmon-grid-stroke: #1c222b;
+  --fwmon-tick-stroke: #2a313b;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --fwmon-series-1: #2563eb;
+  --fwmon-series-2: #c8323a;
+  --fwmon-series-3: #9a6b0e;
+  --fwmon-series-4: #138a5e;
+  --fwmon-series-5: #6d28d9;
+  --fwmon-series-6: #a21caf;
+  --fwmon-series-7: #c24a1a;
+  --fwmon-series-8: #0f766e;
+
+  --fwmon-accent: #2563eb;
+  --fwmon-accent-hover: #1d4fc4;
+  --fwmon-accent-soft: rgba(37, 99, 235, 0.10);
+  --fwmon-accent-bg: rgba(37, 99, 235, 0.10);
+  --fwmon-accent-shadow: rgba(37, 99, 235, 0.22);
+  --fwmon-on-accent: #ffffff;
+
+  --fwmon-btn-ok: #0f7a4c;
+  --fwmon-btn-ok-hover: #0c6640;
+
+  --fwmon-sig-ok: #138a5e;
+  --fwmon-sig-info: #2e6e8e;
+  --fwmon-sig-warn: #9a6b0e;
+  --fwmon-sig-error: #c24a1a;
+  --fwmon-sig-crit: #c8323a;
+  --fwmon-sig-emerg: #c71e6b;
+
+  --fwmon-bg: #f2f4f7;
+  --fwmon-card-bg: #ffffff;
+  --fwmon-panel-bg: #eaeef3;
+  --fwmon-elevated-bg: #ffffff;
+  --fwmon-hover: #e4e9f0;
+  --fwmon-row-hover: #e4e9f0;
+  --fwmon-border: #d3dae3;
+  --fwmon-border-subtle: #e2e7ee;
+  --fwmon-border-strong: #b9c4d0;
+
+  --fwmon-chart-arc-border: #161b22;
+
+  --fwmon-text: #16242c;
+  --fwmon-text-dim: #2d3d45;
+  --fwmon-text-faint: #4a5c66;
+  --fwmon-text-mute: #5f6e79;
+
+  --fwmon-elev-1: 0 1px 2px rgba(22, 36, 44, 0.08), 0 2px 8px rgba(22, 36, 44, 0.06);
+  --fwmon-elev-2: 0 2px 4px rgba(22, 36, 44, 0.10), 0 8px 28px rgba(22, 36, 44, 0.12);
+
+  --fwmon-axis-stroke: #5f6e79;
+  --fwmon-grid-stroke: #dde3ea;
+  --fwmon-tick-stroke: #d3dae3;
+
+  color-scheme: light;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: var(--fwmon-bg);
+    color: var(--fwmon-text);
+    font-family: var(--fwmon-font-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--fwmon-text-faint);
+    opacity: 1;
+  }
+}
+
+.fwmon-geo-credit {
+  color: var(--fwmon-text-mute);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.fwmon-geo-credit:hover {
+  color: var(--fwmon-text-dim);
+  text-decoration: underline;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

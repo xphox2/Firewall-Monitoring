@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.332] - 2026-10-20
+
+### Added — Side-by-Side Admin UI V2 Console (`/admin/v2`)
+
+- Added the modular React 19 + TypeScript 5 + Vite 6 + Tailwind CSS + Radix UI Admin Console under `ui-v2/`, compiled into `cmd/api/static/v2/` (`v2.js`, `v2.css`, `chunks/*.js`) and served at `GET /admin/v2` and `GET /admin/v2/*path` alongside the classic `/admin` interface.
+- Consolidated 21 legacy navigation destinations into 5 workspaces (**Monitor**, **Telemetry**, **Security & Alerts**, **Infrastructure**, and **Configuration**) with Desktop (`1440×900`), Tablet (`768×1024`), and Mobile (`390×844`) responsive parity and zero horizontal overflow.
+- Added universal `<StickySaveBar>` (`Cmd+S` / `Ctrl+S`), `<SlideOverDrawer>` editors (replacing the oversized Device, Policy, and Event Rule modals), `<ResponsiveDataView>` (TanStack Table v8 on Desktop/Tablet with automatic Mobile card view switching), `<StepUpAuthDialog>`, `<ForcedPasswordChangeModal>`, and global `Cmd+K` Command Palette.
+- Replaced the 9,589px Settings → Retention scroll-wall with the 3-tab **Storage, Retention & Archive Matrix** (`/admin/v2/configuration/storage`), unified Alerting & Anomaly Detection into 5 domain cards (`/admin/v2/configuration/alerting`), and moved the Events Stream table above the fold (`y = 377px` on Mobile) by separating the Analytics sub-tab (`/admin/v2/events`).
+
 ## [0.11.331] - 2026-10-20
 
 ### Fixed — Policy Bytes and Deny showed a single dot for 1h / 6h / 12h / 24h
