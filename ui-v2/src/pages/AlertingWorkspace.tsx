@@ -15,6 +15,7 @@ import {
   FlaskConical,
 } from 'lucide-react';
 import { apiFetch, ApiError, type MeResponse } from '@/lib/api';
+import { buildAlertPolicyBody, type AlertPolicy } from '@/lib/alert-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -39,38 +40,6 @@ interface AlertOverviewResponse {
     kind?: string;
     value?: any;
     shadowed_by_rule?: boolean;
-  }>;
-}
-
-interface AlertPolicy {
-  id: number;
-  name: string;
-  description?: string;
-  is_default?: boolean;
-  // Wire fields match models.AlertPolicy exactly. The previous *_enabled names
-  // were never bound by the handler, and because UpdateAlertPolicy binds a
-  // fresh struct and Save()s every column, sending them silently disabled all
-  // channels and erased the webhook URLs on the next edit.
-  notify_email?: boolean;
-  notify_slack?: boolean;
-  notify_discord?: boolean;
-  notify_teams?: boolean;
-  notify_webhook?: boolean;
-  notify_pagerduty?: boolean;
-  notify_opsgenie?: boolean;
-  email_recipients?: string;
-  slack_webhook_url?: string;
-  discord_webhook_url?: string;
-  webhook_url?: string;
-  cooldown_minutes?: number;
-  escalation_enabled?: boolean;
-  escalation_minutes?: number;
-  escalation_repeat?: number;
-  escalation_steps?: string;
-  rules?: Array<{
-    alert_type: string;
-    enabled: boolean;
-    min_severity?: string;
   }>;
 }
 
@@ -581,39 +550,18 @@ export function AlertingWorkspace() {
     }
     setSavingPolicy(true);
     try {
-      // `|| 15` turned a deliberate 0 (no cooldown) into 15; only fall back
-      // when the field is genuinely empty or non-numeric.
-      const cooldownRaw = Number(policyCooldown);
-      const cooldown =
-        policyCooldown.trim() !== '' && Number.isFinite(cooldownRaw) && cooldownRaw >= 0
-          ? cooldownRaw
-          : 15;
-      // Round-trip every column: UpdateAlertPolicy binds a fresh struct and
-      // Save()s all of them, so anything omitted here is written back as its
-      // zero value (the exact way the webhook URLs and escalation config were
-      // being erased). The read path masks secrets with "********"; sending the
-      // mask back is what triggers the handler's preserve-on-write restore.
-      const body = {
-        name: policyName.trim(),
-        description: policyDesc.trim(),
-        cooldown_minutes: cooldown,
-        notify_email: policyEmail,
-        notify_slack: policySlack,
-        notify_discord: policyDiscord,
-        notify_teams: policyTeams,
-        notify_webhook: policyWebhook,
-        notify_pagerduty: policyPagerduty,
-        notify_opsgenie: editingPolicy.notify_opsgenie ?? false,
-        email_recipients: policyRecipients.trim(),
-        slack_webhook_url: editingPolicy.slack_webhook_url ?? '',
-        discord_webhook_url: editingPolicy.discord_webhook_url ?? '',
-        webhook_url: editingPolicy.webhook_url ?? '',
-        escalation_enabled: editingPolicy.escalation_enabled ?? false,
-        escalation_minutes: editingPolicy.escalation_minutes ?? 30,
-        escalation_repeat: editingPolicy.escalation_repeat ?? 3,
-        escalation_steps: editingPolicy.escalation_steps ?? '',
-        is_default: editingPolicy.is_default ?? false,
-      };
+      const body = buildAlertPolicyBody(editingPolicy, {
+        name: policyName,
+        description: policyDesc,
+        cooldown: policyCooldown,
+        email: policyEmail,
+        slack: policySlack,
+        discord: policyDiscord,
+        teams: policyTeams,
+        webhook: policyWebhook,
+        pagerduty: policyPagerduty,
+        recipients: policyRecipients,
+      });
       if (editingPolicy.id === 0) {
         await apiFetch('/admin/api/alert-policies', { method: 'POST', body });
         toast.success('Notification profile created');
