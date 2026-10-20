@@ -602,12 +602,47 @@ type NetEventRollupDirection struct {
 // Deny) are ordered oldest-first; the breakdowns are ordered by count
 // descending (directions by id) for direct charting.
 type NetEventRollupStatsResult struct {
-	PolicyHits    []NetEventRollupRule      `json:"policy_hits"`
-	PolicyBytes   []NetEventRollupDay       `json:"policy_bytes"`
-	Deny          []NetEventRollupDay       `json:"deny"`
-	AppCategories []KeyCount                `json:"app_categories"`
-	Directions    []NetEventRollupDirection `json:"directions"`
-	Rulesets      []KeyCount                `json:"rulesets"`
+	PolicyHits  []NetEventRollupRule `json:"policy_hits"`
+	PolicyBytes []NetEventRollupDay  `json:"policy_bytes"`
+	// PolicyBytesFrom is the first day the byte series is trustworthy, when a
+	// retrofitted install has stored netEventRollupBytesValidFromKey. It lets
+	// the UI say "since <day>" instead of showing pre-fix bytes that were
+	// reconciled under the old cumulative-counter bug. Empty = no clamp.
+	PolicyBytesFrom string                    `json:"policy_bytes_from,omitempty"`
+	Deny            []NetEventRollupDay       `json:"deny"`
+	AppCategories   []KeyCount                `json:"app_categories"`
+	Directions      []NetEventRollupDirection `json:"directions"`
+	Rulesets        []KeyCount                `json:"rulesets"`
+}
+
+// netEventRollupBytesValidFromKey is the optional YYYY-MM-DD floor for the
+// policy-bytes series. It exists for installs that collected FortiGate
+// traffic rows before "accept" records stopped storing cumulative session
+// counters (the fix in internal/normalize/mapper_fortigate.go): the rollup
+// rows before the repaired day cannot be un-summed, so the chart starts at
+// the first day that was rebuilt from corrected data. Absent = no clamp, the
+// normal state on a fresh install. Set by the operator as part of the
+// retrofit (see docs/DATA-RETENTION.md).
+const netEventRollupBytesValidFromKey = "net_event_rollup_bytes_valid_from"
+
+// rollupBytesFrom clamps the policy-bytes window to the retrofit marker, if
+// one is stored. The other series keep the full window: their counts are not
+// affected by the cumulative-counter bug.
+func (d *Database) rollupBytesFrom(from time.Time) (time.Time, string) {
+	v, ok := d.GetSettingValue(netEventRollupBytesValidFromKey)
+	if !ok {
+		return from, ""
+	}
+	t, err := time.Parse(time.DateOnly, strings.TrimSpace(v))
+	if err != nil {
+		return from, ""
+	}
+	if t.After(from) {
+		return t, t.Format(time.DateOnly)
+	}
+	// The marker predates the window: the whole series is already trusted, so
+	// no label is needed.
+	return from, ""
 }
 
 // rollupByteSums is the shared SELECT tail for the rule and day-bucketed
@@ -677,11 +712,21 @@ func (d *Database) NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupS
 
 	res := &NetEventRollupStatsResult{}
 
-	// policy_hits: the top rules by SUM(hits) with their bytes, over the whole
-	// window (a ranking, not a time series). The empty rule_key sentinel is
-	// excluded so "top rules" names real rules.
+	// The retrofit floor applies to every BYTE column the response exposes.
+	// Counts (hits, distinct sources, app categories) keep the full window:
+	// the cumulative-counter bug never touched them.
+	policyFrom, policyFromLabel := d.rollupBytesFrom(from)
+	res.PolicyBytesFrom = policyFromLabel
+
+	// policy_hits: the top rules by SUM(hits) over the whole window (a
+	// ranking, not a time series), with their bytes taken only from the
+	// trusted floor. The empty rule_key sentinel is excluded so "top rules"
+	// names real rules.
+	hitsWithClampedBytes := "CAST(SUM(hits) AS BIGINT) AS hits, " +
+		"CAST(COALESCE(SUM(CASE WHEN day >= ? THEN bytes_in END), 0) AS BIGINT) AS bytes_in, " +
+		"CAST(COALESCE(SUM(CASE WHEN day >= ? THEN bytes_out END), 0) AS BIGINT) AS bytes_out"
 	if err := base().
-		Select("rule_key, " + rollupByteSums).
+		Select("rule_key, "+hitsWithClampedBytes, policyFrom, policyFrom).
 		Where("rule_key <> ''").
 		Group("rule_key").Order("hits DESC").Limit(netEventRollupTopRules).
 		Scan(&res.PolicyHits).Error; err != nil {
@@ -691,9 +736,10 @@ func (d *Database) NetEventRollupStats(f NetEventRollupFilter) (*NetEventRollupS
 	// policy_bytes: the bytes carried per day across every action — the whole
 	// reason the rollup exists, served day-by-day for the trend chart. Grouping
 	// by the day column (already a UTC midnight) gives one row per day, riding
-	// the unique key's leading column.
+	// the unique key's leading column. The retrofit floor (if any) starts the
+	// series at the first day whose bytes were rebuilt from corrected input.
 	var policyBytes []netEventRollupDayRow
-	if err := base().
+	if err := base().Where("day >= ?", policyFrom).
 		Select("day, " + rollupByteSums).
 		Group("day").Order("day ASC").
 		Scan(&policyBytes).Error; err != nil {

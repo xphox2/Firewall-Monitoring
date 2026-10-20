@@ -176,8 +176,23 @@ func fgTraffic(kv map[string]string, ev *Event) Outcome {
 	fgRule(kv, ev)
 	ev.App, ev.AppCat = kv["app"], kv["appcat"]
 	ev.AppRisk = ev.fgAppRisk(kv["apprisk"])
-	ev.BytesOut, ev.BytesIn = ev.i64(kv["sentbyte"]), ev.i64(kv["rcvdbyte"])
-	ev.PktsOut, ev.PktsIn = ev.i64(kv["sentpkt"]), ev.i64(kv["rcvdpkt"])
+	// Only a record that ENDS the session carries a usable byte count.
+	//
+	// FortiOS repeats the session's CUMULATIVE counters on every "accept"
+	// (start / update) record, so treating each one as a flow of its own
+	// inflates every consumer that adds them up. On production one long-lived
+	// syslog session (sessionid 22462, duration 24 days) logs its 63 GB total
+	// about 700 times a day; summed, that is ~44 TB for a day whose real
+	// traffic is ~95 GB (measured against flow_rollups). The close / reset /
+	// timeout / deny records each carry the final totals exactly once, so they
+	// keep them. An open session shows no byte count until it closes — the
+	// delta since the previous record cannot be known from a lone cumulative
+	// record, and a wrong number is worse than a late one. The raw syslog
+	// line keeps the figures for forensics.
+	if fgTerminalTrafficAction(action) {
+		ev.BytesOut, ev.BytesIn = ev.i64(kv["sentbyte"]), ev.i64(kv["rcvdbyte"])
+		ev.PktsOut, ev.PktsIn = ev.i64(kv["sentpkt"]), ev.i64(kv["rcvdpkt"])
+	}
 	if d := ev.i64(kv["duration"]); d != nil && *d*1000 <= 2147483647 {
 		ev.DurationMS = ev.p32(int32(*d * 1000))
 	}
@@ -195,6 +210,19 @@ func fgTraffic(kv map[string]string, ev *Event) Outcome {
 	ev.extra("service", kv["service"])
 	ev.extra("subtype", kv["subtype"])
 	return ok()
+}
+
+// fgTerminalTrafficAction reports whether a traffic record ends (or verdicts)
+// the session, so its sentbyte/rcvdbyte are the session's final totals rather
+// than a cumulative snapshot. "accept" and "start" are start/update records;
+// a missing action is kept as terminal so hand-fed or truncated lines behave
+// as before.
+func fgTerminalTrafficAction(a string) bool {
+	switch a {
+	case "", "close", "client-rst", "server-rst", "timeout", "deny", "ip-conn", "dns":
+		return true
+	}
+	return false
 }
 
 func (ev *Event) fgAppRisk(s string) *int16 {

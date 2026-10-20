@@ -401,7 +401,7 @@ func TestFortiGateTypeInference(t *testing.T) {
 // fall back to individual boxes; every value must survive copying the Event.
 func TestEvent_SlabOverflowKeepsValues(t *testing.T) {
 	t.Parallel()
-	line := `type="traffic" subtype="forward" policyid=1 sentbyte=2 rcvdbyte=3 sentpkt=4 rcvdpkt=5 duration=6 srcip=192.0.2.1 dstip=192.0.2.2 transip=192.0.2.3 tranip=192.0.2.4 trandisp="snat+dnat" srcport=1 dstport=2 transport=3 tranport=4 proto=6 apprisk="high" action="accept"`
+	line := `type="traffic" subtype="forward" policyid=1 sentbyte=2 rcvdbyte=3 sentpkt=4 rcvdpkt=5 duration=6 srcip=192.0.2.1 dstip=192.0.2.2 transip=192.0.2.3 tranip=192.0.2.4 trandisp="snat+dnat" srcport=1 dstport=2 transport=3 tranport=4 proto=6 apprisk="high" action="close"`
 	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
 	if out.Kind != OutcomeOK {
 		t.Fatal(out)
@@ -420,6 +420,58 @@ func TestEvent_SlabOverflowKeepsValues(t *testing.T) {
 		if *p != int64(i) {
 			t.Errorf("slot %d = %d", i, *p)
 		}
+	}
+}
+
+// TestFortiGate_CumulativeAcceptCountersAreNotStored: an "accept" traffic log
+// repeats the session's cumulative counters, so storing them as the event's
+// bytes makes SUM(bytes) count the same traffic once per update (on prod that
+// turned ~95 GB/day into ~55 TB/day). Terminal records keep their final totals.
+func TestFortiGate_CumulativeAcceptCountersAreNotStored(t *testing.T) {
+	t.Parallel()
+	accept := `type="traffic" subtype="forward" policyid=12 sessionid=22462 proto=17 action="accept" duration=2072635 sentbyte=63878024223 rcvdbyte=0 sentpkt=83145473 rcvdpkt=0 srcip=192.0.2.10 dstip=203.0.113.20 dstport=514`
+	ev, out := Normalize("fortigate", &models.SyslogMessage{Message: accept})
+	if out.Kind != OutcomeOK {
+		t.Fatal(out)
+	}
+	if ev.BytesOut != nil || ev.BytesIn != nil || ev.PktsOut != nil || ev.PktsIn != nil {
+		t.Fatalf("accept counters stored as event bytes: out=%v in=%v pkts=%v/%v", ev.BytesOut, ev.BytesIn, ev.PktsOut, ev.PktsIn)
+	}
+	// The session identity and duration still ride along: the update is a real
+	// event, it just has no interval byte count.
+	if ev.SessionID != "22462" || ev.DurationMS == nil || *ev.DurationMS != 2072635000 {
+		t.Fatalf("session provenance lost: session=%q duration=%v", ev.SessionID, ev.DurationMS)
+	}
+
+	for _, action := range []string{"close", "client-rst", "server-rst", "timeout", "deny", "ip-conn", "dns"} {
+		line := strings.Replace(accept, `action="accept"`, `action="`+action+`"`, 1)
+		ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+		if out.Kind != OutcomeOK {
+			t.Fatalf("%s: %v", action, out)
+		}
+		if ev.BytesOut == nil || *ev.BytesOut != 63878024223 || ev.BytesIn == nil || *ev.BytesIn != 0 {
+			t.Fatalf("%s: bytes = %v/%v, want the session totals kept", action, ev.BytesOut, ev.BytesIn)
+		}
+	}
+
+	// "start" and an unrecognised verdict are start/update-style records: their
+	// counters are cumulative snapshots too, so they must not be stored.
+	for _, action := range []string{"start", "weird"} {
+		line := strings.Replace(accept, `action="accept"`, `action="`+action+`"`, 1)
+		ev, out := Normalize("fortigate", &models.SyslogMessage{Message: line})
+		if out.Kind != OutcomeOK {
+			t.Fatalf("%s: %v", action, out)
+		}
+		if ev.BytesOut != nil || ev.BytesIn != nil {
+			t.Fatalf("%s: bytes stored (%v/%v), want none for a non-terminal record", action, ev.BytesOut, ev.BytesIn)
+		}
+	}
+
+	// A line with no action at all stays terminal for backward compatibility
+	// (hand-fed / truncated lines), so its counters are kept.
+	noAction, out := Normalize("fortigate", &models.SyslogMessage{Message: strings.Replace(accept, ` action="accept"`, "", 1)})
+	if out.Kind != OutcomeOK || noAction.BytesOut == nil || *noAction.BytesOut != 63878024223 {
+		t.Fatalf("missing action: out=%v bytes=%v, want the counters kept", out, noAction.BytesOut)
 	}
 }
 

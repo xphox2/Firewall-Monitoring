@@ -1112,6 +1112,72 @@ re-authenticated like the purge). What to expect:
   schedule anyway (the partition pass recreates an empty leaf inside the
   lookback). Nothing outside the normalized tables is touched.
 
+## Repairing the pre-0.11.329 policy-bytes history
+
+FortiOS repeats a session's cumulative `sentbyte`/`rcvdbyte` on every
+`action="accept"` traffic log. Before 0.11.329 ingest stored those counters as
+each log's own bytes, so every sum over `net_events` / `net_event_rollups`
+counted a long-lived session once per update: on this fleet a syslog session
+open for 24 days logged its 63 GB total about 700 times a day, turning a ~95 GB
+day into ~55 TB and producing a steadily climbing Events → Policy Bytes chart.
+
+0.11.329 fixes ingest (bytes are stored only on records that end the session:
+`close`, `client-rst`/`server-rst`, `timeout`, `deny`, `ip-conn`, `dns`). Rows
+already ingested keep their inflated counters, and the rollup aggregates cannot
+be un-summed. On an affected install, after upgrading:
+
+1. **Clear the cumulative counters on the rows still inside raw retention**
+   (`net_events` keeps `RETENTION_NET_EVENT_DAYS`, 7 days on this deployment;
+   older rows are already gone). Run as the DB superuser inside the container.
+   The bound is a **UTC day boundary** because the rollup re-close works in
+   whole UTC days — a `now() - interval '7 days'` bound would leave the first
+   rebuilt day partially inflated:
+
+   ```sql
+   UPDATE net_events n
+      SET bytes_in = NULL, bytes_out = NULL, pkts_in = NULL, pkts_out = NULL
+     FROM devices d
+    WHERE n.device_id = d.id AND lower(d.vendor) = 'fortigate'
+      AND n.activity = 3            -- one-shot record (FortiGate accept/update)
+      AND n.action = 1              -- allow; a terminal allow is activity=2
+      AND n.ts >= (((now() AT TIME ZONE 'UTC')::date - 7)::timestamp AT TIME ZONE 'UTC');
+   ```
+
+2. **Ask the rollup to rebuild those days.** Move the closed-day cursor back;
+   the 5-minute cycle re-closes at most two days per tick, hour by hour, from
+   the now-corrected raw rows:
+
+   ```sql
+   INSERT INTO system_settings (key, value, category, type, label, updated_at)
+   VALUES ('net_event_rollup_closed_day', ((now() AT TIME ZONE 'UTC')::date - 8)::text,
+           'system', 'string', 'Newest UTC day whose net_event_rollup rows are exact', now())
+   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+   ```
+
+3. **Start the chart at the first repaired day.** The older rollup bytes
+   cannot be corrected, so hide them from the byte series (count-based series
+   keep their full window):
+
+   ```sql
+   INSERT INTO system_settings (key, value, category, type, label, updated_at)
+   VALUES ('net_event_rollup_bytes_valid_from', ((now() AT TIME ZONE 'UTC')::date - 7)::text,
+           'system', 'string', 'First UTC day whose net_event_rollup byte sums are trusted', now())
+   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+   ```
+
+4. **Drop the current (partial) day's rollup rows too** — that day was folded
+   from the old counters, and its exact close will rebuild it after midnight
+   UTC:
+
+   ```sql
+   DELETE FROM net_event_rollups WHERE day = (now() AT TIME ZONE 'UTC')::date;
+   ```
+
+The Events page then shows the last seven days from corrected data, with the
+hint "repaired from YYYY-MM-DD". No raw syslog is touched, and nothing here
+runs on a fresh install (its ingest is correct from the first row, so the
+marker stays absent).
+
 ---
 
 ## Scale & HA

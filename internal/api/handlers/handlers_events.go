@@ -230,12 +230,13 @@ func (h *Handler) GetNetEventRollups(c *gin.Context) {
 	db := h.reqDB(c)
 	if db == nil {
 		c.JSON(http.StatusOK, response.Success(gin.H{
-			"policy_hits":    []database.NetEventRollupRule{},
-			"policy_bytes":   []database.NetEventRollupDay{},
-			"deny":           []database.NetEventRollupDay{},
-			"app_categories": []database.KeyCount{},
-			"directions":     []database.NetEventRollupDirection{},
-			"rulesets":       []database.KeyCount{},
+			"policy_hits":       []database.NetEventRollupRule{},
+			"policy_bytes":      []database.NetEventRollupDay{},
+			"policy_bytes_from": "",
+			"deny":              []database.NetEventRollupDay{},
+			"app_categories":    []database.KeyCount{},
+			"directions":        []database.NetEventRollupDirection{},
+			"rulesets":          []database.KeyCount{},
 		}))
 		return
 	}
@@ -277,12 +278,13 @@ func (h *Handler) GetNetEventRollups(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(gin.H{
-		"policy_hits":    stats.PolicyHits,
-		"policy_bytes":   stats.PolicyBytes,
-		"deny":           stats.Deny,
-		"app_categories": stats.AppCategories,
-		"directions":     stats.Directions,
-		"rulesets":       stats.Rulesets,
+		"policy_hits":       stats.PolicyHits,
+		"policy_bytes":      stats.PolicyBytes,
+		"policy_bytes_from": stats.PolicyBytesFrom,
+		"deny":              stats.Deny,
+		"app_categories":    stats.AppCategories,
+		"directions":        stats.Directions,
+		"rulesets":          stats.Rulesets,
 	}))
 }
 

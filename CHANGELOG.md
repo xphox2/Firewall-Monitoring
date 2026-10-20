@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.329] - 2026-10-20
+
+### Fixed — Policy Bytes was counting the same traffic hundreds of times
+
+- FortiOS repeats a session's **cumulative** `sentbyte` / `rcvdbyte` on every `action="accept"` (start/update) record, and ingest stored each record as a fresh event's byte count. Every sum over `net_events` / `net_event_rollups` therefore counted a long-lived session once per update: on the production fleet one syslog session (sessionid 22462, open 24 days) logs its 63 GB total roughly 700 times a day, which turned a ~95 GB day into ~55 TB in the Events page's **Policy Bytes** chart — the steady climb users saw. The FortiGate mapper now stores byte and packet counters **only on records that end or verdict the session** (`close`, `client-*rst`, `timeout`, `deny`, `ip-conn`, `dns`), each of which carries the session's final totals exactly once. `accept`/`start` records keep their session id and duration but carry no byte count; an open session reports its bytes when it closes. The raw syslog line is unchanged, so the figures remain available for forensics.
+- The Events page's Policy Bytes card now says "per day · bytes at session close" so the basis is visible.
+- Existing installs: the rollup rows written before this fix cannot be un-summed from the aggregates. `GET /admin/api/events/rollups` accepts an optional retrofitted floor in `system_settings.net_event_rollup_bytes_valid_from` (`YYYY-MM-DD`); when set, the byte series starts at that day (and reports it as `policy_bytes_from`) while the count-based series keep the full window. The repair steps are in docs/OPERATIONS.md ("Repairing the pre-0.11.329 policy-bytes history").
+
+### Tests
+
+- `TestFortiGate_CumulativeAcceptCountersAreNotStored` pins the ingest rule (accept → no bytes, terminal records → totals kept) and `TestNetEventRollupStats_PolicyBytesRetrofitFloor` pins the byte-series floor while proving the rankings keep the full window.
+
 ## [0.11.328] - 2026-10-12
 
 ### Fixed — the Events page never loaded
