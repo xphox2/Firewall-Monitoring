@@ -46,6 +46,9 @@ V2:
 - **v0.11.336** — Device telemetry charts (system/network/CPU over 8 ranges), per-interface
   traffic (SNMP + sFlow) and per-tunnel traffic (VPN group). Device config diff, HA,
   SD-WAN, ping SLA, security/licence panels and per-core CPU/disk/load remain classic-only.
+- **v0.11.337** — Device config diff viewer (revision compare, verdict, object + line diff,
+  search/severity filters, revision download). Remaining device gaps: HA, SD-WAN, ping SLA,
+  AV/IPS/web-filter, licences, per-core CPU/disk/load, config revision in-place viewer.
 
 ## Top gaps
 
