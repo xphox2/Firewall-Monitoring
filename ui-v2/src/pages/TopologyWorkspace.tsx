@@ -17,6 +17,7 @@ import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -172,6 +173,12 @@ function NetworkMapSubTab() {
 
   return (
     <div className="space-y-4">
+      <ClassicFallback
+        title="The interactive topology map is not in the preview yet"
+        description="The classic console draws the live graph: pan/zoom, compound sites, expandable tunnel bundles with VLAN sublanes, LLDP link evidence and alert overlays. The preview lists VPN-carrying devices instead."
+        href="/admin/connections"
+        label="Open the live map"
+      />
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Topology Nodes</div>
@@ -397,9 +404,17 @@ function ConnectionsSubTab() {
         activeTab={detailTab}
         onTabChange={(id) => setDetailTab(id as typeof detailTab)}
       >
-        <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
-          {JSON.stringify(connDetail ?? selectedConn ?? {}, null, 2)}
-        </pre>
+        <div className="space-y-3">
+          <ClassicFallback
+            title="Full connection detail lives in the classic console"
+            description="Source/destination tunnel tables, per-tunnel traffic charts, LLDP/FDB/ARP evidence and the traffic-analysis charts are not rebuilt here yet."
+            href={`/admin/connections/${selectedConn?.id ?? ''}`}
+            label="Open connection detail"
+          />
+          <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
+            {JSON.stringify(connDetail ?? selectedConn ?? {}, null, 2)}
+          </pre>
+        </div>
       </SlideOverDrawer>
 
       <ConfirmDialog

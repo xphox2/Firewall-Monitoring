@@ -19,6 +19,7 @@ import { buildAlertPolicyBody, type AlertPolicy } from '@/lib/alert-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
@@ -977,6 +978,12 @@ export function AlertingWorkspace() {
        * =================================================================== */}
       {activeTab === 'event-rules' && (
         <div className="space-y-6">
+          <ClassicFallback
+            title="Rule and profile authoring is not in the preview yet"
+            description="The preview can list, test and enable/disable existing rules. Creating or editing rules (AND/OR conditions, dampening, priority, expiry), managing profiles and assigning them to sites/devices is still in the classic console."
+            href="/admin/event-rules"
+            label="Open the rule builder"
+          />
           {/* Event Rule Profiles */}
           <section className="rounded-lg border border-border bg-bg-card overflow-hidden">
             <div className="border-b border-border bg-bg-panel/50 px-4 py-3 flex items-center justify-between">

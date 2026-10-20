@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.334] - 2026-10-20
+
+### Changed — Admin UI V2 is now explicitly a preview
+
+- The classic sidebar's **V2 Console** link carries a `Preview` badge and a tooltip stating that the classic console keeps the full feature set, so the preview is discoverable from V1 without implying parity.
+- The V2 shell shows a persistent `PREVIEW` pill and a dismissible notice explaining which advanced views remain classic-only, with a one-click **Classic V1** link that maps the current page (and its query string) to the equivalent classic URL.
+- Added `ClassicFallback` notices on the thin surfaces — NOC wallboard, topology map, connection detail, device detail, event-rule authoring, alerts analytics, profile security (2FA/passkeys), IRC channel/command management, maintenance scoping and threat-intel lookup — each linking straight to the classic page instead of leaving a raw-JSON drawer unexplained.
+- Added `docs/V2-PARITY.md`, the audited V1↔V2 gap matrix (44 implemented / 81 partial / 9 stubs / 162 missing of 296 units as of v0.11.333), so parity work is tracked against evidence rather than memory.
+
 ## [0.11.333] - 2026-10-20
 
 ### Fixed — Admin UI V2 wire-contract and safety defects

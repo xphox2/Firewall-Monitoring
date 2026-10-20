@@ -14,6 +14,7 @@ import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -110,6 +111,13 @@ export function AlertsWorkspace() {
           </button>
         </div>
       </div>
+
+      <ClassicFallback
+        title="Alert filters, analytics and full triage are still in the classic console"
+        description="The preview supports acknowledge, snooze, notes and incidents. Range pills, stat tiles, charts, device/site/type/severity filters, the snoozed toggle, paging, bulk selection and linked detections are not rebuilt yet."
+        href="/admin/alerts"
+        label="Open full alerts"
+      />
 
       {activeTab === 'open' && <AlertsQueueSubTab acknowledged={false} />}
       {activeTab === 'incidents' && <StormIncidentsSubTab />}

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { apiFetch, type DashboardSummary, type SystemHealthSnapshot } from '@/lib/api';
 import { cn, formatBytes, formatCompactNumber, formatRelativeTime } from '@/lib/utils';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 
 type OverviewTab = 'health' | 'noc';
 
@@ -404,8 +405,15 @@ function LiveNocWallboard() {
         </button>
       </div>
 
+      <ClassicFallback
+        title="The NOC wallboard is still in the classic console"
+        description="The preview shows the live SSE snapshot as raw JSON. Fleet vitals, site/device cards, the alert and detection feed, and the last-60s threat lists are not rebuilt yet."
+        href="/admin/noc"
+        label="Open the NOC wallboard"
+      />
+
       <div className="rounded-xl border border-border bg-bg-card p-4">
-        <h2 className="text-sm font-semibold text-text mb-2">Real-Time NOC Telemetry Feed</h2>
+        <h2 className="text-sm font-semibold text-text mb-2">Raw NOC snapshot (JSON)</h2>
         <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto max-h-96">
           {JSON.stringify(data, null, 2)}
         </pre>
