@@ -5,6 +5,7 @@ import { ShieldAlert, Search, Plus, Trash2, Globe, Sliders } from 'lucide-react'
 import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -128,6 +129,13 @@ function IpLookupSubTab() {
             {loading ? 'Checking…' : 'Lookup IP'}
           </button>
         </div>
+
+        <ClassicFallback
+          title="Structured reputation results are still in the classic console"
+          description="The preview shows the raw lookup payload. Country/ASN/prefix fields, the KNOWN-BAD verdict, ASN lookup and feed health/master switch are not rebuilt yet."
+          href="/admin/threat-intel"
+          label="Open structured lookup"
+        />
 
         {(lookupResult || geoResult) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">

@@ -6,6 +6,7 @@ import { formatDateTime } from '@/lib/utils';
 import { fromLocalInput, toLocalInput } from '@/lib/datetime';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -217,6 +218,13 @@ export function MaintenanceWorkspace() {
           Schedule Window
         </button>
       </div>
+
+      <ClassicFallback
+        title="Device and site scoping is not in the preview yet"
+        description="Windows created here apply globally. Scoping a window to one firewall or site, and choosing which alert types it suppresses, is still in the classic console."
+        href="/admin/maintenance"
+        label="Open scoped maintenance"
+      />
 
       {activeWindows.length > 0 && (
         <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/10 p-3.5 flex items-center gap-2.5 text-xs text-sig-warn">

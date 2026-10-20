@@ -36,6 +36,24 @@ export function AppShell() {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [forcePasswordModal, setForcePasswordModal] = useState(false);
+  // The preview notice is dismissible so it does not eat a row on every page,
+  // but the PREVIEW pill stays in the brand header either way.
+  const [previewNoticeDismissed, setPreviewNoticeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('fwmon-v2-preview-dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const dismissPreviewNotice = () => {
+    setPreviewNoticeDismissed(true);
+    try {
+      localStorage.setItem('fwmon-v2-preview-dismissed', '1');
+    } catch {
+      // storage blocked: the notice simply returns on the next load
+    }
+  };
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -112,6 +130,9 @@ export function AppShell() {
                 </span>
                 <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent">
                   V2
+                </span>
+                <span className="rounded bg-sig-warn/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-sig-warn">
+                  Preview
                 </span>
               </div>
               <div className="font-mono text-[10px] text-text-mute">
@@ -251,6 +272,9 @@ export function AppShell() {
               <span className="rounded bg-accent/20 px-1 py-0.2 font-mono text-[9px] font-semibold text-accent">
                 V2
               </span>
+              <span className="rounded bg-sig-warn/20 px-1 py-0.2 font-mono text-[9px] font-semibold uppercase text-sig-warn">
+                Preview
+              </span>
             </div>
           </div>
 
@@ -345,6 +369,38 @@ export function AppShell() {
           tabIndex={-1}
           className="flex-1 w-full max-w-[1600px] mx-auto px-3 sm:px-6 py-4 sm:py-6 min-w-0"
         >
+          {!previewNoticeDismissed && (
+            <div
+              role="status"
+              className="mb-4 flex items-start gap-2.5 rounded-lg border border-sig-warn/30 bg-sig-warn/[0.06] px-3 py-2"
+            >
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sig-warn" aria-hidden="true" />
+              <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-text-dim">
+                <strong className="text-text">Preview build.</strong> Core pages are functional, but
+                advanced views are still only in the classic console: the interactive topology map,
+                device charts and config diff, the event-rule builder, alert analytics, 2FA/passkey
+                enrollment, IRC channel management and archive health. Use{' '}
+                <a href={v1EquivalentUrl} className="font-medium text-accent hover:underline">
+                  Classic V1
+                </a>{' '}
+                for those.
+              </p>
+              <a
+                href={v1EquivalentUrl}
+                className="hidden sm:inline-flex shrink-0 items-center rounded-md border border-border bg-bg-panel px-2.5 py-1 text-[11px] font-medium text-text hover:bg-bg-hover"
+              >
+                Open classic
+              </a>
+              <button
+                type="button"
+                onClick={dismissPreviewNotice}
+                aria-label="Dismiss preview notice"
+                className="shrink-0 rounded p-1 text-text-faint hover:text-text"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <Outlet />
         </main>
       </div>

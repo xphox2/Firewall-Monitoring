@@ -23,6 +23,7 @@ import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -965,6 +966,12 @@ function IrcBotsSubTab() {
 
   return (
     <div className="space-y-6">
+      <ClassicFallback
+        title="IRC channels, commands and advanced bot settings are still in the classic console"
+        description="The preview manages servers, connect/disconnect and direct messages. Channel policy (auto-join, alert/status routing), command CRUD, NickServ and SASL credentials have not been rebuilt yet."
+        href="/admin/irc"
+        label="Open IRC management"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold text-text">Configured IRC Servers</h2>

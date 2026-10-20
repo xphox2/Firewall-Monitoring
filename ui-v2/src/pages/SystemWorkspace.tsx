@@ -24,6 +24,7 @@ import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
@@ -1400,6 +1401,14 @@ function MyProfileSubTab() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div className="lg:col-span-2">
+        <ClassicFallback
+          title="2FA enrollment and passkey registration are still in the classic console"
+          description="The preview can edit your profile and remove passkeys. Enrolling a TOTP authenticator, registering a new passkey, recovering codes and the decline-with-risk flow have not been rebuilt yet."
+          href="/admin/profile"
+          label="Open security settings"
+        />
+      </div>
       {/* Profile & Password */}
       <div className="space-y-5">
         <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">

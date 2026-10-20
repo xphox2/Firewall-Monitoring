@@ -25,6 +25,7 @@ import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
+import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -814,6 +815,12 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
 
   return (
     <div className="space-y-5">
+      <ClassicFallback
+        title="Device charts, config diff and diagnostics are still in the classic console"
+        description="The preview shows interfaces, tunnels, resources and config revisions. The 7-range telemetry charts, per-interface/per-tunnel traffic, the full config diff viewer, HA, SD-WAN, ping SLA and licence panels have not been rebuilt yet."
+        href={`/admin/devices/${deviceId ?? ''}`}
+        label="Open this device in classic"
+      />
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-border pb-4">
         <div className="flex items-center gap-3">
