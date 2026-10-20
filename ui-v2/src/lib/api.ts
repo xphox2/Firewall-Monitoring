@@ -190,7 +190,8 @@ export interface MeResponse {
 export interface DashboardSummary {
   generated_at: string;
   partial?: boolean;
-  failed_blocks?: string[];
+  // The dashboard handler emits partial_blocks (the failed-block names).
+  partial_blocks?: string[];
   device_counts: {
     total: number;
     online: number;

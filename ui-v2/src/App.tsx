@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { useSyncExternalStore } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from '@/lib/theme';
+import { getDisplayTimezoneVersion, subscribeDisplayTimezone } from '@/lib/utils';
 import { ToastProvider } from '@/components/ui/toast';
 import { AppShell } from '@/components/layout/AppShell';
 import { OverviewWorkspace } from '@/pages/OverviewWorkspace';
@@ -31,6 +33,9 @@ const queryClient = new QueryClient({
 const BASENAME = __FWMON_BASE__;
 
 export function App() {
+  // Re-render the tree when the display timezone changes, so timestamps that
+  // were already on screen follow the new setting without a reload.
+  useSyncExternalStore(subscribeDisplayTimezone, getDisplayTimezoneVersion);
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>

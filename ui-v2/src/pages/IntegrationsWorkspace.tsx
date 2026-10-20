@@ -21,6 +21,7 @@ import { apiFetch, SystemSetting } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
@@ -55,16 +56,14 @@ interface IRCServer {
   server_host: string;
   server_port: number;
   use_tls: boolean;
-  tls_skip_verify: boolean;
   nick: string;
   username: string;
-  realname: string;
+  real_name: string;
   server_password?: string;
   nickserv_password?: string;
   sasl_enabled: boolean;
   sasl_username?: string;
   sasl_password?: string;
-  command_prefix: string;
   enabled: boolean;
   status: string;
   last_connected?: string;
@@ -800,11 +799,9 @@ function IrcBotsSubTab() {
     server_host: '',
     server_port: 6697,
     use_tls: true,
-    tls_skip_verify: false,
     nick: 'fwmon-bot',
     username: 'fwmon',
-    realname: 'Firewall Monitor Bot',
-    command_prefix: '!',
+    real_name: 'Firewall Monitor Bot',
     sasl_enabled: false,
     enabled: true,
   });
@@ -816,9 +813,14 @@ function IrcBotsSubTab() {
   const saveServerMutation = useMutation({
     mutationFn: async () => {
       if (editingServer.id) {
+        // The detail row arrives with its preloaded `channels` association;
+        // UpdateIRCServer binds into a map and would try to write a column that
+        // does not exist on irc_servers.
+        const { channels: _channels, ...server } = editingServer;
+        void _channels;
         return apiFetch(`/admin/api/irc/servers/${editingServer.id}`, {
           method: 'PUT',
-          body: editingServer,
+          body: server,
         });
       }
       return apiFetch('/admin/api/irc/servers', {
@@ -848,11 +850,16 @@ function IrcBotsSubTab() {
     },
   });
 
+  const [serverToDelete, setServerToDelete] = useState<IRCServer | null>(null);
   const deleteServerMutation = useMutation({
     mutationFn: async (id: number) => apiFetch(`/admin/api/irc/servers/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       toast({ title: 'IRC server deleted', variant: 'info' });
+      setServerToDelete(null);
       queryClient.invalidateQueries({ queryKey: ['irc-servers'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Delete failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -944,7 +951,7 @@ function IrcBotsSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => deleteServerMutation.mutate(row.original.id)}
+              onClick={() => setServerToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -973,12 +980,10 @@ function IrcBotsSubTab() {
               server_host: '',
               server_port: 6697,
               use_tls: true,
-              tls_skip_verify: false,
-              nick: 'fwmon-bot',
+                        nick: 'fwmon-bot',
               username: 'fwmon',
-              realname: 'Firewall Monitor Bot',
-              command_prefix: '!',
-              sasl_enabled: false,
+              real_name: 'Firewall Monitor Bot',
+                        sasl_enabled: false,
               enabled: true,
             });
             setServerDrawerOpen(true);
@@ -1092,15 +1097,6 @@ function IrcBotsSubTab() {
                 className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
               />
             </div>
-            <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Command Prefix</label>
-              <input
-                type="text"
-                value={editingServer.command_prefix ?? '!'}
-                onChange={(e) => setEditingServer((p) => ({ ...p, command_prefix: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
-            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1148,8 +1144,8 @@ function IrcBotsSubTab() {
               <label className="block text-xs font-medium text-text-dim mb-1">Real Name</label>
               <input
                 type="text"
-                value={editingServer.realname ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, realname: e.target.value }))}
+                value={editingServer.real_name ?? ''}
+                onChange={(e) => setEditingServer((p) => ({ ...p, real_name: e.target.value }))}
                 className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
               />
             </div>
@@ -1177,6 +1173,19 @@ function IrcBotsSubTab() {
           </div>
         </div>
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!serverToDelete}
+        onOpenChange={(open) => {
+          if (!open) setServerToDelete(null);
+        }}
+        title={`Delete IRC server ${serverToDelete?.name ?? ''}?`}
+        description="The bot disconnects immediately and its channels stop receiving notifications."
+        confirmLabel="Delete server"
+        destructive
+        pending={deleteServerMutation.isPending}
+        onConfirm={() => serverToDelete && deleteServerMutation.mutate(serverToDelete.id)}
+      />
     </div>
   );
 }

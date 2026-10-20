@@ -231,14 +231,25 @@ export const WORKSPACES: NavWorkspace[] = [
 
 export const ALL_NAV_ITEMS: NavItem[] = WORKSPACES.flatMap((w) => w.items);
 
-export function resolveV1PathForV2Location(pathname: string): string {
-  const match = ALL_NAV_ITEMS.find((item) => pathname.startsWith(item.path));
-  if (match) return match.v1Path;
+export function resolveV1PathForV2Location(pathname: string, search = ''): string {
+  // Check the detail paths BEFORE the generic nav-item prefix scan: '/devices'
+  // matches '/devices/42' first and would drop the device id.
   if (pathname.startsWith('/devices/')) {
-    return `/admin${pathname}`;
+    return `/admin${pathname}${search}`;
   }
   if (pathname.startsWith('/connections/')) {
-    return `/admin${pathname}`;
+    return `/admin${pathname}${search}`;
+  }
+  // Longest path wins so '/configuration/alerting' is not shadowed by a
+  // shorter sibling.
+  const match = [...ALL_NAV_ITEMS]
+    .sort((a, b) => b.path.length - a.path.length)
+    .find((item) => pathname === item.path || pathname.startsWith(`${item.path}/`));
+  if (match) {
+    // Some classic destinations carry a section anchor (settings#users); the
+    // query string has to land before the hash, not after it.
+    const [base, hash] = match.v1Path.split('#');
+    return `${base}${search}${hash ? `#${hash}` : ''}`;
   }
   return '/admin/dashboard';
 }

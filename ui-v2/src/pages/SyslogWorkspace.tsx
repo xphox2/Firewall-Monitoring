@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ScrollText, Search, Filter } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -33,13 +33,20 @@ export function SyslogWorkspace() {
   const [severityFilter, setSeverityFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Full-text search is a LIKE scan over the retention window (the handler says
+  // so itself). Debounce so typing "severity" does not fire eight scans.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const { data: syslogRes, isLoading } = useQuery({
-    queryKey: ['raw-syslog', severityFilter, searchQuery],
+    queryKey: ['raw-syslog', severityFilter, debouncedSearch],
     queryFn: () => {
       const params = new URLSearchParams({ limit: '100' });
       if (severityFilter !== '') params.set('severity', severityFilter);
-      if (searchQuery.trim()) params.set('search', searchQuery.trim());
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
       return apiFetch<any>(`/admin/api/syslog?${params.toString()}`);
     },
     refetchInterval: 15_000,

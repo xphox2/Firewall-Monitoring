@@ -19,9 +19,10 @@ import {
   Lock,
 } from 'lucide-react';
 import { apiFetch, SystemSetting, type MeResponse } from '@/lib/api';
-import { cn, formatRelativeTime } from '@/lib/utils';
+import { cn, formatRelativeTime, setDisplayTimezone } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
@@ -45,7 +46,7 @@ interface AdminUser {
 interface APITokenRow {
   id: number;
   name: string;
-  token_prefix: string;
+  prefix: string;
   scope: 'read' | 'write' | 'admin';
   expires_at?: string | null;
   last_used_at?: string | null;
@@ -162,6 +163,7 @@ function UsersRbacSubTab() {
   const [createdCred, setCreatedCred] = useState<{ username: string; password: string } | null>(
     null,
   );
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
 
   const createUserMutation = useMutation({
     mutationFn: async () =>
@@ -288,7 +290,7 @@ function UsersRbacSubTab() {
             )}
             <button
               type="button"
-              onClick={() => deleteUserMutation.mutate(row.original.id)}
+              onClick={() => setUserToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit hover:bg-sig-crit/20"
               title="Delete user"
             >
@@ -445,6 +447,24 @@ function UsersRbacSubTab() {
           </div>
         )}
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!userToDelete}
+        onOpenChange={(open) => {
+          if (!open) setUserToDelete(null);
+        }}
+        title={`Delete user ${userToDelete?.username ?? ''}?`}
+        description="The account and its API tokens stop working immediately. This cannot be undone."
+        confirmLabel="Delete user"
+        destructive
+        pending={deleteUserMutation.isPending}
+        onConfirm={() => {
+          if (!userToDelete) return;
+          deleteUserMutation.mutate(userToDelete.id, {
+            onSuccess: () => setUserToDelete(null),
+          });
+        }}
+      />
     </div>
   );
 }
@@ -503,11 +523,11 @@ function ApiTokensSubTab() {
         cell: ({ row }) => <span className="font-semibold text-text">{row.original.name}</span>,
       },
       {
-        accessorKey: 'token_prefix',
+        accessorKey: 'prefix',
         header: 'Prefix',
         cell: ({ row }) => (
           <code className="rounded bg-bg-panel px-2 py-0.5 text-xs font-mono text-text-dim">
-            {row.original.token_prefix}…
+            {row.original.prefix}…
           </code>
         ),
       },
@@ -621,7 +641,7 @@ function ApiTokensSubTab() {
                 {t.scope}
               </span>
             </div>
-            <div className="text-xs font-mono text-text-dim">{t.token_prefix}…</div>
+            <div className="text-xs font-mono text-text-dim">{t.prefix}…</div>
           </div>
         )}
       />
@@ -683,6 +703,9 @@ function DisplayAndFlowsSubTab() {
 
   useEffect(() => {
     setDraft(serverMap);
+    // Hydrate the shared display-timezone store from the server value so
+    // timestamps elsewhere in the console render in the configured zone.
+    if (serverMap.display_timezone) setDisplayTimezone(serverMap.display_timezone);
   }, [serverMap]);
 
   const dirtyKeys = useMemo(() => {
@@ -699,6 +722,9 @@ function DisplayAndFlowsSubTab() {
       return apiFetch('/admin/api/settings', { method: 'POST', body: payload });
     },
     onSuccess: () => {
+      if (dirtyKeys.includes('display_timezone')) {
+        setDisplayTimezone(draft.display_timezone);
+      }
       toast({ title: 'Display & classification settings saved', variant: 'success' });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
     },
@@ -979,9 +1005,12 @@ function EmailReportsSubTab() {
 
   const loadPreview = async () => {
     try {
+      // PreviewReport returns {success, data:{subject, html}} as JSON; putting
+      // the raw body in srcDoc rendered the JSON, not the report.
       const res = await fetch('/admin/api/reports/preview', { credentials: 'same-origin' });
-      const text = await res.text();
-      setPreviewHtml(text);
+      if (!res.ok) throw new Error(`Preview failed (${res.status})`);
+      const body = (await res.json()) as { data?: { html?: string } };
+      setPreviewHtml(body.data?.html ?? '<p>Report preview returned no HTML.</p>');
       setPreviewOpen(true);
     } catch (err) {
       toast({

@@ -18,6 +18,7 @@ import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -471,6 +472,7 @@ function SitesSubTab() {
   const sites = sitesList ?? [];
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<SiteRecord | null>(null);
   const [editingSite, setEditingSite] = useState<Partial<SiteRecord>>({
     name: '',
     address: '',
@@ -504,7 +506,13 @@ function SitesSubTab() {
     mutationFn: async (id: number) => apiFetch(`/admin/api/sites/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       toast({ title: 'Site deleted', variant: 'info' });
+      setSiteToDelete(null);
       queryClient.invalidateQueries({ queryKey: ['sites'] });
+    },
+    onError: (err: Error) => {
+      // DeleteSite returns 409 when the site still has children or devices;
+      // without this the trash click looked like it did nothing.
+      toast({ title: 'Site was not deleted', description: err.message, variant: 'error' });
     },
   });
 
@@ -542,7 +550,7 @@ function SitesSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => deleteSiteMutation.mutate(row.original.id)}
+              onClick={() => setSiteToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -645,6 +653,19 @@ function SitesSubTab() {
           </div>
         </div>
       </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!siteToDelete}
+        onOpenChange={(open) => {
+          if (!open) setSiteToDelete(null);
+        }}
+        title={`Delete site ${siteToDelete?.name ?? ''}?`}
+        description="Devices and child sites must be moved first. This cannot be undone."
+        confirmLabel="Delete site"
+        destructive
+        pending={deleteSiteMutation.isPending}
+        onConfirm={() => siteToDelete && deleteSiteMutation.mutate(siteToDelete.id)}
+      />
     </div>
   );
 }

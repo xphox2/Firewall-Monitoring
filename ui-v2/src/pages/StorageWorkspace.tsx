@@ -143,13 +143,15 @@ interface ArchiveSettingsResponse {
 interface ArchiveRestoreJob {
   id: number;
   stream: string;
-  start_time: string;
-  end_time: string;
-  state: string;
-  chunks_total: number;
-  chunks_done: number;
-  rows_restored: number;
-  last_error?: string;
+  // models.ArchiveRestoreJob wire names. The previous start_time/state/
+  // chunks_*/rows_restored keys rendered every row as "undefined".
+  from_day: string;
+  to_day: string;
+  status: string;
+  objects_total: number;
+  objects_done: number;
+  rows_loaded: number;
+  error?: string;
   created_at: string;
   expires_at?: string;
 }
@@ -1304,12 +1306,17 @@ export function StorageWorkspace() {
                         <td className="px-4 py-2.5 font-mono">#{job.id}</td>
                         <td className="px-3 py-2.5 font-medium capitalize">{job.stream}</td>
                         <td className="px-3 py-2.5 font-mono text-text-dim">
-                          {job.start_time?.slice(0, 10)} → {job.end_time?.slice(0, 10)}
+                          {job.from_day} → {job.to_day}
                         </td>
-                        <td className="px-3 py-2.5 font-mono uppercase">{job.state}</td>
+                        <td
+                          className="px-3 py-2.5 font-mono uppercase"
+                          title={job.error || undefined}
+                        >
+                          {job.status}
+                        </td>
                         <td className="px-3 py-2.5 font-mono">
-                          {job.chunks_done}/{job.chunks_total} chunks (
-                          {formatNumber(job.rows_restored)} rows)
+                          {job.objects_done}/{job.objects_total} objects (
+                          {formatNumber(job.rows_loaded)} rows)
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <button

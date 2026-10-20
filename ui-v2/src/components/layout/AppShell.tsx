@@ -90,7 +90,7 @@ export function AppShell() {
   const staleProbes = summary?.probe_count_stale ?? 0;
   const syslog24h = summary?.syslog_24h ?? 0;
 
-  const v1EquivalentUrl = resolveV1PathForV2Location(location.pathname);
+  const v1EquivalentUrl = resolveV1PathForV2Location(location.pathname, location.search);
 
   return (
     <div className="min-h-screen bg-bg text-text flex flex-col lg:flex-row">
@@ -306,7 +306,7 @@ export function AppShell() {
 
             {summary?.partial && (
               <span
-                title={`Degraded summary blocks: ${(summary.failed_blocks || []).join(', ')}`}
+                title={`Degraded summary blocks: ${(summary.partial_blocks || []).join(', ')}`}
                 className="inline-flex items-center gap-1 rounded bg-sig-warn/15 px-2 py-0.5 text-[11px] text-sig-warn"
               >
                 <AlertTriangle className="h-3 w-3" />
