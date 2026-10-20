@@ -26,6 +26,14 @@ import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
+import { TimeSeriesChart } from '@/components/charts/time-series-chart';
+import {
+  bucketSeconds,
+  counterDeltasToBps,
+  numOrNull,
+  toBitsPerSecond,
+  type ChartSeries,
+} from '@/lib/chart';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -63,6 +71,8 @@ export interface DeviceRecord {
   vpn_total?: number;
 }
 
+const CHART_RANGES = ['1h', '6h', '12h', '24h', '7d', '30d', '90d', '365d'] as const;
+
 interface SiteOption {
   id: number;
   name: string;
@@ -78,7 +88,9 @@ export function DevicesWorkspace() {
   const deviceId = splat && /^\d+$/.test(splat) ? Number(splat) : null;
 
   if (deviceId) {
-    return <DeviceDetailView deviceId={deviceId} />;
+    // Keyed so switching devices resets expanded rows and the chart range
+    // instead of querying device B for device A's interface/tunnel.
+    return <DeviceDetailView key={deviceId} deviceId={deviceId} />;
   }
   return <DeviceInventoryView />;
 }
@@ -803,6 +815,172 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   const cpuUsage = detail?.system_status?.cpu_usage ?? device?.cpu_usage ?? 0;
   const memoryUsage = detail?.system_status?.memory_usage ?? device?.memory_usage ?? 0;
 
+  const [chartRange, setChartRange] = useState<string>('24h');
+  const [expandedIface, setExpandedIface] = useState<number | null>(null);
+  const [expandedTunnel, setExpandedTunnel] = useState<string | null>(null);
+
+  const { data: statusHistory, isLoading: statusLoading } = useQuery({
+    queryKey: ['device-status-history', deviceId, chartRange],
+    queryFn: () =>
+      apiFetch<{ buckets?: any[] }>(
+        `/admin/api/devices/${deviceId}/status-history?range=${chartRange}`,
+      ),
+    enabled: Boolean(deviceId) && activeTab === 'resources',
+  });
+  const buckets = statusHistory?.buckets ?? [];
+
+  const chartSeries = useMemo(() => {
+    const pct = (key: string) => buckets.map((b: any) => numOrNull(b[key]));
+    return {
+      timestamps: buckets.map((b: any) => Number(b.bucket_ms) || 0),
+      overview: [
+        { label: 'CPU', color: '#7DD3FC', values: pct('cpu_usage') },
+        { label: 'Memory', color: '#C4B5FD', values: pct('memory_usage') },
+        { label: 'Disk', color: '#86EFAC', values: pct('disk_usage') },
+      ] as ChartSeries[],
+      // network_*_kbps is kilobits/s; the chart works in bits/s.
+      network: [
+        {
+          label: 'In',
+          color: '#7DD3FC',
+          values: buckets.map((b: any) => {
+            const v = numOrNull(b.network_in_kbps);
+            return v == null ? null : v * 1000;
+          }),
+        },
+        {
+          label: 'Out',
+          color: '#FCD34D',
+          values: buckets.map((b: any) => {
+            const v = numOrNull(b.network_out_kbps);
+            return v == null ? null : v * 1000;
+          }),
+        },
+      ] as ChartSeries[],
+      cpu: [
+        { label: 'User', color: '#7DD3FC', values: pct('cpu_user') },
+        { label: 'System', color: '#FCA5A5', values: pct('cpu_system') },
+        { label: 'Nice', color: '#FCD34D', values: pct('cpu_nice') },
+        { label: 'IOWait', color: '#C4B5FD', values: pct('cpu_iowait') },
+        { label: 'IRQ', color: '#F0ABFC', values: pct('cpu_irq') },
+        { label: 'SoftIRQ', color: '#5EEAD4', values: pct('cpu_softirq') },
+        { label: 'Idle', color: '#6B7280', values: pct('cpu_idle') },
+      ] as ChartSeries[],
+    };
+  }, [buckets]);
+
+  const { data: ifaceChart, isLoading: ifaceLoading } = useQuery({
+    queryKey: ['iface-chart', deviceId, expandedIface, chartRange],
+    queryFn: async () => {
+      const base = `/admin/api/devices/${deviceId}/interfaces/${expandedIface}`;
+      const [sflow, snmp] = await Promise.all([
+        apiFetch<any[]>(`${base}/sflow-chart?range=${chartRange}`).catch(() => []),
+        apiFetch<any[]>(`${base}/chart?range=${chartRange}`).catch(() => []),
+      ]);
+      // Same freshness rule as the classic console: sFlow wins only when it is
+      // at least as current as SNMP, so a stopped exporter cannot hide live
+      // SNMP-measured traffic.
+      const lastMs = (rows: any[]) =>
+        rows && rows.length ? Number(rows[rows.length - 1]?.bucket_ms) || 0 : 0;
+      const sflowOk = (sflow?.length ?? 0) >= 2;
+      const snmpOk = (snmp?.length ?? 0) >= 2;
+      if (sflowOk && (!snmpOk || lastMs(sflow) >= lastMs(snmp))) {
+        return { rows: sflow, source: 'sFlow' };
+      }
+      if (snmpOk) return { rows: snmp, source: 'SNMP' };
+      return { rows: [], source: '' };
+    },
+    enabled: Boolean(deviceId) && activeTab === 'interfaces' && expandedIface != null,
+  });
+
+  const ifaceSeries = useMemo(() => {
+    const rows = ifaceChart?.rows ?? [];
+    const ts = rows.map((r: any) => Number(r.bucket_ms) || 0);
+    // Interface rows are cumulative counters; per-interval deltas (not a single
+    // median span) are what the classic console plots.
+    return {
+      timestamps: ts,
+      series: [
+        {
+          label: 'In',
+          color: '#7DD3FC',
+          values: counterDeltasToBps(
+            rows.map((r: any) => numOrNull(r.in_bytes)),
+            ts,
+          ),
+        },
+        {
+          label: 'Out',
+          color: '#FCD34D',
+          values: counterDeltasToBps(
+            rows.map((r: any) => numOrNull(r.out_bytes)),
+            ts,
+          ),
+        },
+      ] as ChartSeries[],
+    };
+  }, [ifaceChart]);
+
+  const { data: tunnelChart, isLoading: tunnelLoading } = useQuery({
+    queryKey: ['vpn-chart', deviceId, expandedTunnel, chartRange],
+    queryFn: () => {
+      // A logical tunnel is several vpn_status rows (provisioned name, dialup
+      // counters, …). The group endpoint is the one that aggregates them, and
+      // the group rides in the query string because names may contain '/'.
+      const row = vpns.find((v: any) => v.tunnel_name === expandedTunnel);
+      const group = row?.tunnel_group || row?.phase1_name || expandedTunnel || '';
+      return apiFetch<any[]>(
+        `/admin/api/devices/${deviceId}/vpn-group-chart?group=${encodeURIComponent(group)}&range=${chartRange}`,
+      );
+    },
+    enabled: Boolean(deviceId) && activeTab === 'vpn' && expandedTunnel != null,
+  });
+
+  const tunnelSeries = useMemo(() => {
+    const rows = Array.isArray(tunnelChart) ? tunnelChart : [];
+    const ts = rows.map((r: any) => Number(r.bucket_ms) || 0);
+    const seconds = bucketSeconds(ts);
+    return {
+      timestamps: ts,
+      series: [
+        {
+          label: 'In',
+          color: '#7DD3FC',
+          values: toBitsPerSecond(
+            rows.map((r: any) => numOrNull(r.in_bytes)),
+            seconds,
+          ),
+        },
+        {
+          label: 'Out',
+          color: '#FCD34D',
+          values: toBitsPerSecond(
+            rows.map((r: any) => numOrNull(r.out_bytes)),
+            seconds,
+          ),
+        },
+      ] as ChartSeries[],
+    };
+  }, [tunnelChart]);
+
+  const chartRangePills = (
+    <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-panel p-1">
+      {CHART_RANGES.map((range) => (
+        <button
+          key={range}
+          type="button"
+          onClick={() => setChartRange(range)}
+          className={cn(
+            'rounded px-2 py-1 font-mono text-xs font-medium transition-colors',
+            chartRange === range ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+          )}
+        >
+          {range}
+        </button>
+      ))}
+    </div>
+  );
+
   const tabs: { id: DetailTab; label: string; icon: typeof Activity }[] = [
     { id: 'interfaces', label: `Interfaces (${interfaces.length})`, icon: Network },
     { id: 'vpn', label: `VPN Tunnels (${vpns.length})`, icon: Shield },
@@ -817,7 +995,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     <div className="space-y-5">
       <ClassicFallback
         title="Device charts, config diff and diagnostics are still in the classic console"
-        description="The preview shows interfaces, tunnels, resources and config revisions. The 7-range telemetry charts, per-interface/per-tunnel traffic, the full config diff viewer, HA, SD-WAN, ping SLA and licence panels have not been rebuilt yet."
+        description="Charts and per-interface/per-tunnel traffic are now in the preview. The full config diff viewer, HA, SD-WAN, ping SLA, AV/IPS/web-filter, licence panels and per-core CPU/disk/load are still classic-only."
         href={`/admin/devices/${deviceId ?? ''}`}
         label="Open this device in classic"
       />
@@ -899,20 +1077,37 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                       key={iface.index || iface.name || idx}
                       className="rounded-lg border border-border bg-bg-panel p-3 space-y-1.5"
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="font-mono font-semibold text-xs text-text">
                           {iface.name || `ifIndex ${iface.index}`}
                         </span>
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                            iface.status === 'up'
-                              ? 'bg-sig-ok/15 text-sig-ok'
-                              : 'bg-bg-card text-text-faint'
-                          )}
-                        >
-                          {iface.status || 'down'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedIface(expandedIface === iface.index ? null : iface.index)
+                            }
+                            aria-expanded={expandedIface === iface.index}
+                            className={cn(
+                              'rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase transition-colors',
+                              expandedIface === iface.index
+                                ? 'border-accent/40 bg-accent/15 text-accent'
+                                : 'border-border bg-bg-card text-text-dim hover:text-text',
+                            )}
+                          >
+                            Chart
+                          </button>
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                              iface.status === 'up'
+                                ? 'bg-sig-ok/15 text-sig-ok'
+                                : 'bg-bg-card text-text-faint'
+                            )}
+                          >
+                            {iface.status || 'down'}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex items-center justify-between text-[11px] font-mono text-text-dim">
                         <span>RX: {formatBytes(iface.in_bytes ?? 0)}</span>
@@ -920,6 +1115,33 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {expandedIface != null && (
+                <div className="mt-4 rounded-lg border border-border bg-bg-card p-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-xs font-semibold text-text">
+                        {interfaces.find((i: any) => i.index === expandedIface)?.name ||
+                          `Interface ${expandedIface}`}{' '}
+                        traffic
+                      </h3>
+                      {ifaceChart?.source && (
+                        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-accent">
+                          {ifaceChart.source}
+                        </span>
+                      )}
+                    </div>
+                    {chartRangePills}
+                  </div>
+                  <TimeSeriesChart
+                    timestamps={ifaceSeries.timestamps}
+                    series={ifaceSeries.series}
+                    kind="bps"
+                    isLoading={ifaceLoading}
+                    emptyMessage="Not enough history for this interface in this range."
+                  />
                 </div>
               )}
             </div>
@@ -945,23 +1167,67 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                           Remote: {v.remote_ip || '—'}
                         </div>
                       </div>
-                      <span
-                        className={cn(
-                          'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                          v.status === 'up' ? 'bg-sig-ok/15 text-sig-ok' : 'bg-sig-crit/15 text-sig-crit'
-                        )}
-                      >
-                        {v.status || 'down'}
-                      </span>
+                      <div className="flex flex-col items-end gap-1.5">
+                        <span
+                          className={cn(
+                            'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
+                            v.status === 'up'
+                              ? 'bg-sig-ok/15 text-sig-ok'
+                              : 'bg-sig-crit/15 text-sig-crit'
+                          )}
+                        >
+                          {v.status || 'down'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedTunnel(
+                              expandedTunnel === v.tunnel_name ? null : v.tunnel_name,
+                            )
+                          }
+                          aria-expanded={expandedTunnel === v.tunnel_name}
+                          className={cn(
+                            'rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase transition-colors',
+                            expandedTunnel === v.tunnel_name
+                              ? 'border-accent/40 bg-accent/15 text-accent'
+                              : 'border-border bg-bg-card text-text-dim hover:text-text',
+                          )}
+                        >
+                          Chart
+                        </button>
+                      </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {expandedTunnel != null && (
+                <div className="mt-4 rounded-lg border border-border bg-bg-card p-4">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold text-text">
+                      {expandedTunnel} traffic
+                    </h3>
+                    {chartRangePills}
+                  </div>
+                  <TimeSeriesChart
+                    timestamps={tunnelSeries.timestamps}
+                    series={tunnelSeries.series}
+                    kind="bps"
+                    isLoading={tunnelLoading}
+                    emptyMessage="Not enough history for this tunnel in this range."
+                  />
                 </div>
               )}
             </div>
           )}
 
           {activeTab === 'resources' && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-text">Historical Telemetry</h2>
+                {chartRangePills}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="rounded-xl border border-border bg-bg-card p-4">
                 <div className="text-xs text-text-dim">CPU Utilization</div>
                 <div className="text-2xl font-mono font-bold text-text mt-1">
@@ -977,6 +1243,41 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
               <div className="rounded-xl border border-border bg-bg-card p-4">
                 <div className="text-xs text-text-dim">Hardware Sensors</div>
                 <div className="text-2xl font-mono font-bold text-text mt-1">{sensors.length}</div>
+              </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-border bg-bg-card p-4">
+                  <TimeSeriesChart
+                    title="System Overview"
+                    timestamps={chartSeries.timestamps}
+                    series={chartSeries.overview}
+                    kind="percent"
+                    isLoading={statusLoading}
+                    emptyMessage="No status history in this range."
+                  />
+                </div>
+                <div className="rounded-xl border border-border bg-bg-card p-4">
+                  <TimeSeriesChart
+                    title="Network Throughput"
+                    timestamps={chartSeries.timestamps}
+                    series={chartSeries.network}
+                    kind="bps"
+                    isLoading={statusLoading}
+                    emptyMessage="No network history in this range."
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-bg-card p-4">
+                <TimeSeriesChart
+                  title="CPU Breakdown"
+                  timestamps={chartSeries.timestamps}
+                  series={chartSeries.cpu}
+                  kind="percent"
+                  isLoading={statusLoading}
+                  emptyMessage="This device does not report a CPU breakdown."
+                />
               </div>
             </div>
           )}

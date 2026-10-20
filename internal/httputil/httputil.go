@@ -117,11 +117,14 @@ func ParseHours(c *gin.Context) int {
 
 // chartRangeDurations maps the chart range presets to a lookback duration.
 var chartRangeDurations = map[string]time.Duration{
-	"1h":  time.Hour,
-	"24h": 24 * time.Hour,
-	"7d":  168 * time.Hour,
-	"30d": 720 * time.Hour,
-	"90d": 2160 * time.Hour,
+	"1h":   time.Hour,
+	"6h":   6 * time.Hour,
+	"12h":  12 * time.Hour,
+	"24h":  24 * time.Hour,
+	"7d":   168 * time.Hour,
+	"30d":  720 * time.Hour,
+	"90d":  2160 * time.Hour,
+	"365d": 8760 * time.Hour,
 }
 
 // ParseChartWindow resolves a chart time window from the request. An explicit
