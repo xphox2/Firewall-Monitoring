@@ -509,15 +509,17 @@ export function AlertingWorkspace() {
   // SUB-TAB 2: Event Rules & Live Tester Drawer State
   // =========================================================================
   const [testerOpen, setTesterOpen] = useState(false);
-  const [testSampleLog, setTestSampleLog] = useState('');
+  const [testMatchJson, setTestMatchJson] = useState('');
   const [testResultJson, setTestResultJson] = useState<any>(null);
 
   const handleRunRuleTest = async () => {
-    if (!testSampleLog.trim()) return;
+    if (!testMatchJson.trim()) return;
     try {
+      // TestEventRule binds match_json and evaluates it against recent syslog;
+      // raw_message was ignored, so every "test" compiled a match-all rule.
       const res = await apiFetch('/admin/api/event-rules/test', {
         method: 'POST',
-        body: { raw_message: testSampleLog },
+        body: { match_json: testMatchJson.trim() },
       });
       setTestResultJson(res);
     } catch (err) {
@@ -632,11 +634,13 @@ export function AlertingWorkspace() {
   // SUB-TAB 4: Effective Policy Simulator State
   // =========================================================================
   const [simDeviceId, setSimDeviceId] = useState<string>('');
+  // GetEffectiveAlertConfig REQUIRES alert_type and 400s without it.
+  const [simAlertType, setSimAlertType] = useState('CPU_HIGH');
   const { data: effectiveConfig } = useQuery({
-    queryKey: ['effective-alert-config', simDeviceId],
+    queryKey: ['effective-alert-config', simDeviceId, simAlertType],
     queryFn: () =>
       apiFetch<Record<string, any>>(
-        `/admin/api/alert-config/effective?device_id=${encodeURIComponent(simDeviceId)}`,
+        `/admin/api/alert-config/effective?device_id=${encodeURIComponent(simDeviceId)}&alert_type=${encodeURIComponent(simAlertType)}`,
       ),
     enabled: activeTab === 'effective' && !!simDeviceId,
   });
@@ -1156,8 +1160,8 @@ export function AlertingWorkspace() {
           <SlideOverDrawer
             open={testerOpen}
             onOpenChange={setTesterOpen}
-            title="Live Syslog Event Rule Tester"
-            subtitle="Paste a raw syslog line to verify which event rule matches and how it classifies."
+            title="Event Rule Match Tester"
+            subtitle="Test a match expression against the most recent syslog messages and see the sample matches."
             size="lg"
             footer={
               <>
@@ -1173,7 +1177,7 @@ export function AlertingWorkspace() {
                   onClick={handleRunRuleTest}
                   className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover"
                 >
-                  Evaluate Log Line
+                  Test Match Expression
                 </button>
               </>
             }
@@ -1184,16 +1188,20 @@ export function AlertingWorkspace() {
                   htmlFor="rule-test-input"
                   className="block text-xs font-medium text-text-dim mb-1"
                 >
-                  Raw Syslog Message
+                  Match Expression (JSON)
                 </label>
                 <textarea
                   id="rule-test-input"
                   rows={5}
-                  value={testSampleLog}
-                  onChange={(e) => setTestSampleLog(e.target.value)}
-                  placeholder="Paste FortiGate, Palo Alto, Cisco ASA, or SonicWall syslog line..."
+                  value={testMatchJson}
+                  onChange={(e) => setTestMatchJson(e.target.value)}
+                  placeholder='{"op":"contains","field":"src_ip","value":"198.51.100."}'
                   className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text focus:border-accent focus:outline-none"
                 />
+                <p className="mt-1 text-[11px] text-text-faint">
+                  Operators: and, or, in, regex, gt, lt over extracted fields such as src_ip,
+                  dst_ip, user, action, device, interface.
+                </p>
               </div>
 
               {testResultJson && (
@@ -1536,6 +1544,17 @@ export function AlertingWorkspace() {
                   {d.name} (#{d.id})
                 </option>
               ))}
+            </select>
+            <select
+              value={simAlertType}
+              onChange={(e) => setSimAlertType(e.target.value)}
+              aria-label="Alert type to simulate"
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+            >
+              <option value="CPU_HIGH">CPU high</option>
+              <option value="MEMORY_HIGH">Memory high</option>
+              <option value="DISK_HIGH">Disk high</option>
+              <option value="SESSIONS_HIGH">Sessions high</option>
             </select>
           </div>
 

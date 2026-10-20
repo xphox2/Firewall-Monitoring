@@ -23,6 +23,24 @@ interface MaintenanceWindow {
   created_by?: string;
 }
 
+// <input type="datetime-local"> speaks LOCAL wall-clock time, while the API
+// stores UTC. Slicing toISOString() handed the control a UTC value that the
+// browser then labelled as local (and the save round-trip shifted again).
+function toLocalInput(value?: string): string {
+  const d = value ? new Date(value) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(
+    d.getMinutes(),
+  )}`;
+}
+
+function fromLocalInput(value?: string): string {
+  if (!value) return '';
+  const d = new Date(value); // no timezone suffix => parsed as local
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+}
+
 export function MaintenanceWorkspace() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -45,19 +63,27 @@ export function MaintenanceWorkspace() {
   const [editing, setEditing] = useState<Partial<MaintenanceWindow>>({
     name: '',
     notes: '',
-    start_time: new Date().toISOString().slice(0, 16),
-    end_time: new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 16),
+    start_time: toLocalInput(),
+    end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
     suppress_all: true,
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const startIso = fromLocalInput(editing.start_time);
+      const endIso = fromLocalInput(editing.end_time);
+      if (!startIso || !endIso) {
+        throw new Error('Start and end times are required');
+      }
+      if (new Date(endIso) <= new Date(startIso)) {
+        throw new Error('End time must be after the start time');
+      }
       const payload = {
         ...editing,
         notes: editing.notes ?? editing.description ?? '',
         suppress_all: editing.suppress_all ?? editing.suppress_alerts ?? true,
-        start_time: new Date(editing.start_time || Date.now()).toISOString(),
-        end_time: new Date(editing.end_time || Date.now() + 3600_000).toISOString(),
+        start_time: startIso,
+        end_time: endIso,
       };
       if (editing.id) {
         return apiFetch(`/admin/api/maintenance-windows/${editing.id}`, {
@@ -151,8 +177,8 @@ export function MaintenanceWorkspace() {
                   ...row.original,
                   notes: row.original.notes ?? row.original.description ?? '',
                   suppress_all: row.original.suppress_all ?? row.original.suppress_alerts ?? true,
-                  start_time: row.original.start_time?.slice(0, 16),
-                  end_time: row.original.end_time?.slice(0, 16),
+                  start_time: toLocalInput(row.original.start_time),
+                  end_time: toLocalInput(row.original.end_time),
                 });
                 setDrawerOpen(true);
               }}
@@ -196,8 +222,8 @@ export function MaintenanceWorkspace() {
             setEditing({
               name: '',
               notes: '',
-              start_time: new Date().toISOString().slice(0, 16),
-              end_time: new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 16),
+              start_time: toLocalInput(),
+              end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
               suppress_all: true,
             });
             setDrawerOpen(true);
