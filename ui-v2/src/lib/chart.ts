@@ -60,6 +60,7 @@ export function counterDeltasToBps(
 
 export function formatBitsPerSecond(value: number): string {
   if (!Number.isFinite(value)) return '—';
+  if (value >= 1e12) return `${(value / 1e12).toFixed(2)} Tbps`;
   if (value >= 1e9) return `${(value / 1e9).toFixed(1)} Gbps`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(1)} Mbps`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)} Kbps`;
@@ -70,11 +71,13 @@ export function formatAxisValue(value: number, kind: ChartKind): string {
   if (!Number.isFinite(value)) return '';
   if (kind === 'percent') return `${Math.round(value)}%`;
   if (kind === 'bps') {
+    if (Math.abs(value) >= 1e12) return `${(value / 1e12).toFixed(2)}T`;
     if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(1)}G`;
     if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(0)}M`;
     if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
     return `${Math.round(value)}`;
   }
+  if (Math.abs(value) >= 1e12) return `${(value / 1e12).toFixed(2)}TB`;
   if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(1)}GB`;
   if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(0)}MB`;
   if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(0)}KB`;

@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.348] - 2026-10-20
+
+### Added — Flow analytics in the Admin UI V2 preview
+
+- **Shared filters** across Traffic, Conversations and Samples: range 1h–90d, device, protocol, exporter (sFlow/NetFlow v5/v9/IPFIX), firewall event, source/destination address or CIDR and destination port, with a clear action and a warning naming values the server would silently ignore (bad port, malformed address/CIDR/mask).
+- **Traffic**: throughput/flows/volume/packets/unique/`sampling` tiles (the range `1:min–1:max`, not the retired fictitious average), a throughput-over-time chart (bytes-per-bucket → bits/s using the server bucket width, UTC bucket parsing including date-only day buckets), and byte-ranked distributions: top sources/destinations, protocols, applications, directions, services, plus countries/ASNs when geo is enabled.
+- **Honest-window banners**: degraded windows (a rolled-up panel fell back to the last hour) get a red banner listing the affected panels in human terms, a `(partial)` chart title and a `(partial)` unique-count marker; partial panels get an amber banner with the server's reason. Local-noise exclusion and multi-exporter double-counting are surfaced as before.
+- **Conversations**: protocol, volume and packets, with a Samples drill-down that applies the destination/port immediately (debounce bypass).
+- **Samples**: inspector without raw JSON by default (fields grid + raw disclosure), and a CSV export capped at 5,000 rows with correct quoting and spreadsheet-formula neutralisation.
+- Filter commits are debounced (350 ms) so typing a CIDR no longer fires a stats query per keystroke.
+- `ui-v2/src/lib/flows.ts` helpers + tests (suite now 117).
+
 ## [0.11.347] - 2026-10-20
 
 ### Added — Config revision viewer, split diff and revision delete in the Admin UI V2 preview
