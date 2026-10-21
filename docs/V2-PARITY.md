@@ -20,7 +20,7 @@ gaps list below are the actionable view.
 | Threat Intel | At parity: lookup verdict, feed switch/status, indicator search/add/delete, storm tuning | — |
 | Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
 | Devices | At parity: charts, traffic, config diff/split/revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | Cosmetic word-diff pairing in split diff |
-| Collectors / Sites | Not re-audited since the baseline | Collector/site editor fields and bulk actions may still lag the classic console |
+| Collectors / Sites | At parity: probe approve/reject/commands/registration, site CRUD with region/country/timezone/parent hierarchy | — |
 | Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
 | Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
 | Storage / Archive | At parity: retention matrix, archive status + health, archive settings/preflight, gate release/re-engage, parked-chunk reset, restore jobs | — |
@@ -125,6 +125,8 @@ V2:
   parity.
 - **v0.11.363** — Archive gate release/re-engage and parked-chunk reset in the storage page.
   Storage/archive is at parity.
+- **v0.11.364** — Full site fields (region/country/timezone/parent hierarchy). Collectors/Sites is
+  at parity.
 
 ## Remaining gaps
 
@@ -132,10 +134,9 @@ V2:
    IPSec tunnels, filters, zoom/fit and device drill-through, and the detail
    drawer has the five tabs. Still classic-only: expanding tunnel bundles /
    VLAN sublanes inside the graph and alert overlays on nodes.
-2. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
-3. **Profile effective view.** Assignments work; the classic per-profile
+2. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
-4. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
+3. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
    line's delete+insert into one word-diff row.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
