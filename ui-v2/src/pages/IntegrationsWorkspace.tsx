@@ -23,7 +23,6 @@ import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -62,7 +61,10 @@ interface IRCServer {
   real_name: string;
   server_password?: string;
   nickserv_password?: string;
+  nickserv_identify?: boolean;
   sasl_enabled: boolean;
+  auto_reconnect?: boolean;
+  reconnect_delay?: number;
   sasl_username?: string;
   sasl_password?: string;
   enabled: boolean;
@@ -77,21 +79,26 @@ interface IRCChannel {
   server_id: number;
   channel_name: string;
   channel_key?: string;
+  chanserv_name?: string;
+  chanserv_password?: string;
+  chan_oper_pass?: string;
+  admin_nicks?: string;
+  auto_join: boolean;
   send_alerts: boolean;
   send_status: boolean;
-  allow_commands: boolean;
-  min_alert_severity: string;
+  status_interval?: number;
   enabled: boolean;
+  status?: string;
 }
 
 interface IRCCommand {
   id: number;
   command: string;
   description: string;
+  response: string;
   command_type: string;
-  response_template: string;
-  admin_only: boolean;
   enabled: boolean;
+  admin_only: boolean;
 }
 
 const SMTP_KEYS = [
@@ -804,8 +811,18 @@ function IrcBotsSubTab() {
     username: 'fwmon',
     real_name: 'Firewall Monitor Bot',
     sasl_enabled: false,
+    nickserv_identify: false,
+    auto_reconnect: true,
+    reconnect_delay: 30,
     enabled: true,
   });
+
+  const [channelDrawerOpen, setChannelDrawerOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<Partial<IRCChannel>>({});
+  const [channelToDelete, setChannelToDelete] = useState<IRCChannel | null>(null);
+  const [commandDrawerOpen, setCommandDrawerOpen] = useState(false);
+  const [editingCommand, setEditingCommand] = useState<Partial<IRCCommand>>({});
+  const [commandToDelete, setCommandToDelete] = useState<IRCCommand | null>(null);
 
   const [sendServerId, setSendServerId] = useState<number>(0);
   const [sendTarget, setSendTarget] = useState('');
@@ -862,6 +879,101 @@ function IrcBotsSubTab() {
     onError: (err: Error) => {
       toast({ title: 'Delete failed', description: err.message, variant: 'error' });
     },
+  });
+
+  const saveChannelMutation = useMutation({
+    mutationFn: async () => {
+      // `status`/`joined_at`/timestamps are runtime state written by the bot;
+      // the server's map-binding update does not drop them, so echoing a stale
+      // fetch-time value would clobber it.
+      const {
+        id,
+        status: _status,
+        joined_at: _joinedAt,
+        created_at: _createdAt,
+        updated_at: _updatedAt,
+        ...body
+      } = editingChannel as Partial<IRCChannel> & {
+        status?: string;
+        joined_at?: string | null;
+        created_at?: string;
+        updated_at?: string;
+      };
+      void _status;
+      void _joinedAt;
+      void _createdAt;
+      void _updatedAt;
+      if (!body.server_id) throw new Error('Select a server for this channel');
+      if (!body.channel_name?.trim()) throw new Error('Channel name is required');
+      const payload = { ...body, channel_name: body.channel_name.trim() };
+      if (id) {
+        return apiFetch(`/admin/api/irc/channels/${id}`, { method: 'PUT', body: payload });
+      }
+      return apiFetch('/admin/api/irc/channels', { method: 'POST', body: payload });
+    },
+    onSuccess: () => {
+      toast({ title: editingChannel.id ? 'Channel updated' : 'Channel added', variant: 'success' });
+      setChannelDrawerOpen(false);
+      setEditingChannel({});
+      queryClient.invalidateQueries({ queryKey: ['irc-channels'] });
+      queryClient.invalidateQueries({ queryKey: ['irc-servers'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not save channel', description: err.message, variant: 'error' }),
+  });
+
+  const deleteChannelMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/admin/api/irc/channels/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast({ title: 'Channel deleted', variant: 'info' });
+      setChannelToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['irc-channels'] });
+      queryClient.invalidateQueries({ queryKey: ['irc-servers'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not delete channel', description: err.message, variant: 'error' }),
+  });
+
+  const saveCommandMutation = useMutation({
+    mutationFn: async () => {
+      const {
+        id,
+        created_at: _createdAt,
+        updated_at: _updatedAt,
+        ...body
+      } = editingCommand as Partial<IRCCommand> & { created_at?: string; updated_at?: string };
+      void _createdAt;
+      void _updatedAt;
+      if (!body.command?.trim()) throw new Error('Command trigger is required (e.g. !status)');
+      const payload = {
+        ...body,
+        command: body.command.trim(),
+        command_type: body.command_type || 'static',
+      };
+      if (id) {
+        return apiFetch(`/admin/api/irc/commands/${id}`, { method: 'PUT', body: payload });
+      }
+      return apiFetch('/admin/api/irc/commands', { method: 'POST', body: payload });
+    },
+    onSuccess: () => {
+      toast({ title: editingCommand.id ? 'Command updated' : 'Command added', variant: 'success' });
+      setCommandDrawerOpen(false);
+      setEditingCommand({});
+      queryClient.invalidateQueries({ queryKey: ['irc-commands'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not save command', description: err.message, variant: 'error' }),
+  });
+
+  const deleteCommandMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/admin/api/irc/commands/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast({ title: 'Command deleted', variant: 'info' });
+      setCommandToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['irc-commands'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not delete command', description: err.message, variant: 'error' }),
   });
 
   const sendIrcMutation = useMutation({
@@ -964,14 +1076,172 @@ function IrcBotsSubTab() {
     [toggleConnectionMutation, deleteServerMutation]
   );
 
+  const channelCols = useMemo<ColumnDef<IRCChannel, unknown>[]>(
+    () => [
+      {
+        accessorKey: 'channel_name',
+        header: 'Channel',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-mono text-xs font-semibold text-text">
+              {row.original.channel_name}
+            </div>
+            {row.original.status && (
+              <div className="text-[10px] uppercase text-text-faint">{row.original.status}</div>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: 'server',
+        header: 'Server',
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {servers.find((s) => s.id === row.original.server_id)?.name ??
+              `#${row.original.server_id}`}
+          </span>
+        ),
+      },
+      {
+        id: 'routing',
+        header: 'Routing',
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.send_alerts && (
+              <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit">
+                alerts
+              </span>
+            )}
+            {row.original.send_status && (
+              <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">
+                status {row.original.status_interval ?? 300}s
+              </span>
+            )}
+            {!row.original.send_alerts && !row.original.send_status && (
+              <span className="text-[10px] text-text-faint">commands only</span>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: 'auto_join',
+        header: 'Auto-join',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-text-dim">
+            {row.original.auto_join ? 'yes' : 'no'}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              aria-label={`Edit ${row.original.channel_name}`}
+              onClick={() => {
+                setEditingChannel(row.original);
+                setChannelDrawerOpen(true);
+              }}
+              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${row.original.channel_name}`}
+              onClick={() => setChannelToDelete(row.original)}
+              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [servers],
+  );
+
+  const commandCols = useMemo<ColumnDef<IRCCommand, unknown>[]>(
+    () => [
+      {
+        accessorKey: 'command',
+        header: 'Command',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-mono text-xs font-semibold text-text">{row.original.command}</div>
+            {row.original.description && (
+              <div className="text-[10px] text-text-faint">{row.original.description}</div>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'command_type',
+        header: 'Type',
+        cell: ({ row }) => (
+          <span className="rounded bg-bg-panel px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-dim">
+            {row.original.command_type || 'static'}
+          </span>
+        ),
+      },
+      {
+        id: 'flags',
+        header: 'Flags',
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.admin_only && (
+              <span className="rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn">
+                admin only
+              </span>
+            )}
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                row.original.enabled
+                  ? 'bg-sig-ok/15 text-sig-ok'
+                  : 'bg-bg-panel text-text-faint',
+              )}
+            >
+              {row.original.enabled ? 'enabled' : 'disabled'}
+            </span>
+          </div>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1">
+            <button
+              type="button"
+              aria-label={`Edit ${row.original.command}`}
+              onClick={() => {
+                setEditingCommand(row.original);
+                setCommandDrawerOpen(true);
+              }}
+              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${row.original.command}`}
+              onClick={() => setCommandToDelete(row.original)}
+              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
   return (
     <div className="space-y-6">
-      <ClassicFallback
-        title="IRC channels, commands and advanced bot settings are still in the classic console"
-        description="The preview manages servers, connect/disconnect and direct messages. Channel policy (auto-join, alert/status routing), command CRUD, NickServ and SASL credentials have not been rebuilt yet."
-        href="/admin/irc"
-        label="Open IRC management"
-      />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-sm font-semibold text-text">Configured IRC Servers</h2>
@@ -987,10 +1257,13 @@ function IrcBotsSubTab() {
               server_host: '',
               server_port: 6697,
               use_tls: true,
-                        nick: 'fwmon-bot',
+              nick: 'fwmon-bot',
               username: 'fwmon',
               real_name: 'Firewall Monitor Bot',
-                        sasl_enabled: false,
+              sasl_enabled: false,
+              nickserv_identify: false,
+              auto_reconnect: true,
+              reconnect_delay: 30,
               enabled: true,
             });
             setServerDrawerOpen(true);
@@ -1066,6 +1339,94 @@ function IrcBotsSubTab() {
           </div>
         </div>
       )}
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-text">IRC Channels ({channels.length})</h2>
+            <p className="text-xs text-text-dim">
+              Join policy, alert/status routing and admin nicks per channel.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingChannel({
+                server_id: servers[0]?.id,
+                auto_join: true,
+                send_alerts: true,
+                send_status: false,
+                status_interval: 300,
+                enabled: true,
+              });
+              setChannelDrawerOpen(true);
+            }}
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Channel
+          </button>
+        </div>
+        <ResponsiveDataView
+          data={channels}
+          columns={channelCols}
+          emptyTitle="No IRC channels configured."
+          emptyDescription="Add a channel to route alerts or expose commands."
+          renderMobileCard={(c) => (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-xs font-semibold text-text">{c.channel_name}</span>
+                <span className="text-[10px] uppercase text-text-faint">
+                  {c.auto_join ? 'auto-join' : 'manual'}
+                </span>
+              </div>
+              <div className="text-[11px] text-text-dim">
+                {servers.find((s) => s.id === c.server_id)?.name ?? `#${c.server_id}`}
+              </div>
+            </div>
+          )}
+        />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-text">IRC Commands ({commands.length})</h2>
+            <p className="text-xs text-text-dim">
+              Chat commands the bot answers; admin-only commands require a nick in the channel's
+              admin list.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingCommand({ command_type: 'static', enabled: true, admin_only: false });
+              setCommandDrawerOpen(true);
+            }}
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Command
+          </button>
+        </div>
+        <ResponsiveDataView
+          data={commands}
+          columns={commandCols}
+          emptyTitle="No IRC commands configured."
+          emptyDescription="The bot still answers built-in commands."
+          renderMobileCard={(c) => (
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-mono text-xs font-semibold text-text">{c.command}</div>
+                <div className="text-[11px] text-text-dim">{c.description || c.command_type}</div>
+              </div>
+              <span className="text-[10px] uppercase text-text-faint">
+                {c.enabled ? 'on' : 'off'}
+              </span>
+            </div>
+          )}
+        />
+      </section>
 
       <SlideOverDrawer
         open={serverDrawerOpen}
@@ -1177,9 +1538,445 @@ function IrcBotsSubTab() {
               />
               Enable Bot
             </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingServer.auto_reconnect !== false}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, auto_reconnect: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Auto-reconnect
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-dim mb-1">
+                Server password
+              </label>
+              <input
+                type="password"
+                value={editingServer.server_password ?? ''}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, server_password: e.target.value }))
+                }
+                placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-dim mb-1">
+                Reconnect delay (seconds)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={editingServer.reconnect_delay ?? 30}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, reconnect_delay: Number(e.target.value) }))
+                }
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-dim mb-1">
+                NickServ password
+              </label>
+              <input
+                type="password"
+                value={editingServer.nickserv_password ?? ''}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, nickserv_password: e.target.value }))
+                }
+                placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </div>
+            <label className="flex items-center gap-2 self-end text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingServer.nickserv_identify === true}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, nickserv_identify: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Identify to NickServ on connect
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingServer.sasl_enabled === true}
+                onChange={(e) =>
+                  setEditingServer((p) => ({ ...p, sasl_enabled: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              SASL authentication
+            </label>
+            {editingServer.sasl_enabled && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-text-dim mb-1">SASL username</label>
+                  <input
+                    type="text"
+                    value={editingServer.sasl_username ?? ''}
+                    onChange={(e) =>
+                      setEditingServer((p) => ({ ...p, sasl_username: e.target.value }))
+                    }
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-dim mb-1">SASL password</label>
+                  <input
+                    type="password"
+                    value={editingServer.sasl_password ?? ''}
+                    onChange={(e) =>
+                      setEditingServer((p) => ({ ...p, sasl_password: e.target.value }))
+                    }
+                    placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </SlideOverDrawer>
+
+      {/* Channel editor */}
+      <SlideOverDrawer
+        open={channelDrawerOpen}
+        onOpenChange={setChannelDrawerOpen}
+        title={
+          editingChannel.id ? `Edit channel ${editingChannel.channel_name}` : 'Add IRC channel'
+        }
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setChannelDrawerOpen(false)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={
+                !editingChannel.server_id ||
+                !editingChannel.channel_name?.trim() ||
+                saveChannelMutation.isPending
+              }
+              onClick={() => saveChannelMutation.mutate()}
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {saveChannelMutation.isPending ? 'Saving…' : 'Save channel'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Server</span>
+            <select
+              value={editingChannel.server_id ?? ''}
+              onChange={(e) =>
+                setEditingChannel((p) => ({
+                  ...p,
+                  server_id: e.target.value ? Number(e.target.value) : undefined,
+                }))
+              }
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+            >
+              <option value="">Select a server…</option>
+              {servers.map((srv) => (
+                <option key={srv.id} value={srv.id}>
+                  {srv.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Channel name</span>
+            <input
+              type="text"
+              value={editingChannel.channel_name ?? ''}
+              onChange={(e) =>
+                setEditingChannel((p) => ({ ...p, channel_name: e.target.value }))
+              }
+              placeholder="#noc-alerts"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+            />
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">Channel key</span>
+              <input
+                type="password"
+                value={editingChannel.channel_key ?? ''}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, channel_key: e.target.value }))
+                }
+                placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">Admin nicks</span>
+              <input
+                type="text"
+                value={editingChannel.admin_nicks ?? ''}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, admin_nicks: e.target.value }))
+                }
+                placeholder="alice;bob"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">ChanServ name</span>
+              <input
+                type="text"
+                value={editingChannel.chanserv_name ?? ''}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, chanserv_name: e.target.value }))
+                }
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">
+                ChanServ password
+              </span>
+              <input
+                type="password"
+                value={editingChannel.chanserv_password ?? ''}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, chanserv_password: e.target.value }))
+                }
+                placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">
+                Channel operator password
+              </span>
+              <input
+                type="password"
+                value={editingChannel.chan_oper_pass ?? ''}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, chan_oper_pass: e.target.value }))
+                }
+                placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingChannel.auto_join !== false}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, auto_join: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Auto-join
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingChannel.send_alerts === true}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, send_alerts: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Send alerts
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingChannel.send_status === true}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, send_status: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Send status digest
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingChannel.enabled !== false}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({ ...p, enabled: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Enabled
+            </label>
+          </div>
+          {editingChannel.send_status && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">
+                Status interval (seconds)
+              </span>
+              <input
+                type="number"
+                min={30}
+                value={editingChannel.status_interval ?? 300}
+                onChange={(e) =>
+                  setEditingChannel((p) => ({
+                    ...p,
+                    status_interval: Number(e.target.value),
+                  }))
+                }
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+          )}
+        </div>
+      </SlideOverDrawer>
+
+      {/* Command editor */}
+      <SlideOverDrawer
+        open={commandDrawerOpen}
+        onOpenChange={setCommandDrawerOpen}
+        title={editingCommand.id ? `Edit command ${editingCommand.command}` : 'Add IRC command'}
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCommandDrawerOpen(false)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!editingCommand.command?.trim() || saveCommandMutation.isPending}
+              onClick={() => saveCommandMutation.mutate()}
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {saveCommandMutation.isPending ? 'Saving…' : 'Save command'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">Trigger</span>
+              <input
+                type="text"
+                value={editingCommand.command ?? ''}
+                onChange={(e) =>
+                  setEditingCommand((p) => ({ ...p, command: e.target.value }))
+                }
+                placeholder="!status"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-text-dim">Type</span>
+              <select
+                value={editingCommand.command_type ?? 'static'}
+                onChange={(e) =>
+                  setEditingCommand((p) => ({ ...p, command_type: e.target.value }))
+                }
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              >
+                <option value="static">Static response</option>
+                <option value="status">Status</option>
+                <option value="stats">Stats</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Description</span>
+            <input
+              type="text"
+              value={editingCommand.description ?? ''}
+              onChange={(e) =>
+                setEditingCommand((p) => ({ ...p, description: e.target.value }))
+              }
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">
+              Response template
+            </span>
+            <textarea
+              rows={4}
+              value={editingCommand.response ?? ''}
+              onChange={(e) =>
+                setEditingCommand((p) => ({ ...p, response: e.target.value }))
+              }
+              className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text"
+            />
+          </label>
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingCommand.enabled !== false}
+                onChange={(e) =>
+                  setEditingCommand((p) => ({ ...p, enabled: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Enabled
+            </label>
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editingCommand.admin_only === true}
+                onChange={(e) =>
+                  setEditingCommand((p) => ({ ...p, admin_only: e.target.checked }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Admin-only
+            </label>
+          </div>
+        </div>
+      </SlideOverDrawer>
+
+      <ConfirmDialog
+        open={!!channelToDelete}
+        onOpenChange={(open) => {
+          if (!open) setChannelToDelete(null);
+        }}
+        title={`Delete channel ${channelToDelete?.channel_name ?? ''}?`}
+        description="The bot parts the channel and stops routing alerts there."
+        confirmLabel="Delete channel"
+        destructive
+        pending={deleteChannelMutation.isPending}
+        onConfirm={() => channelToDelete && deleteChannelMutation.mutate(channelToDelete.id)}
+      />
+
+      <ConfirmDialog
+        open={!!commandToDelete}
+        onOpenChange={(open) => {
+          if (!open) setCommandToDelete(null);
+        }}
+        title={`Delete command ${commandToDelete?.command ?? ''}?`}
+        description="The bot stops answering this trigger."
+        confirmLabel="Delete command"
+        destructive
+        pending={deleteCommandMutation.isPending}
+        onConfirm={() => commandToDelete && deleteCommandMutation.mutate(commandToDelete.id)}
+      />
 
       <ConfirmDialog
         open={!!serverToDelete}

@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.343] - 2026-10-20
+
+### Added — IRC channel and command management in the Admin UI V2 preview
+
+- **Channels**: table and editor for server, channel name, channel key, ChanServ name/password, channel-operator password, admin nicks, auto-join, alert routing, status digest + interval and enabled state, with delete confirmation.
+- **Commands**: table and editor for the trigger, type (`static`/`status`/`stats`/`custom`), description, response template, enabled and admin-only flags, with delete confirmation.
+- **Server editor** now exposes the advanced fields: server password, NickServ identify + password, SASL username/password, auto-reconnect and reconnect delay. Masked secrets round-trip unchanged.
+- Runtime columns (`status`, `joined_at`, `updated_at`) are stripped from channel updates so a save can no longer write a stale fetch-time value over bot state.
+- The IRC tab's "still in the classic console" notice was removed: servers, channels, commands and direct messages are now all manageable in V2.
+
 ## [0.11.342] - 2026-10-20
 
 ### Added — Maintenance scoping in the Admin UI V2 preview
