@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.364] - 2026-10-21
+
+### Added — Full site fields in the V2 collectors page
+
+- The site editor now exposes **region, country, timezone and a parent site** (hierarchy), in
+  addition to name/address/description; the table shows Region/TZ and Parent, and mobile cards
+  include them.
+- Saves send an explicit allow-list of editable columns (no `id`, no nested `parent_site`), so the
+  row's association object can never be written back; the server remains authoritative on circular
+  parents and field lengths.
+- Inputs carry the same maximum lengths as the API validation.
+- Docs: Collectors/Sites is no longer un-audited; the remaining gap list is topology graph depth,
+  the profile-scoped effective view, and cosmetic diff word-pairing.
+
 ## [0.11.363] - 2026-10-21
 
 ### Added — Archive gate and parked-chunk controls in the V2 storage page

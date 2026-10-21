@@ -44,9 +44,13 @@ interface ProbeRecord {
 interface SiteRecord {
   id: number;
   name: string;
+  region?: string;
+  country?: string;
   address?: string;
+  timezone?: string;
   description?: string;
   parent_site_id?: number | null;
+  parent_site?: { id: number; name: string } | null;
   alert_policy_id?: number | null;
   event_profile_id?: number | null;
 }
@@ -481,15 +485,27 @@ function SitesSubTab() {
 
   const saveSiteMutation = useMutation({
     mutationFn: async () => {
+      // Send only editable columns. The edit draft is the API row and carries
+      // the nested parent_site object; echoing it would invite a GORM
+      // association write (and the id belongs in the path, not the body).
+      const payload = {
+        name: editingSite.name?.trim() ?? '',
+        region: editingSite.region ?? '',
+        country: editingSite.country ?? '',
+        address: editingSite.address ?? '',
+        timezone: editingSite.timezone ?? '',
+        description: editingSite.description ?? '',
+        parent_site_id: editingSite.parent_site_id ?? null,
+      };
       if (editingSite.id) {
         return apiFetch(`/admin/api/sites/${editingSite.id}`, {
           method: 'PUT',
-          body: editingSite,
+          body: payload,
         });
       }
       return apiFetch('/admin/api/sites', {
         method: 'POST',
-        body: editingSite,
+        body: payload,
       });
     },
     onSuccess: () => {
@@ -522,6 +538,29 @@ function SitesSubTab() {
         accessorKey: 'name',
         header: 'Site Name',
         cell: ({ row }) => <span className="font-semibold text-text">{row.original.name}</span>,
+      },
+      {
+        id: 'region',
+        header: 'Region / TZ',
+        cell: ({ row }) => {
+          const parts = [row.original.region, row.original.country, row.original.timezone].filter(
+            Boolean,
+          );
+          return (
+            <span className="font-mono text-[11px] text-text-dim">
+              {parts.length > 0 ? parts.join(' · ') : '—'}
+            </span>
+          );
+        },
+      },
+      {
+        id: 'parent',
+        header: 'Parent',
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {row.original.parent_site?.name || '—'}
+          </span>
+        ),
       },
       {
         accessorKey: 'address',
@@ -574,7 +613,15 @@ function SitesSubTab() {
         <button
           type="button"
           onClick={() => {
-            setEditingSite({ name: '', address: '', description: '' });
+            setEditingSite({
+              name: '',
+              region: '',
+              country: '',
+              address: '',
+              timezone: '',
+              description: '',
+              parent_site_id: null,
+            });
             setDrawerOpen(true);
           }}
           className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
@@ -593,6 +640,13 @@ function SitesSubTab() {
           <div className="space-y-1">
             <div className="font-semibold text-sm text-text">{s.name}</div>
             <div className="text-xs text-text-dim">{s.address || s.description || 'No location'}</div>
+            {(s.region || s.timezone || s.parent_site?.name) && (
+              <div className="font-mono text-[11px] text-text-faint">
+                {[s.region, s.country, s.timezone, s.parent_site?.name ? `parent: ${s.parent_site.name}` : '']
+                  .filter(Boolean)
+                  .join(' · ')}
+              </div>
+            )}
           </div>
         )}
       />
@@ -628,9 +682,68 @@ function SitesSubTab() {
               type="text"
               value={editingSite.name ?? ''}
               onChange={(e) => setEditingSite((p) => ({ ...p, name: e.target.value }))}
+              maxLength={255}
               placeholder="US-East HQ"
               className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
             />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-text-dim mb-1">Region</label>
+              <input
+                type="text"
+                value={editingSite.region ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, region: e.target.value }))}
+                maxLength={255}
+                placeholder="us-east"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-text-dim mb-1">Country</label>
+              <input
+                type="text"
+                value={editingSite.country ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, country: e.target.value }))}
+                maxLength={255}
+                placeholder="US"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-dim mb-1">Timezone</label>
+            <input
+              type="text"
+              value={editingSite.timezone ?? ''}
+              onChange={(e) => setEditingSite((p) => ({ ...p, timezone: e.target.value }))}
+              maxLength={100}
+              placeholder="America/New_York"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-text-dim mb-1">Parent site</label>
+            <select
+              value={editingSite.parent_site_id ?? ''}
+              onChange={(e) =>
+                setEditingSite((p) => ({
+                  ...p,
+                  parent_site_id: e.target.value ? Number(e.target.value) : null,
+                }))
+              }
+              aria-label="Parent site"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+            >
+              <option value="">No parent (top level)</option>
+              {sites
+                .filter((site) => site.id !== editingSite.id)
+                .map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.name}
+                  </option>
+                ))}
+            </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-text-dim mb-1">Geographic Location</label>
@@ -638,6 +751,7 @@ function SitesSubTab() {
               type="text"
               value={editingSite.address ?? ''}
               onChange={(e) => setEditingSite((p) => ({ ...p, address: e.target.value }))}
+              maxLength={500}
               placeholder="New York, NY"
               className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
             />
@@ -648,6 +762,7 @@ function SitesSubTab() {
               rows={3}
               value={editingSite.description ?? ''}
               onChange={(e) => setEditingSite((p) => ({ ...p, description: e.target.value }))}
+              maxLength={1000}
               className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
             />
           </div>
