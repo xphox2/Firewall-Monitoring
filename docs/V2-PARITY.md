@@ -5,9 +5,32 @@ feature-complete. This page is the single source of truth for what is missing,
 so an operator (or a reviewer) never has to guess whether a thin screen is a bug
 or an unbuilt feature.
 
-Last audited: **v0.11.333** (audit re-run when this file changes).
+**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.355.
+The baseline table is kept for history; the current-state table and the remaining
+gaps list below are the actionable view.
 
-## How to read this
+## Current state (v0.11.355)
+
+| Area | State | Remaining |
+|---|---|---|
+| Dashboard / NOC | NOC wallboard at parity (vitals, site/device health, named-event feed, threats) | Dashboard host CPU/memory/disk **trends**; NOC feed pause/hover hold and per-site drill-down snapshots |
+| Events | At parity: analytics + rollup charts, distributions, structured event/security inspectors, security class/severity filters and paging | — |
+| Flows | At parity: filters, throughput chart, byte-ranked distributions, degraded-window disclosure, conversation drill-down, sample inspector, CSV export | — |
+| Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
+| Threat Intel | At parity: lookup verdict, feed switch/status, indicator search/add/delete, storm tuning | — |
+| Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
+| Devices | At parity: charts, traffic, config diff/split/revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | Cosmetic word-diff pairing in split diff |
+| Collectors / Sites | Not re-audited since the baseline | Collector/site editor fields and bulk actions may still lag the classic console |
+| Alerts | At parity: filters, stats + volume chart, by-type distribution, bulk ack/snooze, paging, linked flow detections, incidents | Per-type time series (one trend line per type); structured syslog-field parsing |
+| Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
+| Storage / Archive | Not re-audited since the baseline | Some storage/archive controls may still be classic-only |
+| Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
+| System | At parity: users (disable/reset/passkeys), token expiry/status, audit paging/filters, TOTP wizard, passkey registration | 2FA decline-with-risk, passkey rename, profile "member since" |
+| Maintenance | At parity: scoping to all/device/site and per-alert-type suppression | Recurrence (unexposed in both consoles) |
+
+## Historical audit baseline (v0.11.333)
+
+### How to read this
 
 Every V1 feature unit (chart, table, form, action, panel) was compared against
 V2:
@@ -17,7 +40,7 @@ V2:
 - **Stub** — renders raw JSON or a placeholder.
 - **Missing** — no V2 surface.
 
-## Scoreboard (v0.11.333)
+### Scoreboard (v0.11.333)
 
 | Area | Implemented | Partial | Stub | Missing | Units |
 |---|---:|---:|---:|---:|---:|
@@ -90,36 +113,26 @@ V2:
   the last classic-only banner was removed. Remaining alert sub-gaps are named inline.
 - **v0.11.355** — Structured IPSec preview (findings + per-end CLI) and event-rule tester result.
 
-## Top gaps
+## Remaining gaps
 
-The scoreboard above is the **v0.11.333 audit baseline**; the per-version log
-records what has closed since. Re-auditing all 296 units is pending, so this
-list — not the table — is the current backlog.
-
-1. **Topology depth.** V2 has an interactive Cytoscape map (sites, connections,
-   IPSec tunnels, filters, zoom/fit) and a five-tab connection detail (overview,
-   source/dest tunnels, LLDP/FDB/ARP + interface + phase-2 evidence, traffic
-   chart). Still classic-only: expanding tunnel bundles / VLAN sublanes in the
-   graph itself and graph alert overlays.
-2. **Events depth.** Analytics and rollups exist, but event/security-event
-   detail is still a raw-JSON drawer, and several security columns/filters and
-   per-type breakdowns remain classic-only.
-3. **Syslog and traps depth.** Detail views are raw JSON; trap/syslog trend
-   charts and some filters are still missing.
-4. **Dashboard resource trend.** The classic dashboard draws host CPU/memory/
-   disk trends over time; V2 shows current values only.
-5. **Alert triage leftovers.** Linked flow detections are now rendered; the
-   remaining sub-gaps are structured syslog-field parsing and per-type time
-   series (the distribution is shown, one trend line per type is not).
-6. **Storage / archive leftovers.** The storage page and archive/export flows
-   still miss several controls from the classic console.
-7. **Account security leftovers.** 2FA "decline with risk acknowledgement",
+1. **Topology graph depth.** The interactive map covers sites, connections,
+   IPSec tunnels, filters, zoom/fit and device drill-through, and the detail
+   drawer has the five tabs. Still classic-only: expanding tunnel bundles /
+   VLAN sublanes inside the graph and alert overlays on nodes.
+2. **Dashboard host trends.** The classic dashboard draws host CPU/memory/disk
+   over time; V2 shows current values only. No fleet-trend endpoint exists, so
+   this needs a data source rather than a UI port.
+3. **Alert sub-gaps.** Per-type time series (one trend line per alert type) and
+   structured syslog-field parsing; both are named inline on the Alerts page.
+4. **Storage / archive.** Not re-audited; some controls may still be classic-only.
+5. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
+6. **Account security leftovers.** 2FA "decline with risk acknowledgement",
    passkey rename, and the profile "member since" line.
-8. **Collectors / sites leftovers.** Several collector and site editor fields
-   and bulk actions remain classic-only.
-9. **Profile effective view.** Assignments now work; the classic per-profile
-   "effective" preview is represented by the Configuration Overview rather than
-   a profile-scoped view.
+7. **Profile effective view.** Assignments work; the classic per-profile
+   "effective" preview is represented by the Configuration Overview.
+8. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
+   line's delete+insert into one word-diff row.
+9. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
