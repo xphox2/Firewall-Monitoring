@@ -86,6 +86,8 @@ V2:
   filters, zoom/fit, device drill-through).
 - **v0.11.353** — Five-tab connection detail (KPIs, tunnel tables, L2 evidence, phase-2
   correlation, traffic chart). Remaining: graph bundle/VLAN expansion and alert overlays.
+- **v0.11.354** — Alert linked flow detections, source-address chip and by-type distribution;
+  the last classic-only banner was removed. Remaining alert sub-gaps are named inline.
 
 ## Top gaps
 
@@ -105,8 +107,9 @@ list — not the table — is the current backlog.
    charts and some filters are still missing.
 4. **Dashboard resource trend.** The classic dashboard draws host CPU/memory/
    disk trends over time; V2 shows current values only.
-5. **Alert triage leftovers.** Parsed syslog fields, linked flow detections and
-   per-alert-type trend breakdowns.
+5. **Alert triage leftovers.** Linked flow detections are now rendered; the
+   remaining sub-gaps are structured syslog-field parsing and per-type time
+   series (the distribution is shown, one trend line per type is not).
 6. **Storage / archive leftovers.** The storage page and archive/export flows
    still miss several controls from the classic console.
 7. **Account security leftovers.** 2FA "decline with risk acknowledgement",
@@ -117,14 +120,15 @@ list — not the table — is the current backlog.
    "effective" preview is represented by the Configuration Overview rather than
    a profile-scoped view.
 
-Raw-JSON stubs still present: event detail, security event detail, syslog
-detail, trap detail, connection detail, IPSec CLI preview, device capabilities
-and the effective-policy simulator.
+Raw-JSON stubs still present: the IPSec CLI preview, device capabilities and the
+effective-policy simulator. Event, security-event, syslog, trap, flow-sample and
+connection detail are now structured (raw JSON remains available behind a
+disclosure).
 
 ## Where V2 points at V1
 
-One surface still renders a `ClassicFallback` notice: the **alert triage
-analytics** that remain classic-only (parsed syslog fields, linked flow
-detections, per-type trends). The shell also carries a `PREVIEW` pill and a
+No `ClassicFallback` notices remain. The two alert sub-gaps that are still
+classic-only (structured syslog-field parsing, per-type time series) are named
+inline on the page instead. The shell still carries a `PREVIEW` pill and a
 dismissible notice, and the classic sidebar links to `/admin/v2` with a
 `Preview` badge.
