@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.360] - 2026-10-21
+
+### Added — Account-security leftovers in the Admin UI V2 preview
+
+- **2FA decline-with-risk**: when the account has no authenticator and the prompt has never been
+  dismissed, the security card shows the risk notice with a "Don't ask again" action wired to
+  `POST /me/mfa-decline` (permanent, as the server records it). Enrolling later still works from
+  the same card.
+- **Passkey rename**: a pencil action and a name drawer (`PUT /passkeys/:id`), alongside the
+  existing register/remove flows.
+- **Member since**: the profile header shows the account creation date using a new date-only
+  `formatDate` helper that honours the display-timezone setting (instead of the browser locale).
+- Docs: the account-security leftovers are no longer listed as remaining gaps.
+
 ## [0.11.359] - 2026-10-21
 
 ### Added — Server resource trend on the V2 dashboard

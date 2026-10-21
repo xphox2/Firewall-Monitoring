@@ -25,7 +25,7 @@ gaps list below are the actionable view.
 | Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
 | Storage / Archive | Not re-audited since the baseline | Some storage/archive controls may still be classic-only |
 | Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
-| System | At parity: users (disable/reset/passkeys), token expiry/status, audit paging/filters, TOTP wizard, passkey registration | 2FA decline-with-risk, passkey rename, profile "member since" |
+| System | At parity: users (disable/reset/passkeys), token expiry/status, audit paging/filters, TOTP wizard + decline, passkey registration/rename, member-since | — |
 | Maintenance | At parity: scoping to all/device/site and per-alert-type suppression | Recurrence (unexposed in both consoles) |
 
 ## Historical audit baseline (v0.11.333)
@@ -118,6 +118,7 @@ V2:
   volume card). The only remaining alert sub-gap is structured syslog-field parsing.
 - **v0.11.359** — Server resource trend (CPU/memory/root disk/DB volume) on the dashboard, with
   unprobed volume buckets kept as gaps.
+- **v0.11.360** — Account leftovers: 2FA decline-with-risk, passkey rename, member-since.
 
 ## Remaining gaps
 
@@ -129,13 +130,11 @@ V2:
    Alerts page. Per-type volume trends are now in the preview.
 3. **Storage / archive.** Not re-audited; some controls may still be classic-only.
 4. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
-5. **Account security leftovers.** 2FA "decline with risk acknowledgement",
-   passkey rename, and the profile "member since" line.
-6. **Profile effective view.** Assignments work; the classic per-profile
+5. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
-7. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
+6. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
    line's delete+insert into one word-diff row.
-8. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
+7. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,

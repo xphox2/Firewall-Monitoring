@@ -110,6 +110,29 @@ export function formatDateTime(iso: string | null | undefined): string {
   }
 }
 
+/** Date-only variant of formatDateTime (same display timezone, no time). */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  let tz: string | undefined;
+  try {
+    tz = localStorage.getItem(TZ_STORAGE_KEY) || undefined;
+  } catch {
+    tz = undefined;
+  }
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      ...(tz && tz !== 'local' ? { timeZone: tz } : {}),
+    }).format(d);
+  } catch {
+    return d.toLocaleDateString();
+  }
+}
+
 export function countryCodeToFlag(cc: string | null | undefined): string {
   if (!cc || cc.length !== 2) return '';
   const upper = cc.toUpperCase();
