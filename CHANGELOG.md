@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.347] - 2026-10-20
+
+### Added — Config revision viewer, split diff and revision delete in the Admin UI V2 preview
+
+- **Revision viewer**: the Config tab's revision rows gain a View action that opens the stored config text in a drawer (timestamp, size, checksum, copy, download). Uses `/config-history/:revId/view`; Download still uses the attachment route.
+- **Split diff**: the config diff drawer now has a Unified / Split toggle. Split renders a-side and b-side columns from the aligned rows with line numbers, delete/insert/volatile colouring and volatile-pattern badges.
+- **Revision delete**: confirmed deletion of a single stored revision (`DELETE /config-history/:revId`), closing the last device-page gap.
+- Clipboard use is guarded on insecure contexts, and revision-load failures render an explicit error instead of "no stored config text".
+- Remaining cosmetic difference from the classic console: split view aligns rows but does not pair a modified line's delete+insert into one word-diff row.
+
 ## [0.11.346] - 2026-10-20
 
 ### Added — Structured Threat Intelligence in the Admin UI V2 preview

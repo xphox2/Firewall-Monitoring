@@ -71,6 +71,8 @@ V2:
   links from the topology map.
 - **v0.11.346** — Structured Threat Intel (lookup verdict card, feed master switch and status,
   indicator search/paging/add/delete, storm tuning on the real field).
+- **v0.11.347** — Config revision viewer, split diff and confirmed revision delete. The Device
+  area is now at parity except cosmetic word-diff pairing in split view.
 
 ## Top gaps
 
