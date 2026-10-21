@@ -230,8 +230,22 @@ func TestGetNOCSnapshotFiltered_Site(t *testing.T) {
 	if snap.TotalFlows != 1 {
 		t.Errorf("filtered TotalFlows = %d, want 1", snap.TotalFlows)
 	}
-	// Filtered snapshot omits the fleet-only site breakdown.
-	if snap.Sites != nil {
-		t.Errorf("filtered snapshot should not carry Sites breakdown; got %d", len(snap.Sites))
+	// A site drill-down carries exactly that site's breakdown, including its
+	// device rows (the fleet grid itself stays out of filtered snapshots).
+	if len(snap.Sites) != 1 {
+		t.Fatalf("filtered snapshot Sites = %d, want the HQ row only", len(snap.Sites))
+	}
+	site := snap.Sites[0]
+	if site.SiteID == nil || *site.SiteID != hq.ID {
+		t.Fatalf("filtered site id = %v, want %d", site.SiteID, hq.ID)
+	}
+	if site.SiteName != "HQ" {
+		t.Errorf("filtered site name = %q, want HQ", site.SiteName)
+	}
+	if len(site.Devices) != 1 || site.Devices[0].Name != "d1" {
+		t.Errorf("filtered site devices = %+v, want only d1", site.Devices)
+	}
+	if site.DevicesOnline != 1 || site.DevicesOffline != 0 {
+		t.Errorf("filtered site counts = %d/%d, want 1 online/0 offline", site.DevicesOnline, site.DevicesOffline)
 	}
 }

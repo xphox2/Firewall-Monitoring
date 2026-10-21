@@ -13,7 +13,7 @@ gaps list below are the actionable view.
 
 | Area | State | Remaining |
 |---|---|---|
-| Dashboard / NOC | At parity: KPIs, server runtime telemetry, host CPU/memory/root-disk/DB-volume trend, NOC wallboard | NOC feed pause/hover hold and per-site drill-down snapshots |
+| Dashboard / NOC | At parity: KPIs, server runtime telemetry, host CPU/memory/root-disk/DB-volume trend, NOC wallboard with feed pause and site drill-down | — |
 | Events | At parity: analytics + rollup charts, distributions, structured event/security inspectors, security class/severity filters and paging | — |
 | Flows | At parity: filters, throughput chart, byte-ranked distributions, degraded-window disclosure, conversation drill-down, sample inspector, CSV export | — |
 | Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
@@ -121,6 +121,8 @@ V2:
 - **v0.11.360** — Account leftovers: 2FA decline-with-risk, passkey rename, member-since.
 - **v0.11.361** — Parsed syslog fields for syslog-sourced alerts (fixed the dead `metric_name`
   gate in both consoles). The alert area is now at parity.
+- **v0.11.362** — NOC site drill-down snapshots and live-feed pause/hover-hold. The NOC is at
+  parity.
 
 ## Remaining gaps
 
@@ -134,7 +136,6 @@ V2:
    "effective" preview is represented by the Configuration Overview.
 5. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
    line's delete+insert into one word-diff row.
-6. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
