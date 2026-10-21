@@ -13,8 +13,12 @@ import (
 // v0.11.273: country flags render on every browser. AC.flagEmoji draws a
 // regional-indicator pair; Windows has no flag glyphs, so Chrome and Edge there
 // showed two letters ("US") beside the ISO code. A self-hosted flag-only face
-// (Twemoji Country Flags) supplies the glyphs. Its CC BY 4.0 attribution, and
-// DB-IP's link-back on every page that shows geo results, are pinned too.
+// (Twemoji Country Flags) supplies the glyphs. Its CC BY 4.0 attribution is
+// pinned here.
+//
+// DB-IP's attribution moved out of the UI (v0.11.357): the CC BY 4.0 credit is
+// carried by NOTICE / THIRD-PARTY-NOTICES, which ship with the application, and
+// the admin pages must NOT reintroduce an in-app credit link.
 
 // The attribution chain, stated identically in the served CSS, NOTICE and
 // THIRD-PARTY-NOTICES.md.
@@ -72,24 +76,26 @@ func adminPagesUsingCommon(t *testing.T) map[string]string {
 	return out
 }
 
-func TestFlagFont_EveryFlagPageLoadsFaceAndCredit(t *testing.T) {
-	// The footer block ends at the first closing div on its own line.
-	footerEnd := regexp.MustCompile(`\r?\n[ \t]*</div>`)
-	credit := regexp.MustCompile(`<a class="fwmon-geo-credit" href="https://db-ip\.com"[^>]*>IP Geolocation by DB-IP</a>`)
+func TestFlagFont_EveryFlagPageLoadsFaceAndNotices(t *testing.T) {
 	for name, src := range adminPagesUsingCommon(t) {
 		mustContain(t, name, src, `href="/static/css/admin-fonts.css"`, "the flag face must be loaded wherever flags render")
-		i := strings.Index(src, `<div class="sidebar-footer">`)
-		if i < 0 {
-			t.Errorf("%s: no sidebar-footer", name)
-			continue
-		}
-		end := footerEnd.FindStringIndex(src[i:])
-		if end == nil || !credit.MatchString(src[i:i+end[0]]) {
-			t.Errorf("%s: the sidebar footer must link DB-IP.com (\"IP Geolocation by DB-IP\") — DB-IP Lite's CC BY 4.0 terms", name)
+		if strings.Contains(src, "fwmon-geo-credit") {
+			t.Errorf("%s: the in-app DB-IP credit was removed; attribution belongs in NOTICE / THIRD-PARTY-NOTICES", name)
 		}
 	}
-	mustContain(t, "admin-shared.css", readFile(t, "../../cmd/api/static/css/admin-shared.css"),
-		".fwmon-geo-credit {\n    color: var(--fwmon-text-mute);", "the credit uses the AA text token in both themes")
+
+	// The attribution must stay in the shipped notices even though it is no
+	// longer advertised in the UI.
+	notice := readFile(t, "../../NOTICE")
+	for _, want := range []string{
+		"IP Geolocation by DB-IP",
+		"https://db-ip.com",
+		"https://creativecommons.org/licenses/by/4.0/",
+	} {
+		mustContain(t, "NOTICE", notice, want, "DB-IP Lite attribution")
+	}
+	mustContain(t, "THIRD-PARTY-NOTICES.md", readFile(t, "../../THIRD-PARTY-NOTICES.md"),
+		"IP Geolocation by DB-IP", "DB-IP Lite attribution")
 }
 
 func TestFlagFont_Notices(t *testing.T) {

@@ -138,17 +138,6 @@
   }
 }
 
-.fwmon-geo-credit {
-  color: var(--fwmon-text-mute);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-
-.fwmon-geo-credit:hover {
-  color: var(--fwmon-text-dim);
-  text-decoration: underline;
-}
-
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }

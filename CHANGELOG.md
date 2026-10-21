@@ -1,6 +1,13 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.357] - 2026-10-21
+
+### Changed — Removed the in-app DB-IP credit line
+
+- The "IP Geolocation by DB-IP" link is gone from the V2 sidebar (desktop and mobile), the classic sidebars (admin, device detail, connection detail), the V2 `<noscript>` fallback, and the now-unused `.fwmon-geo-credit` CSS.
+- The CC BY 4.0 attribution remains in `NOTICE` and `THIRD-PARTY-NOTICES.md`, which ship with the application; the notices no longer claim an in-app credit.
+
 ## [0.11.356] - 2026-10-21
 
 ### Changed — V2 parity document refreshed to the current state

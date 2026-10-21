@@ -113,7 +113,7 @@ Compiled output included as `cmd/api/static/css/tailwind.css`. Build-time only.
 
 ### DB-IP Lite databases — CC-BY-4.0
 
-IP Geolocation by DB-IP. Used for the default free country/ASN enrichment tier; credited with a link to DB-IP.com on every admin page. See also `NOTICE`.
+IP Geolocation by DB-IP. Used for the default free country/ASN enrichment tier; attribution is provided in this file and `NOTICE` (there is no in-app credit).
 
 - **Source**: https://db-ip.com
 - **License**: https://creativecommons.org/licenses/by/4.0/
