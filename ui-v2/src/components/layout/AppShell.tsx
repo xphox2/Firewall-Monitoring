@@ -198,7 +198,7 @@ export function AppShell() {
           })}
         </nav>
 
-        {/* Sidebar Footer (Theme Switch, User Profile, Logout, DB-IP Attribution) */}
+        {/* Sidebar Footer (Theme Switch, User Profile, Logout) */}
         <div className="sidebar-footer shrink-0 border-t border-border p-3 space-y-2 bg-bg-card">
           <div className="flex items-center gap-1.5">
             <button
@@ -238,15 +238,7 @@ export function AppShell() {
               <LogOut className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="flex items-center justify-between text-[10px] text-text-mute px-1">
-            <a
-              className="fwmon-geo-credit"
-              href="https://db-ip.com"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              IP Geolocation by DB-IP
-            </a>
+          <div className="flex items-center justify-end text-[10px] text-text-mute px-1">
             <span className="font-mono uppercase">{me?.role || 'admin'}</span>
           </div>
         </div>
@@ -508,16 +500,6 @@ export function AppShell() {
                   <LogOut className="h-3.5 w-3.5" />
                   <span>Logout</span>
                 </button>
-              </div>
-              <div className="text-[10px] text-text-mute text-center">
-                <a
-                  className="fwmon-geo-credit"
-                  href="https://db-ip.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  IP Geolocation by DB-IP
-                </a>
               </div>
             </div>
           </div>
