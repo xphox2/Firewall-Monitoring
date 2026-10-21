@@ -60,6 +60,8 @@ V2:
 - **v0.11.341** — 2FA enrollment/disable wizard and passkey registration/removal (with the
   real WebAuthn ceremony and required re-auth). Remaining: decline-with-risk, passkey rename,
   and the profile "member since" line.
+- **v0.11.342** — Maintenance scoping (all/device/site) and per-alert-type suppression from the
+  server registry. Recurrence remains unexposed in both consoles.
 
 ## Top gaps
 
