@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import { apiFetch, type DashboardSummary, type SystemHealthSnapshot } from '@/lib/api';
 import { cn, formatBytes, formatCompactNumber, formatRelativeTime } from '@/lib/utils';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
+import { formatBitsPerSecond } from '@/lib/chart';
+import { mergeFeed } from '@/lib/noc';
 
 type OverviewTab = 'health' | 'noc';
 
@@ -347,31 +348,214 @@ export function OverviewWorkspace() {
 // ============================================================================
 // LIVE NOC WALLBOARD (SSE /admin/api/noc/stream + /admin/api/noc/snapshot)
 // ============================================================================
+interface NocDeviceRow {
+  id: number;
+  name: string;
+  ip?: string;
+  status?: string;
+  worst_severity?: string;
+  bits_per_second?: number;
+  last_polled?: string;
+}
+
+interface NocSite {
+  site_id?: number | null;
+  site_name: string;
+  worst_severity?: string;
+  devices_online?: number;
+  devices_offline?: number;
+  alerts_critical?: number;
+  alerts_warning?: number;
+  probe_offline?: boolean;
+  bits_per_second?: number;
+  threat_flows?: number;
+  devices?: NocDeviceRow[];
+}
+
+interface NocFeedItem {
+  kind?: string;
+  id: number;
+  at?: string;
+  last_seen?: string;
+  repeat?: number;
+  severity?: string;
+  type?: string;
+  category?: string;
+  device_id?: number;
+  device_name?: string;
+  site_name?: string;
+  message?: string;
+  acknowledged?: boolean;
+  dedup_key?: string;
+}
+
+interface NocFeed {
+  generated_at?: string;
+  alerts?: NocFeedItem[];
+  detections?: NocFeedItem[];
+  silenced?: NocFeedItem[];
+  silenced_total?: number;
+}
+
+interface NocThreatEntry {
+  addr: string;
+  requests?: number;
+  bytes?: number;
+  service?: number;
+  protocol?: number;
+  internal_hosts?: string[];
+  internal_count?: number;
+  devices?: number;
+  inferred?: boolean;
+  ip_match?: boolean;
+  blocked?: number;
+}
+
+interface NocSnapshot {
+  generated_at?: string;
+  window_seconds?: number;
+  total_flows?: number;
+  total_bytes?: number;
+  bits_per_second?: number;
+  unique_sources?: number;
+  unique_dests?: number;
+  threat_flows?: number;
+  probes_online?: number;
+  probes_offline?: number;
+  devices_online?: number;
+  devices_offline?: number;
+  active_threat_intel?: number;
+  sites?: NocSite[];
+  feed?: NocFeed;
+  threat_top?: {
+    window_seconds?: number;
+    summary?: {
+      inbound?: number;
+      outbound?: number;
+      unclassified?: number;
+      other?: number;
+      blocked?: number;
+    };
+    outbound?: NocThreatEntry[];
+    inbound?: NocThreatEntry[];
+  };
+}
+
+type FeedKind = 'all' | 'alerts' | 'detections' | 'silenced';
+
+const severityBadge: Record<string, string> = {
+  ok: 'bg-sig-ok/15 text-sig-ok',
+  critical: 'bg-sig-crit/15 text-sig-crit',
+  warning: 'bg-sig-warn/15 text-sig-warn',
+  info: 'bg-accent/15 text-accent',
+};
+
+function severityBorder(severity?: string): string {
+  if (severity === 'critical') return 'border-sig-crit/50';
+  if (severity === 'warning') return 'border-sig-warn/50';
+  return 'border-border';
+}
+
+function FeedRow({ item, list }: { item: NocFeedItem; list: string }) {
+  const at = item.last_seen || item.at;
+  return (
+    <div className="flex items-start gap-2 border-b border-border/50 px-2 py-1.5 last:border-0">
+      <span
+        className={cn(
+          'mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+          severityBadge[item.severity ?? 'info'] ?? severityBadge.info,
+        )}
+      >
+        {item.severity || list}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-1.5 text-[11px]">
+          <span className="font-semibold text-text">{item.type || item.kind || 'event'}</span>
+          {(item.repeat ?? 1) > 1 && (
+            <span className="font-mono text-[10px] text-text-faint">×{item.repeat}</span>
+          )}
+          {list === 'silenced' && (
+            <span className="rounded bg-bg-panel px-1 text-[9px] uppercase text-text-faint">
+              silenced
+            </span>
+          )}
+          {item.device_name && (
+            <span className="font-mono text-[10px] text-text-dim">{item.device_name}</span>
+          )}
+          {item.site_name && (
+            <span className="font-mono text-[10px] text-text-faint">{item.site_name}</span>
+          )}
+        </div>
+        <div className="line-clamp-2 text-[11px] text-text-dim">{item.message}</div>
+      </div>
+      <span className="shrink-0 font-mono text-[10px] text-text-faint">
+        {formatRelativeTime(at)}
+      </span>
+    </div>
+  );
+}
+
 function LiveNocWallboard() {
+  const navigate = useNavigate();
   const [sseConnected, setSseConnected] = useState(false);
-  const [liveSnapshot, setLiveSnapshot] = useState<any>(null);
+  const [everConnected, setEverConnected] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [snapshot, setSnapshot] = useState<NocSnapshot | null>(null);
+  const [feed, setFeed] = useState<NocFeed | null>(null);
+  const [feedKind, setFeedKind] = useState<FeedKind>('all');
+  const [feedCount, setFeedCount] = useState(20);
+  const [view, setView] = useState<'site' | 'device'>('site');
 
   const { data: initialSnapshot } = useQuery({
     queryKey: ['noc-snapshot'],
-    queryFn: () => apiFetch<any>('/admin/api/noc/snapshot'),
+    queryFn: () => apiFetch<NocSnapshot>('/admin/api/noc/snapshot'),
   });
 
   useEffect(() => {
+    if (initialSnapshot) {
+      setSnapshot((current) => current ?? initialSnapshot);
+      if (initialSnapshot.feed) setFeed((current) => current ?? initialSnapshot.feed ?? null);
+    }
+  }, [initialSnapshot]);
+
+  useEffect(() => {
     const es = new EventSource('/admin/api/noc/stream');
-    es.onopen = () => setSseConnected(true);
+    es.onopen = () => {
+      setSseConnected(true);
+      setEverConnected(true);
+    };
     es.onmessage = (ev) => {
       try {
-        const parsed = JSON.parse(ev.data);
-        setLiveSnapshot(parsed);
+        const parsed = JSON.parse(ev.data) as NocSnapshot;
+        setSnapshot(parsed);
+        // The one-shot carries the feed inline; the stream normally sends it
+        // as a named event, but accept it here too.
+        if (parsed.feed) setFeed(parsed.feed);
       } catch {
-        // Ignore keepalive comments
+        // keepalive comment
       }
     };
+    // v0.11.269: the live alert/detection ticker arrives as a named event.
+    const onFeed = (ev: MessageEvent) => {
+      try {
+        setFeed(JSON.parse(ev.data) as NocFeed);
+      } catch {
+        // ignore malformed frame
+      }
+    };
+    es.addEventListener('feed', onFeed as EventListener);
     es.onerror = () => setSseConnected(false);
-    return () => es.close();
+    return () => {
+      es.removeEventListener('feed', onFeed as EventListener);
+      es.close();
+    };
   }, []);
 
-  const data = liveSnapshot || initialSnapshot || {};
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -381,18 +565,43 @@ function LiveNocWallboard() {
     }
   };
 
+  const sites = snapshot?.sites ?? [];
+  const devices: Array<NocDeviceRow & { site_name?: string }> = sites.flatMap((site) =>
+    (site.devices ?? []).map((d) => ({ ...d, site_name: site.site_name })),
+  );
+
+  const feedItems = useMemo(() => mergeFeed(feed, feedKind, feedCount), [feed, feedKind, feedCount]);
+
+  const threats = snapshot?.threat_top;
+  const summary = threats?.summary;
+
+  if (!snapshot) {
+    return (
+      <div className="rounded-xl border border-border bg-bg-card p-8 text-center text-sm text-text-dim">
+        Connecting to the NOC stream…
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between rounded-xl border border-border bg-bg-card px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-bg-card px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span
             className={cn(
               'h-2.5 w-2.5 rounded-full',
-              sseConnected ? 'bg-sig-ok animate-pulse' : 'bg-sig-warn'
+              sseConnected ? 'bg-sig-ok animate-pulse' : 'bg-sig-warn',
             )}
           />
           <span className="text-xs font-semibold text-text">
-            {sseConnected ? 'Live NOC SSE Stream Connected' : 'Polling NOC Snapshot'}
+            {sseConnected
+              ? 'Live NOC stream connected'
+              : everConnected
+                ? 'Stream reconnecting…'
+                : 'Connecting to stream…'}
+          </span>
+          <span className="font-mono text-[10px] text-text-faint">
+            updated {formatRelativeTime(snapshot.generated_at)}
           </span>
         </div>
         <button
@@ -401,22 +610,343 @@ function LiveNocWallboard() {
           className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
         >
           <Maximize2 className="h-3.5 w-3.5 text-accent" />
-          Fullscreen Wallboard
+          {isFullscreen ? 'Exit fullscreen' : 'Fullscreen wallboard'}
         </button>
       </div>
 
-      <ClassicFallback
-        title="The NOC wallboard is still in the classic console"
-        description="The preview shows the live SSE snapshot as raw JSON. Fleet vitals, site/device cards, the alert and detection feed, and the last-60s threat lists are not rebuilt yet."
-        href="/admin/noc"
-        label="Open the NOC wallboard"
-      />
+      {/* Vitals */}
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-2.5">
+        {[
+          {
+            label: 'Throughput',
+            value: formatBitsPerSecond(snapshot.bits_per_second ?? 0),
+            tone: 'text-accent',
+          },
+          {
+            label: `Flows (${Math.max(1, Math.round((snapshot.window_seconds ?? 300) / 60))}m)`,
+            value: formatCompactNumber(snapshot.total_flows ?? 0),
+          },
+          {
+            label: 'Unique src → dst',
+            value: `${formatCompactNumber(snapshot.unique_sources ?? 0)} → ${formatCompactNumber(
+              snapshot.unique_dests ?? 0,
+            )}`,
+          },
+          {
+            label: 'Threat flows',
+            value: formatCompactNumber(snapshot.threat_flows ?? 0),
+            tone: (snapshot.threat_flows ?? 0) > 0 ? 'text-sig-crit' : 'text-text',
+          },
+          {
+            label: 'Probes',
+            value: `${snapshot.probes_online ?? 0} up · ${snapshot.probes_offline ?? 0} down`,
+            tone: (snapshot.probes_offline ?? 0) > 0 ? 'text-sig-warn' : 'text-text',
+          },
+          {
+            label: 'Devices',
+            value: `${snapshot.devices_online ?? 0} up · ${snapshot.devices_offline ?? 0} down`,
+            tone: (snapshot.devices_offline ?? 0) > 0 ? 'text-sig-warn' : 'text-text',
+          },
+          {
+            label: 'Threat intel IOCs',
+            value: formatCompactNumber(snapshot.active_threat_intel ?? 0),
+          },
+        ].map((tile) => (
+          <div key={tile.label} className="rounded-lg border border-border bg-bg-card p-3">
+            <div className="text-[10px] uppercase text-text-faint">{tile.label}</div>
+            <div className={cn('mt-0.5 font-mono text-sm font-bold', tile.tone ?? 'text-text')}>
+              {tile.value}
+            </div>
+          </div>
+        ))}
+      </div>
 
+      {/* Site / device health */}
       <div className="rounded-xl border border-border bg-bg-card p-4">
-        <h2 className="text-sm font-semibold text-text mb-2">Raw NOC snapshot (JSON)</h2>
-        <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto max-h-96">
-          {JSON.stringify(data, null, 2)}
-        </pre>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-text">
+            {view === 'site' ? `Site health (${sites.length})` : `Devices (${devices.length})`}
+          </h2>
+          <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-panel p-1">
+            {(['site', 'device'] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setView(mode)}
+                className={cn(
+                  'rounded px-2.5 py-1 text-[11px] font-medium',
+                  view === mode ? 'bg-bg-card text-text shadow-sm' : 'text-text-dim hover:text-text',
+                )}
+              >
+                By {mode}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {sites.length === 0 ? (
+          <p className="p-4 text-center text-xs text-text-faint">No sites or devices reported.</p>
+        ) : view === 'site' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+            {sites.map((site, idx) => (
+              <div
+                key={site.site_id ?? `unassigned-${idx}`}
+                className={cn(
+                  'rounded-lg border bg-bg-panel p-3 space-y-1.5',
+                  severityBorder(site.worst_severity),
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-text">{site.site_name}</span>
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                      severityBadge[site.worst_severity ?? 'ok'] ?? severityBadge.ok,
+                    )}
+                  >
+                    {site.worst_severity || 'ok'}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[10px] text-text-dim">
+                  <span>
+                    {site.devices_online ?? 0} up · {site.devices_offline ?? 0} down
+                  </span>
+                  <span>{formatBitsPerSecond(site.bits_per_second ?? 0)}</span>
+                  {(site.alerts_critical ?? 0) + (site.alerts_warning ?? 0) > 0 && (
+                    <span className="text-sig-warn">
+                      {site.alerts_critical ?? 0} crit · {site.alerts_warning ?? 0} warn
+                    </span>
+                  )}
+                  {site.probe_offline && <span className="text-sig-crit">probe offline</span>}
+                  {(site.threat_flows ?? 0) > 0 && (
+                    <span className="text-sig-crit">{site.threat_flows} threat flows</span>
+                  )}
+                </div>
+                {(site.devices ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {(site.devices ?? []).slice(0, 6).map((d) => (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => navigate(`/devices/${d.id}`)}
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] font-mono',
+                          d.status === 'online'
+                            ? 'bg-sig-ok/10 text-sig-ok'
+                            : 'bg-sig-crit/10 text-sig-crit',
+                        )}
+                        title={d.ip}
+                      >
+                        {d.name}
+                      </button>
+                    ))}
+                    {(site.devices ?? []).length > 6 && (
+                      <span className="self-center text-[10px] text-text-faint">
+                        +{(site.devices ?? []).length - 6}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
+                  <th scope="col" className="px-2 py-1.5">Device</th>
+                  <th scope="col" className="px-2 py-1.5">Site</th>
+                  <th scope="col" className="px-2 py-1.5">Status</th>
+                  <th scope="col" className="px-2 py-1.5">Severity</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Throughput</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Last polled</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {devices.map((d) => (
+                  <tr
+                    key={`${d.site_name}-${d.id}`}
+                    className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-none"
+                    tabIndex={0}
+                    role="button"
+                    onClick={() => navigate(`/devices/${d.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        navigate(`/devices/${d.id}`);
+                      }
+                    }}
+                  >
+                    <td className="px-2 py-1.5 font-semibold text-text">{d.name}</td>
+                    <td className="px-2 py-1.5 text-[11px] text-text-dim">{d.site_name}</td>
+                    <td className="px-2 py-1.5">
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                          d.status === 'online'
+                            ? 'bg-sig-ok/15 text-sig-ok'
+                            : 'bg-sig-crit/15 text-sig-crit',
+                        )}
+                      >
+                        {d.status || 'unknown'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                          severityBadge[d.worst_severity ?? 'ok'] ?? severityBadge.ok,
+                        )}
+                      >
+                        {d.worst_severity || 'ok'}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-[11px]">
+                      {formatBitsPerSecond(d.bits_per_second ?? 0)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-[10px] text-text-faint">
+                      {!d.last_polled || new Date(d.last_polled).getFullYear() <= 1
+                        ? 'Never'
+                        : formatRelativeTime(d.last_polled)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Live feed */}
+        <div className="rounded-xl border border-border bg-bg-card overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-bg-panel/40 px-3 py-2">
+            <h2 className="text-sm font-semibold text-text">
+              Live feed
+              {feed?.silenced_total ? (
+                <span className="ml-2 font-mono text-[10px] text-text-faint">
+                  {feed.silenced_total} silenced
+                </span>
+              ) : null}
+            </h2>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={feedKind}
+                onChange={(e) => setFeedKind(e.target.value as FeedKind)}
+                aria-label="Feed kind"
+                className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text"
+              >
+                <option value="all">All events</option>
+                <option value="alerts">Alerts</option>
+                <option value="detections">Detections</option>
+                <option value="silenced">Silenced</option>
+              </select>
+              <select
+                value={feedCount}
+                onChange={(e) => setFeedCount(Number(e.target.value))}
+                aria-label="Feed length"
+                className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text"
+              >
+                {[10, 20, 50].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="max-h-[420px] overflow-y-auto">
+            {feedItems.length === 0 ? (
+              <p className="p-6 text-center text-xs text-text-faint">
+                Nothing in the feed for this filter.
+              </p>
+            ) : (
+              feedItems.map(({ item, list }) => (
+                <FeedRow
+                  key={item.dedup_key ?? `${list}-${item.id}`}
+                  item={item}
+                  list={list}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Threats last 60s */}
+        <div className="rounded-xl border border-border bg-bg-card overflow-hidden">
+          <div className="border-b border-border bg-bg-panel/40 px-3 py-2">
+            <h2 className="text-sm font-semibold text-text">
+              Threats — last {threats?.window_seconds ?? 60}s
+            </h2>
+            {summary && (
+              <div className="mt-1 flex flex-wrap gap-x-3 font-mono text-[10px] text-text-dim">
+                <span>outbound {summary.outbound ?? 0}</span>
+                <span>inbound {summary.inbound ?? 0}</span>
+                <span>blocked {summary.blocked ?? 0}</span>
+                <span>unclassified {summary.unclassified ?? 0}</span>
+              </div>
+            )}
+          </div>
+          {!threats || ((threats.outbound ?? []).length === 0 && (threats.inbound ?? []).length === 0) ? (
+            <p className="p-6 text-center text-xs text-text-faint">
+              No threat-intel traffic in the last minute.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-border">
+              {(
+                [
+                  { title: 'Outbound', entries: threats.outbound ?? [] },
+                  { title: 'Inbound', entries: threats.inbound ?? [] },
+                ] as const
+              ).map((column) => (
+                <div key={column.title} className="p-2">
+                  <div className="px-1 pb-1 text-[10px] font-semibold uppercase text-text-faint">
+                    {column.title}
+                  </div>
+                  {column.entries.length === 0 ? (
+                    <p className="px-1 py-2 text-[11px] text-text-faint">None.</p>
+                  ) : (
+                    column.entries.slice(0, 6).map((entry) => (
+                      <div
+                        key={`${column.title}-${entry.addr}-${entry.service}`}
+                        className="rounded px-1 py-1 hover:bg-bg-hover"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[11px] text-text">{entry.addr}</span>
+                          <span className="font-mono text-[10px] text-text-faint">
+                            :{entry.service}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-x-2 font-mono text-[10px] text-text-dim">
+                          <span>{entry.requests ?? 0} req</span>
+                          <span>{formatBytes(entry.bytes ?? 0)}</span>
+                          {entry.ip_match ? (
+                            <span className="text-sig-crit">IP match</span>
+                          ) : (
+                            <span className="text-sig-warn">ASN match</span>
+                          )}
+                          {entry.inferred && <span className="text-text-faint">inferred</span>}
+                          {(entry.blocked ?? 0) > 0 && (
+                            <span className="text-sig-ok">{entry.blocked} blocked</span>
+                          )}
+                        </div>
+                        {(entry.internal_hosts ?? []).length > 0 && (
+                          <div className="truncate font-mono text-[10px] text-text-faint">
+                            {entry.internal_hosts?.join(', ')}
+                            {(entry.internal_count ?? 0) > (entry.internal_hosts?.length ?? 0)
+                              ? ` +${(entry.internal_count ?? 0) - (entry.internal_hosts?.length ?? 0)}`
+                              : ''}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
