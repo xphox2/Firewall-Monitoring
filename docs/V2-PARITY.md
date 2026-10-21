@@ -81,8 +81,9 @@ V2:
   inspectors, security class/severity filters and paging. Remaining: syslog/trap detail stubs,
   dashboard host trends, topology/connection detail, storage/system leftovers.
 - **v0.11.351** — Syslog and trap stats charts, range pills, severity filtering and structured
-  inspectors; traps list gained a server-side `hours` window. Remaining: dashboard host trends,
-  topology/connection detail, storage/system leftovers.
+  inspectors; traps list gained a server-side `hours` window.
+- **v0.11.352** — Interactive Cytoscape topology map (site compounds, connection/tunnel edges,
+  filters, zoom/fit, device drill-through). Remaining: LLDP/VLAN bundle depth and connection detail.
 
 ## Top gaps
 
@@ -90,12 +91,12 @@ The scoreboard above is the **v0.11.333 audit baseline**; the per-version log
 records what has closed since. Re-auditing all 296 units is pending, so this
 list — not the table — is the current backlog.
 
-1. **Topology map and connection detail.** V1 is a Cytoscape graph (pan/zoom,
-   compound sites, expandable tunnel bundles, VLAN sublanes, LLDP evidence,
-   alert overlays) plus a standalone connection page (bridge/gauges/tunnel
-   tables/traffic analysis). V2 lists connections and IPSec data; the map and
-   the five connection detail tabs are still classic-only. IPSec CLI preview is
-   a raw-JSON stub.
+1. **Topology map and connection detail.** V2 now has an interactive Cytoscape
+   map (sites, connections, IPSec tunnels, filters, zoom/fit). Still classic-only:
+   LLDP/CDP edge evidence, expandable tunnel bundles with VLAN sublanes, alert
+   overlays, the standalone connection page (bridge/gauges/tunnel tables/traffic
+   analysis) and the five connection detail tabs. IPSec CLI preview is a raw-JSON
+   stub.
 2. **Events depth.** Analytics and rollups exist, but event/security-event
    detail is still a raw-JSON drawer, and several security columns/filters and
    per-type breakdowns remain classic-only.

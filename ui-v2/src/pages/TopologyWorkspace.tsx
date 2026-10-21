@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useSearchParams } from 'react-router';
+import { lazy, Suspense, useCallback, useState, useMemo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Network,
@@ -18,10 +18,30 @@ import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
+import type { MapEdge, MapNode, MapSite } from '@/components/topology/topology-map';
+import { linkState } from '@/lib/topology';
+
+// Cytoscape + fcose are ~400 KB; load them only when the map tab is opened.
+const TopologyMap = lazy(() =>
+  import('@/components/topology/topology-map').then((mod) => ({ default: mod.TopologyMap })),
+);
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
 type TopologyTab = 'map' | 'connections' | 'ipsec';
+
+interface TopologyDevice {
+  id: number;
+  name: string;
+  ip_address?: string;
+  site_id?: number | null;
+  status?: string;
+}
+
+interface TopologySite {
+  id: number;
+  name: string;
+}
 
 interface ConnectionRecord {
   id: number;
@@ -127,6 +147,7 @@ export function TopologyWorkspace() {
 // SUB-TAB 1: NETWORK MAP
 // ============================================================================
 function NetworkMapSubTab() {
+  const navigate = useNavigate();
   const { data: mapData, isLoading } = useQuery({
     queryKey: ['vpn-map-data'],
     queryFn: () => apiFetch<any>('/admin/api/connections/vpn-map'),
@@ -134,118 +155,171 @@ function NetworkMapSubTab() {
   });
   const { data: deviceList } = useQuery({
     queryKey: ['devices-for-topology'],
-    queryFn: () => apiFetch<Array<{ id: number; name: string; ip_address?: string }>>('/admin/api/devices'),
+    queryFn: () => apiFetch<TopologyDevice[]>('/admin/api/devices'),
+    refetchInterval: 30_000,
+  });
+  const { data: siteList } = useQuery({
+    queryKey: ['sites-for-topology'],
+    queryFn: () => apiFetch<TopologySite[]>('/admin/api/sites'),
+  });
+  const { data: connList } = useQuery({
+    queryKey: ['device-connections'],
+    queryFn: () => apiFetch<ConnectionRecord[]>('/admin/api/connections'),
+    refetchInterval: 30_000,
   });
 
-  // GetVPNMapData returns a map keyed by device ID ("7" -> {total, up, down,
-  // tunnels:[...]}), not {nodes, edges}. Reading nodes/edges rendered an empty
-  // map on every install.
-  const vpnMap: Record<
-    string,
-    {
-      total?: number;
-      up?: number;
-      down?: number;
-      tunnels?: Array<{
-        tunnel_name: string;
-        status: string;
-        remote_ip?: string;
-        matched_name?: string;
-        bytes_in?: number;
-        bytes_out?: number;
-      }>;
-    }
-  > = mapData ?? {};
-  const devicesById = new Map((deviceList ?? []).map((d) => [String(d.id), d]));
-
-  const nodes = Object.entries(vpnMap).map(([id, vpn]) => {
-    const device = devicesById.get(id);
-    return {
-      id,
-      name: device?.name ?? `Device ${id}`,
-      ip_address: device?.ip_address ?? '',
-      status: (vpn.up ?? 0) > 0 ? 'up' : 'down',
-    };
-  });
-  const edges = Object.entries(vpnMap).flatMap(([deviceId, vpn]) =>
-    (vpn.tunnels ?? []).map((t) => ({ ...t, device_id: deviceId })),
+  const openDevice = useCallback(
+    (deviceId: number) => navigate(`/devices/${deviceId}`),
+    [navigate],
   );
+
+  // Rebuild the graph only when the underlying data changes: a refetch that
+  // returns structurally identical JSON keeps these references stable (React
+  // Query structural sharing), so pan/zoom and selection survive the poll.
+  const { nodes, edges, mapSites } = useMemo(() => {
+    const devices = deviceList ?? [];
+    const sites = siteList ?? [];
+    const connections = connList ?? [];
+    // GetVPNMapData is keyed by device ID ("7" -> {total, up, down, tunnels}).
+    const vpnMap = (mapData ?? {}) as Record<
+      string,
+      {
+        tunnels?: Array<{
+          tunnel_name: string;
+          status: string;
+          remote_ip?: string;
+          matched_name?: string;
+          matched_device_id?: number;
+          tunnel_group?: string;
+        }>;
+      }
+    >;
+
+    const siteName = new Map(sites.map((site) => [site.id, site.name]));
+    const deviceById = new Map(devices.map((device) => [String(device.id), device]));
+
+    const siteNodes: MapSite[] = sites.map((site) => ({ id: site.id, name: site.name }));
+    const deviceNodes: MapNode[] = devices.map((device) => ({
+      id: String(device.id),
+      deviceId: device.id,
+      label: device.name,
+      kind: 'device',
+      siteId: device.site_id ?? null,
+      siteName: device.site_id ? siteName.get(device.site_id) : undefined,
+      status: device.status,
+      ip: device.ip_address,
+    }));
+
+    const links: MapEdge[] = [];
+    const external = new Map<string, MapNode>();
+
+    for (const connection of connections) {
+      const source = String(connection.source_device_id);
+      const target = String(connection.dest_device_id);
+      if (!deviceById.has(source) || !deviceById.has(target)) continue;
+      links.push({
+        id: `conn-${connection.id}`,
+        source,
+        target,
+        kind: 'connection',
+        label: connection.connection_type,
+        status: connection.status,
+      });
+    }
+
+    for (const [deviceId, vpn] of Object.entries(vpnMap)) {
+      if (!deviceById.has(deviceId)) continue;
+      for (const [idx, tunnel] of (vpn.tunnels ?? []).entries()) {
+        // matched_device_id is the backend's authoritative peer resolution
+        // (provisioned peer wins; a dialup remote_ip is a NAT gateway, not the
+        // peer). Re-deriving it from remote_ip picks the wrong device.
+        const remoteDevice = tunnel.matched_device_id
+          ? deviceById.get(String(tunnel.matched_device_id))
+          : undefined;
+        const remote = tunnel.remote_ip ?? '';
+        const matched = tunnel.matched_name ?? '';
+        let targetId = remoteDevice ? String(remoteDevice.id) : '';
+        if (!targetId) {
+          const key = remote || matched || `unknown-${deviceId}-${idx}`;
+          targetId = `ext-${key}`;
+          if (!external.has(targetId)) {
+            external.set(targetId, {
+              id: targetId,
+              label: remote || matched || 'remote peer',
+              kind: 'external',
+              status: tunnel.status,
+            });
+          }
+        }
+        links.push({
+          id: `tunnel-${deviceId}-${idx}`,
+          source: deviceId,
+          target: targetId,
+          kind: 'tunnel',
+          label: tunnel.tunnel_name,
+          status: tunnel.status,
+        });
+      }
+    }
+
+    return {
+      nodes: [...deviceNodes, ...external.values()],
+      edges: links,
+      mapSites: siteNodes,
+    };
+  }, [deviceList, siteList, connList, mapData]);
+
+  const upLinks = edges.filter((edge) => linkState(edge.status) === 'up').length;
+  const downLinks = edges.filter((edge) => linkState(edge.status) === 'down').length;
 
   return (
     <div className="space-y-4">
-      <ClassicFallback
-        title="The interactive topology map is not in the preview yet"
-        description="The classic console draws the live graph: pan/zoom, compound sites, expandable tunnel bundles with VLAN sublanes, LLDP link evidence and alert overlays. The preview lists VPN-carrying devices instead."
-        href="/admin/connections"
-        label="Open the live map"
-      />
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
-          <div className="text-[11px] uppercase text-text-faint">Topology Nodes</div>
-          <div className="text-xl font-mono font-bold text-text mt-0.5">{nodes.length}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-bg-card p-3.5">
-          <div className="text-[11px] uppercase text-text-faint">Active Links</div>
-          <div className="text-xl font-mono font-bold text-sig-ok mt-0.5">
-            {edges.filter((e) => e.status === 'up').length}
+          <div className="text-[11px] uppercase text-text-faint">Devices</div>
+          <div className="text-xl font-mono font-bold text-text mt-0.5">
+            {(deviceList ?? []).length}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
-          <div className="text-[11px] uppercase text-text-faint">Degraded / Down Links</div>
-          <div className="text-xl font-mono font-bold text-sig-crit mt-0.5">
-            {edges.filter((e) => e.status && e.status !== 'up').length}
-          </div>
+          <div className="text-[11px] uppercase text-text-faint">Up Links</div>
+          <div className="text-xl font-mono font-bold text-sig-ok mt-0.5">{upLinks}</div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
-          <div className="text-[11px] uppercase text-text-faint">Total Tracked Circuits</div>
+          <div className="text-[11px] uppercase text-text-faint">Down / Degraded</div>
+          <div className="text-xl font-mono font-bold text-sig-crit mt-0.5">{downLinks}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[11px] uppercase text-text-faint">Links & Tunnels</div>
           <div className="text-xl font-mono font-bold text-accent mt-0.5">{edges.length}</div>
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-bg-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-text">Live Topology Graph Matrix</h2>
-          <span className="text-xs text-text-dim">Auto-refreshing every 20s</span>
+      {isLoading ? (
+        <div className="rounded-xl border border-border bg-bg-card p-10 text-center text-xs text-text-dim">
+          Loading topology…
         </div>
+      ) : (
+        <Suspense
+          fallback={
+            <div className="rounded-xl border border-border bg-bg-card p-10 text-center text-xs text-text-dim">
+              Loading the interactive map…
+            </div>
+          }
+        >
+          <TopologyMap
+            sites={mapSites}
+            nodes={nodes}
+            edges={edges}
+            onSelectDevice={openDevice}
+          />
+        </Suspense>
+      )}
 
-        {isLoading ? (
-          <div className="h-64 flex items-center justify-center text-xs text-text-dim">
-            Loading topology graph…
-          </div>
-        ) : nodes.length === 0 ? (
-          <div className="h-64 flex flex-col items-center justify-center text-center">
-            <Network className="h-8 w-8 text-text-mute mb-2" />
-            <div className="text-sm font-semibold text-text">No topology nodes discovered yet</div>
-            <p className="text-xs text-text-dim mt-1 max-w-md">
-              Add devices and inter-device connections or enable LLDP/CDP/VPN discovery to populate the topology map.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {nodes.map((n: any, idx: number) => (
-              <div
-                key={n.id || idx}
-                className="rounded-lg border border-border bg-bg-panel p-3.5 flex items-center justify-between"
-              >
-                <div>
-                  <div className="font-semibold text-xs text-text">{n.name || n.label}</div>
-                  <div className="font-mono text-[11px] text-text-dim">{n.ip_address || n.site_name || 'Node'}</div>
-                </div>
-                <span
-                  className={cn(
-                    'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                    n.status === 'online' || n.status === 'up'
-                      ? 'bg-sig-ok/15 text-sig-ok'
-                      : 'bg-sig-crit/15 text-sig-crit'
-                  )}
-                >
-                  {n.status || 'online'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <p className="text-[11px] text-text-faint">
+        Links come from declared inter-device connections and live IPSec tunnels. LLDP/CDP edge
+        evidence, expandable tunnel bundles and VLAN sublanes remain in the classic map.
+      </p>
     </div>
   );
 }
