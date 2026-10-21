@@ -62,6 +62,8 @@ V2:
   and the profile "member since" line.
 - **v0.11.342** — Maintenance scoping (all/device/site) and per-alert-type suppression from the
   server registry. Recurrence remains unexposed in both consoles.
+- **v0.11.343** — IRC channels/commands CRUD and advanced server credentials (NickServ/SASL,
+  auto-reconnect). The Integrations area is now at parity.
 
 ## Top gaps
 
