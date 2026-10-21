@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.363] - 2026-10-21
+
+### Added — Archive gate and parked-chunk controls in the V2 storage page
+
+- **Retention gate** panel on the archive status tab: every stream's state (archiving / off, gated
+  or released), a **Release…** action for a bounded window (hours + audit reason, then password and
+  TOTP step-up) and a direct **Re-engage** action for an active release.
+- **Chunks needing attention** table with chunk/stream/period/attempts/error and a **Reset…**
+  action (audit reason + step-up) that puts a parked chunk back to pending — with the warning that
+  each attempt writes another Object-Lock-retained copy.
+- Both actions use the existing step-up dialog; secrets are never retained and every action
+  refreshes the gate panel and archive status.
+- Docs: storage/archive is no longer an un-audited/v2 gap (the remaining archive depth is CLI-only
+  override reporting).
+
 ## [0.11.362] - 2026-10-21
 
 ### Added — NOC polish: site drill-down and feed pause

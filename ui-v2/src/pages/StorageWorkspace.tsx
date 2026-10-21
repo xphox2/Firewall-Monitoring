@@ -21,10 +21,35 @@ import {
 import { apiFetch, ApiError, type MeResponse } from '@/lib/api';
 import { cn, formatBytes, formatNumber, formatRelativeTime } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
+import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog, type StepUpCredentials } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 
 // --- Types matching Go backend ---
+
+interface ArchiveGateStream {
+  stream: string;
+  enabled: boolean;
+  override_active: boolean;
+  override_until?: string | null;
+}
+
+interface ArchiveChunkAttention {
+  id: number;
+  table_name: string;
+  seq: number;
+  period_start?: string;
+  period_end?: string;
+  status?: string;
+  attempts?: number;
+  error?: string;
+}
+
+interface ArchiveGateResponse {
+  streams?: ArchiveGateStream[];
+  needs_attention?: ArchiveChunkAttention[];
+  max_hours?: number;
+}
 
 interface SystemSettingRow {
   key: string;
@@ -1118,6 +1143,7 @@ export function StorageWorkspace() {
        * =================================================================== */}
       {activeTab === 'archive-status' && (
         <div className="space-y-6">
+          <ArchiveGatePanel me={me} />
           {/* Health Verdict Banner */}
           <section className="rounded-lg border border-border bg-bg-card p-5">
             {loadingArchStatus ? (
@@ -1669,6 +1695,341 @@ export function StorageWorkspace() {
           danger={stepUpContext.danger}
           totpEnabled={me?.totp_enabled}
           onConfirm={stepUpContext.action}
+        />
+      )}
+    </div>
+  );
+}
+
+function ArchiveGatePanel({ me }: { me?: MeResponse }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data, refetch, isLoading } = useQuery({
+    queryKey: ['archive-gate'],
+    queryFn: () => apiFetch<ArchiveGateResponse>('/admin/api/archive/override'),
+    refetchInterval: 30_000,
+  });
+
+  const [release, setRelease] = useState<{ stream: string; hours: string; reason: string } | null>(
+    null,
+  );
+  const [reset, setReset] = useState<{ chunk: ArchiveChunkAttention; reason: string } | null>(null);
+  const [stepUp, setStepUp] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+    action: (creds: StepUpCredentials) => Promise<void>;
+  } | null>(null);
+
+  const refresh = () => {
+    refetch();
+    queryClient.invalidateQueries({ queryKey: ['archive-status'] });
+  };
+
+  const reengage = async (stream: string) => {
+    try {
+      await apiFetch('/admin/api/archive/override', {
+        method: 'POST',
+        body: { stream, hours: 0, reason: 're-engaged from V2' },
+      });
+      toast.success(`Re-engaged the ${stream} retention gate`);
+      refresh();
+    } catch (err) {
+      toast.error('Could not re-engage the gate', err instanceof Error ? err.message : undefined);
+    }
+  };
+
+  const continueRelease = () => {
+    if (!release) return;
+    const payload = release;
+    const hours = Math.max(1, Math.floor(Number(payload.hours) || 0));
+    setRelease(null);
+    setStepUp({
+      title: `Release ${payload.stream} retention gate`,
+      description: `Raw ${payload.stream} deletes resume for ${hours}h. The release is audit-logged and expires automatically.`,
+      confirmLabel: 'Release gate',
+      action: async (creds) => {
+        await apiFetch('/admin/api/archive/override', {
+          method: 'POST',
+          body: {
+            stream: payload.stream,
+            hours,
+            reason: payload.reason.trim(),
+            password: creds.password,
+            totp_code: creds.totp_code,
+          },
+        });
+        toast.success(`Gate released for ${hours}h`);
+        refresh();
+      },
+    });
+  };
+
+  const continueReset = () => {
+    if (!reset) return;
+    const payload = reset;
+    setReset(null);
+    setStepUp({
+      title: `Reset archive chunk #${payload.chunk.id}`,
+      description:
+        'The worker exports, uploads and verifies this chunk again on its next pass. Each attempt writes another Object-Lock-retained copy, so fix the cause first.',
+      confirmLabel: 'Reset chunk',
+      action: async (creds) => {
+        await apiFetch(`/admin/api/archive/chunks/${payload.chunk.id}/reset`, {
+          method: 'POST',
+          body: {
+            reason: payload.reason.trim(),
+            password: creds.password,
+            totp_code: creds.totp_code,
+          },
+        });
+        toast.success(`Chunk #${payload.chunk.id} is pending again`);
+        refresh();
+      },
+    });
+  };
+
+  const streams = data?.streams ?? [];
+  const parked = data?.needs_attention ?? [];
+  const maxHours = data?.max_hours ?? 24;
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-border bg-bg-card p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-text">Retention gate</h2>
+            <p className="text-[11px] text-text-faint">
+              While a stream is archived, raw-row deletion waits for verified chunks. Releasing the
+              gate lets deletion proceed for a bounded window; it re-engages automatically.
+            </p>
+          </div>
+          <RefreshCw
+            className={cn('h-3.5 w-3.5 text-text-faint', isLoading && 'animate-spin')}
+            aria-hidden="true"
+          />
+        </div>
+        {streams.length === 0 ? (
+          <p className="text-[11px] text-text-faint">No archive streams configured.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {streams.map((stream) => (
+              <div
+                key={stream.stream}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-bg-panel px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="font-mono font-semibold text-text">{stream.stream}</span>
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                      stream.enabled
+                        ? 'bg-sig-ok/15 text-sig-ok'
+                        : 'bg-bg-card text-text-faint',
+                    )}
+                  >
+                    {stream.enabled ? 'archiving' : 'off'}
+                  </span>
+                  {stream.override_active ? (
+                    <span className="text-sig-warn">
+                      released until{' '}
+                      {stream.override_until
+                        ? new Date(stream.override_until).toLocaleString()
+                        : 'unknown'}
+                    </span>
+                  ) : (
+                    <span className="text-text-dim">
+                      {stream.enabled ? 'gated' : 'deletes ungated'}
+                    </span>
+                  )}
+                </div>
+                {stream.override_active ? (
+                  <button
+                    type="button"
+                    onClick={() => reengage(stream.stream)}
+                    className="rounded border border-border bg-bg-card px-2.5 py-1 text-[10px] font-semibold uppercase text-text hover:bg-bg-hover"
+                  >
+                    Re-engage
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!stream.enabled}
+                    onClick={() =>
+                      setRelease({ stream: stream.stream, hours: '6', reason: '' })
+                    }
+                    className="rounded border border-sig-warn/40 bg-sig-warn/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn disabled:opacity-40"
+                  >
+                    Release…
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-lg border border-border bg-bg-card p-4">
+        <h2 className="text-sm font-semibold text-text">
+          Chunks needing attention ({parked.length})
+        </h2>
+        <p className="text-[11px] text-text-faint">
+          Parked chunks hold their raw rows in the database. Reset one only after fixing the cause
+          in the chunk's error.
+        </p>
+        {parked.length === 0 ? (
+          <p className="mt-2 text-[11px] text-text-faint">No parked chunks.</p>
+        ) : (
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
+                  <th scope="col" className="px-2 py-1.5">Chunk</th>
+                  <th scope="col" className="px-2 py-1.5">Stream</th>
+                  <th scope="col" className="px-2 py-1.5">Period</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Attempts</th>
+                  <th scope="col" className="px-2 py-1.5">Error</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {parked.map((chunk) => (
+                  <tr key={chunk.id}>
+                    <td className="px-2 py-1.5 font-mono">#{chunk.id}</td>
+                    <td className="px-2 py-1.5 font-mono text-text-dim">{chunk.table_name}</td>
+                    <td className="px-2 py-1.5 font-mono text-text-dim">
+                      {chunk.period_start ? new Date(chunk.period_start).toLocaleString() : '—'}
+                      {chunk.period_end
+                        ? ` → ${new Date(chunk.period_end).toLocaleString()}`
+                        : ''}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono">{chunk.attempts ?? 0}</td>
+                    <td
+                      className="max-w-[22rem] truncate px-2 py-1.5 text-[10px] text-sig-warn"
+                      title={chunk.error}
+                    >
+                      {chunk.error || '—'}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setReset({ chunk, reason: '' })}
+                        className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-text hover:bg-bg-hover"
+                      >
+                        Reset…
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <SlideOverDrawer
+        open={!!release}
+        onOpenChange={(open) => {
+          if (!open) setRelease(null);
+        }}
+        title={`Release ${release?.stream ?? ''} retention gate`}
+        subtitle="Raw deletion is allowed for a bounded window, then the gate re-engages."
+        size="md"
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">
+              Hours (1–{maxHours})
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={maxHours}
+              value={release?.hours ?? '6'}
+              onChange={(e) =>
+                setRelease((current) => (current ? { ...current, hours: e.target.value } : current))
+              }
+              className="w-32 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Reason</span>
+            <textarea
+              rows={3}
+              value={release?.reason ?? ''}
+              onChange={(e) =>
+                setRelease((current) => (current ? { ...current, reason: e.target.value } : current))
+              }
+              maxLength={500}
+              placeholder="Why the gate must be released (audit-logged)"
+              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={
+              !release ||
+              !release.reason.trim() ||
+              Number(release.hours) < 1 ||
+              Number(release.hours) > maxHours
+            }
+            onClick={continueRelease}
+            className="rounded-md bg-sig-warn px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            Continue to verification
+          </button>
+        </div>
+      </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!reset}
+        onOpenChange={(open) => {
+          if (!open) setReset(null);
+        }}
+        title={`Reset archive chunk #${reset?.chunk.id ?? ''}`}
+        subtitle="The worker re-exports, uploads and verifies it on its next pass."
+        size="md"
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">
+              Reason (audit-logged)
+            </span>
+            <textarea
+              rows={3}
+              value={reset?.reason ?? ''}
+              onChange={(e) =>
+                setReset((current) => (current ? { ...current, reason: e.target.value } : current))
+              }
+              maxLength={500}
+              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!reset || !reset.reason.trim()}
+            onClick={continueReset}
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            Continue to verification
+          </button>
+        </div>
+      </SlideOverDrawer>
+
+      {stepUp && (
+        <StepUpAuthDialog
+          open={!!stepUp}
+          onOpenChange={(open) => {
+            if (!open) setStepUp(null);
+          }}
+          title={stepUp.title}
+          description={stepUp.description}
+          confirmLabel={stepUp.confirmLabel}
+          danger
+          totpEnabled={me?.totp_enabled}
+          onConfirm={async (creds) => {
+            await stepUp.action(creds);
+          }}
         />
       )}
     </div>
