@@ -38,6 +38,7 @@ interface AdminUser {
   email?: string;
   display_name?: string;
   totp_enabled: boolean;
+  disabled?: boolean;
   must_change_password?: boolean;
   last_login_at?: string;
   created_at?: string;
@@ -50,6 +51,7 @@ interface APITokenRow {
   scope: 'read' | 'write' | 'admin';
   expires_at?: string | null;
   last_used_at?: string | null;
+  revoked_at?: string | null;
   created_at: string;
 }
 
@@ -154,6 +156,10 @@ function UsersRbacSubTab() {
   });
 
   const users = usersList ?? [];
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -161,10 +167,14 @@ function UsersRbacSubTab() {
   // The backend generates the temporary password and returns it exactly once;
   // there is no reset-password UI, so losing it here meant creating an account
   // nobody could ever sign in to.
-  const [createdCred, setCreatedCred] = useState<{ username: string; password: string } | null>(
-    null,
-  );
+  const [createdCred, setCreatedCred] = useState<{
+    username: string;
+    password: string;
+    note: string;
+    title: string;
+  } | null>(null);
   const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
+  const [userToClearPasskeys, setUserToClearPasskeys] = useState<AdminUser | null>(null);
 
   const createUserMutation = useMutation({
     mutationFn: async () =>
@@ -179,6 +189,8 @@ function UsersRbacSubTab() {
       setCreatedCred({
         username: data?.user?.username ?? newUsername.trim(),
         password: data?.temp_password ?? '',
+        note: 'Copy the temporary password now — it is not stored in plaintext and cannot be shown again.',
+        title: 'Account created',
       });
       toast({ title: 'User created', variant: 'success' });
       setDrawerOpen(false);
@@ -222,6 +234,49 @@ function UsersRbacSubTab() {
     },
   });
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (userId: number) =>
+      apiFetch<{ temp_password?: string }>(`/admin/api/users/${userId}/reset-password`, {
+        method: 'POST',
+      }),
+    onSuccess: (data, userId) => {
+      const user = users.find((u) => u.id === userId);
+      setCreatedCred({
+        username: user?.username ?? `user ${userId}`,
+        password: data?.temp_password ?? '',
+        note: 'Password reset. Every session was revoked and all passkeys removed. Copy the temporary password now.',
+        title: 'Password reset',
+      });
+      toast({ title: 'Password reset', variant: 'success' });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Password reset failed', description: err.message, variant: 'error' }),
+  });
+
+  const toggleDisabledMutation = useMutation({
+    mutationFn: async ({ id, disabled }: { id: number; disabled: boolean }) =>
+      apiFetch(`/admin/api/users/${id}`, { method: 'PUT', body: { disabled } }),
+    onSuccess: (_data, vars) => {
+      toast({ title: vars.disabled ? 'User disabled' : 'User enabled', variant: 'info' });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Update failed', description: err.message, variant: 'error' }),
+  });
+
+  const removePasskeysMutation = useMutation({
+    mutationFn: async (id: number) =>
+      apiFetch(`/admin/api/users/${id}/passkeys`, { method: 'DELETE' }),
+    onSuccess: () => {
+      toast({ title: 'Passkeys removed', variant: 'info' });
+      setUserToClearPasskeys(null);
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not remove passkeys', description: err.message, variant: 'error' }),
+  });
+
   const columns = useMemo<ColumnDef<AdminUser, unknown>[]>(
     () => [
       {
@@ -242,14 +297,39 @@ function UsersRbacSubTab() {
         cell: ({ row }) => (
           <select
             value={row.original.role}
+            disabled={row.original.id === me?.id}
+            title={row.original.id === me?.id ? 'You cannot change your own role' : undefined}
             onChange={(e) => updateRoleMutation.mutate({ id: row.original.id, role: e.target.value })}
             aria-label={`Role for ${row.original.username}`}
-            className="rounded border border-border bg-bg-panel px-2 py-1 text-xs font-medium text-text"
+            className="rounded border border-border bg-bg-panel px-2 py-1 text-xs font-medium text-text disabled:opacity-50"
           >
             <option value="viewer">Viewer (Read-Only)</option>
             <option value="operator">Operator (Day-to-Day Ops)</option>
             <option value="admin">Admin (Full Control)</option>
           </select>
+        ),
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.disabled && (
+              <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-crit">
+                Disabled
+              </span>
+            )}
+            {row.original.must_change_password && (
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+                Password change
+              </span>
+            )}
+            {!row.original.disabled && !row.original.must_change_password && (
+              <span className="rounded bg-sig-ok/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-ok">
+                Active
+              </span>
+            )}
+          </div>
         ),
       },
       {
@@ -275,6 +355,28 @@ function UsersRbacSubTab() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              disabled={row.original.id === me?.id}
+              title={row.original.id === me?.id ? 'You cannot disable your own account' : undefined}
+              onClick={() =>
+                toggleDisabledMutation.mutate({
+                  id: row.original.id,
+                  disabled: !row.original.disabled,
+                })
+              }
+              className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text disabled:opacity-40"
+            >
+              {row.original.disabled ? 'Enable' : 'Disable'}
+            </button>
+            <button
+              type="button"
+              onClick={() => resetPasswordMutation.mutate(row.original.id)}
+              disabled={resetPasswordMutation.isPending}
+              className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text disabled:opacity-40"
+            >
+              Reset password
+            </button>
             {row.original.totp_enabled && (
               <button
                 type="button"
@@ -284,6 +386,14 @@ function UsersRbacSubTab() {
                 Reset 2FA
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setUserToClearPasskeys(row.original)}
+              className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text"
+              title="Remove every passkey for this user"
+            >
+              Passkeys
+            </button>
             <button
               type="button"
               onClick={() => setUserToDelete(row.original)}
@@ -296,7 +406,14 @@ function UsersRbacSubTab() {
         ),
       },
     ],
-    [updateRoleMutation, reset2faMutation, deleteUserMutation]
+    [
+      updateRoleMutation,
+      reset2faMutation,
+      deleteUserMutation,
+      resetPasswordMutation,
+      toggleDisabledMutation,
+      me?.id,
+    ]
   );
 
   return (
@@ -396,8 +513,8 @@ function UsersRbacSubTab() {
         onOpenChange={(open) => {
           if (!open) setCreatedCred(null);
         }}
-        title="Account created"
-        subtitle="Copy the temporary password now — it is not stored in plaintext and cannot be shown again."
+        title={createdCred?.title ?? 'Credential'}
+        subtitle={createdCred?.note ?? ''}
         footer={
           <button
             type="button"
@@ -445,6 +562,21 @@ function UsersRbacSubTab() {
       </SlideOverDrawer>
 
       <ConfirmDialog
+        open={!!userToClearPasskeys}
+        onOpenChange={(open) => {
+          if (!open) setUserToClearPasskeys(null);
+        }}
+        title={`Remove every passkey for ${userToClearPasskeys?.username ?? ''}?`}
+        description="Their registered passkeys stop working and their sessions are revoked. They can register new ones after signing in." 
+        confirmLabel="Remove passkeys"
+        destructive
+        pending={removePasskeysMutation.isPending}
+        onConfirm={() =>
+          userToClearPasskeys && removePasskeysMutation.mutate(userToClearPasskeys.id)
+        }
+      />
+
+      <ConfirmDialog
         open={!!userToDelete}
         onOpenChange={(open) => {
           if (!open) setUserToDelete(null);
@@ -481,14 +613,20 @@ function ApiTokensSubTab() {
 
   const [tokenName, setTokenName] = useState('');
   const [tokenScope, setTokenScope] = useState<'read' | 'write' | 'admin'>('read');
+  const [tokenExpiryDays, setTokenExpiryDays] = useState('0');
   const [mintedSecret, setMintedSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   const createTokenMutation = useMutation({
     mutationFn: async () =>
-      apiFetch<{ token: string; record: APITokenRow }>('/admin/api/tokens', {
+      apiFetch<{ token: string; token_meta?: APITokenRow }>('/admin/api/tokens', {
         method: 'POST',
-        body: { name: tokenName.trim(), scope: tokenScope },
+        body: {
+          name: tokenName.trim(),
+          scope: tokenScope,
+          // 0 = never expires; the server accepts 0..3650.
+          expires_in_days: Math.max(0, Math.floor(Number(tokenExpiryDays) || 0)),
+        },
       }),
     onSuccess: (res) => {
       if (res?.token) {
@@ -546,18 +684,60 @@ function ApiTokensSubTab() {
         ),
       },
       {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const revoked = Boolean(row.original.revoked_at);
+          const expired = Boolean(
+            row.original.expires_at &&
+              new Date(row.original.expires_at).getTime() < Date.now(),
+          );
+          const label = revoked ? 'revoked' : expired ? 'expired' : 'active';
+          return (
+            <div className="space-y-0.5">
+              <span
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                  label === 'active'
+                    ? 'bg-sig-ok/15 text-sig-ok'
+                    : label === 'expired'
+                      ? 'bg-sig-warn/15 text-sig-warn'
+                      : 'bg-bg-panel text-text-faint',
+                )}
+              >
+                {label}
+              </span>
+              {row.original.expires_at && (
+                <div className="font-mono text-[10px] text-text-faint">
+                  {(() => {
+                    const diff =
+                      new Date(row.original.expires_at as string).getTime() - Date.now();
+                    if (!Number.isFinite(diff)) return 'expiry unknown';
+                    if (Math.abs(diff) < 86_400_000) return diff < 0 ? 'expired today' : 'today';
+                    const days = Math.round(Math.abs(diff) / 86_400_000);
+                    return diff < 0 ? `${days}d ago` : `in ${days}d`;
+                  })()}
+                </div>
+              )}
+            </div>
+          );
+        },
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => revokeMutation.mutate(row.original.id)}
-              className="flex items-center gap-1 rounded border border-sig-crit/30 bg-sig-crit/10 px-2.5 py-1 text-xs font-medium text-sig-crit hover:bg-sig-crit/20"
-            >
-              <Trash2 className="h-3 w-3" />
-              Revoke
-            </button>
+            {!row.original.revoked_at && (
+              <button
+                type="button"
+                onClick={() => revokeMutation.mutate(row.original.id)}
+                className="flex items-center gap-1 rounded border border-sig-crit/30 bg-sig-crit/10 px-2.5 py-1 text-xs font-medium text-sig-crit hover:bg-sig-crit/20"
+              >
+                <Trash2 className="h-3 w-3" />
+                Revoke
+              </button>
+            )}
           </div>
         ),
       },
@@ -577,6 +757,17 @@ function ApiTokensSubTab() {
             onChange={(e) => setTokenName(e.target.value)}
             placeholder="Token description (e.g. Grafana Reader)"
             className="sm:col-span-2 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+          />
+          <input
+            type="number"
+            min={0}
+            max={3650}
+            step={1}
+            value={tokenExpiryDays}
+            onChange={(e) => setTokenExpiryDays(e.target.value)}
+            aria-label="Token lifetime in days (0 = never expires)"
+            placeholder="Days (0 = never)"
+            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 font-mono text-xs text-text"
           />
           <select
             value={tokenScope}
@@ -1161,22 +1352,46 @@ function EmailReportsSubTab() {
 // ============================================================================
 // SUB-TAB 5: AUDIT LOG
 // ============================================================================
+const AUDIT_PAGE_SIZE = 50;
+const AUDIT_RANGES = [
+  { value: '1', label: '1h' },
+  { value: '24', label: '24h' },
+  { value: '168', label: '7d' },
+  { value: '720', label: '30d' },
+] as const;
+
 function AuditLogSubTab() {
   const [actorFilter, setActorFilter] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
+  const [rangeHours, setRangeHours] = useState('24');
+  const [page, setPage] = useState(0);
   const [selectedEntry, setSelectedEntry] = useState<AuditLogEntry | null>(null);
 
+  const offset = page * AUDIT_PAGE_SIZE;
   const { data: auditRes, isLoading } = useQuery({
-    queryKey: ['audit-logs', actorFilter],
-    queryFn: () =>
-      apiFetch<any>(
-        `/admin/api/audit?limit=100${actorFilter ? `&actor=${encodeURIComponent(actorFilter)}` : ''}`
-      ),
+    queryKey: ['audit-logs', actorFilter, actionFilter, rangeHours, page],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(AUDIT_PAGE_SIZE),
+        offset: String(offset),
+        hours: rangeHours,
+      });
+      if (actorFilter.trim()) params.set('actor', actorFilter.trim());
+      if (actionFilter.trim()) params.set('action', actionFilter.trim());
+      return apiFetch<any>(`/admin/api/audit?${params.toString()}`);
+    },
   });
 
   const logs: AuditLogEntry[] = useMemo(() => {
     if (Array.isArray(auditRes)) return auditRes;
     return auditRes?.audit_logs ?? auditRes?.items ?? auditRes?.data ?? [];
   }, [auditRes]);
+  const auditTotal: number = Array.isArray(auditRes)
+    ? // Bare-array fallback: we cannot know the true total, so advertise one
+      // more row when the page is full instead of disabling Next.
+      offset + logs.length + (logs.length === AUDIT_PAGE_SIZE ? 1 : 0)
+    : Number(auditRes?.total ?? logs.length) || 0;
+  const resetAuditPage = () => setPage(0);
 
   const columns = useMemo<ColumnDef<AuditLogEntry, unknown>[]>(
     () => [
@@ -1242,13 +1457,57 @@ function AuditLogSubTab() {
             Every authenticated admin POST/PUT/PATCH/DELETE action is recorded with actor, IP, and payload summary.
           </p>
         </div>
-        <input
-          type="search"
-          value={actorFilter}
-          onChange={(e) => setActorFilter(e.target.value)}
-          placeholder="Filter by username..."
-          className="rounded-md border border-border bg-bg-card px-3 py-1.5 text-xs text-text"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={actorFilter}
+            onChange={(e) => {
+              setActorFilter(e.target.value);
+              resetAuditPage();
+            }}
+            placeholder="Filter by username..."
+            aria-label="Filter by actor"
+            className="rounded-md border border-border bg-bg-card px-3 py-1.5 text-xs text-text"
+          />
+          <input
+            type="search"
+            value={actionFilter}
+            onChange={(e) => {
+              setActionFilter(e.target.value);
+              resetAuditPage();
+            }}
+            placeholder="Filter by route..."
+            aria-label="Filter by action route"
+            className="rounded-md border border-border bg-bg-card px-3 py-1.5 font-mono text-xs text-text"
+          />
+          <select
+            value={rangeHours}
+            onChange={(e) => {
+              setRangeHours(e.target.value);
+              resetAuditPage();
+            }}
+            aria-label="Audit time range"
+            className="rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+          >
+            {AUDIT_RANGES.map((r) => (
+              <option key={r.value} value={r.value}>
+                Last {r.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              setActorFilter('');
+              setActionFilter('');
+              setRangeHours('24');
+              resetAuditPage();
+            }}
+            className="rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-[11px] text-text-dim hover:text-text"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
       <ResponsiveDataView
@@ -1271,6 +1530,32 @@ function AuditLogSubTab() {
           </div>
         )}
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] text-text-dim">
+          {logs.length === 0
+            ? `0 of ${auditTotal}`
+            : `${offset + 1}–${offset + logs.length} of ${auditTotal}`}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            disabled={offset + logs.length >= auditTotal}
+            onClick={() => setPage((p) => p + 1)}
+            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
 
       <SlideOverDrawer
         open={Boolean(selectedEntry)}
