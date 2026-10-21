@@ -80,6 +80,9 @@ V2:
 - **v0.11.350** — Event analytics charts + distributions, structured event and security-event
   inspectors, security class/severity filters and paging. Remaining: syslog/trap detail stubs,
   dashboard host trends, topology/connection detail, storage/system leftovers.
+- **v0.11.351** — Syslog and trap stats charts, range pills, severity filtering and structured
+  inspectors; traps list gained a server-side `hours` window. Remaining: dashboard host trends,
+  topology/connection detail, storage/system leftovers.
 
 ## Top gaps
 

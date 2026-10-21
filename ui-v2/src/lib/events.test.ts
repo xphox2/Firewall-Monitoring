@@ -7,6 +7,7 @@ import {
   eventBytesSeries,
   eventHitsSeries,
   severityLabel,
+  timeBucketSeries,
 } from './events';
 
 describe('event labels', () => {
@@ -60,6 +61,25 @@ describe('eventBytesSeries', () => {
     );
     expect(timestamps).toHaveLength(1);
     expect(values).toEqual([0]);
+  });
+});
+
+describe('timeBucketSeries', () => {
+  it('maps generic stats buckets and sorts them', () => {
+    const { timestamps, values } = timeBucketSeries([
+      { bucket: '2026-10-20 15:00', count: 5 },
+      { bucket: '2026-10-20 14:00', count: 2 },
+      { bucket: 'junk', count: 99 },
+    ]);
+    expect(timestamps).toEqual([
+      Date.parse('2026-10-20T14:00:00Z'),
+      Date.parse('2026-10-20T15:00:00Z'),
+    ]);
+    expect(values).toEqual([2, 5]);
+  });
+
+  it('handles empty input', () => {
+    expect(timeBucketSeries(undefined)).toEqual({ timestamps: [], values: [] });
   });
 });
 

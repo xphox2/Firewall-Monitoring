@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.351] - 2026-10-21
+
+### Added — Syslog and SNMP trap analytics and inspectors in the Admin UI V2 preview
+
+- **Syslog**: range pills (1h/24h/7d/30d) that bound the list as well as the stats (the server already supported `hours`), a message-volume chart, a severity distribution, and a structured inspector showing the RFC5424/3164 header (hostname, app, process, message id), priority/facility/severity, structured data and the raw payload, with raw JSON behind a disclosure.
+- **Traps**: range pills (the traps list now accepts `hours`, with a handler test), a severity filter populated from the stats distribution, a trap-volume chart, severity and trap-type distributions, a message column, and a structured inspector. The phantom `variables` field is gone (the model never had it), and the always-false "processed" row was removed.
+- Shared `BarList` and `DetailSection` components extracted from the Events workspace and reused by both pages.
+- `timeBucketSeries` added to `lib/events.ts` for the generic stats bucket shape, with tests (suite now 126).
+
 ## [0.11.350] - 2026-10-20
 
 ### Added — Event analytics, charts and structured inspectors in the Admin UI V2 preview
