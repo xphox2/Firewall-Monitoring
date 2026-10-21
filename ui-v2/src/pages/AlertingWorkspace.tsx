@@ -19,7 +19,6 @@ import { buildAlertPolicyBody, type AlertPolicy } from '@/lib/alert-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import {
@@ -27,6 +26,7 @@ import {
   type EventRuleRecord,
 } from '@/components/alerting/event-rule-drawer';
 import { ProfileMatrixDrawer } from '@/components/alerting/profile-matrix-drawer';
+import { ProfileAssignmentsDrawer } from '@/components/alerting/profile-assignments-drawer';
 import type { AlertTypeInfo } from '@/lib/event-profiles';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
@@ -428,6 +428,9 @@ export function AlertingWorkspace() {
     isDefault?: boolean;
   }>({ name: '', description: '' });
   const [matrixProfile, setMatrixProfile] = useState<{ id: number; name: string } | null>(null);
+  const [assignmentsProfile, setAssignmentsProfile] = useState<{ id: number; name: string } | null>(
+    null,
+  );
   const [profileToDelete, setProfileToDelete] = useState<EventRuleProfile | null>(null);
   const [cloneSource, setCloneSource] = useState<EventRuleProfile | null>(null);
   const [cloneName, setCloneName] = useState('');
@@ -1117,12 +1120,6 @@ export function AlertingWorkspace() {
        * =================================================================== */}
       {activeTab === 'event-rules' && (
         <div className="space-y-6">
-          <ClassicFallback
-            title="Profile assignments and the effective view are still in the classic console"
-            description="Profiles and their On/Off/Inherit toggle matrix are now editable here. Assigning a profile to sites or devices, and the per-profile effective view, are still classic-only."
-            href="/admin/event-rules"
-            label="Open assignments"
-          />
           {/* Event Rule Profiles */}
           <section className="rounded-lg border border-border bg-bg-card overflow-hidden">
             <div className="border-b border-border bg-bg-panel/50 px-4 py-3 flex items-center justify-between">
@@ -1185,6 +1182,14 @@ export function AlertingWorkspace() {
                         className="rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-accent hover:border-accent disabled:opacity-40"
                       >
                         Matrix
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => setAssignmentsProfile({ id: prof.id, name: prof.name })}
+                        className="rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-text-dim hover:text-text disabled:opacity-40"
+                      >
+                        Assignments
                       </button>
                       <button
                         type="button"
@@ -1869,6 +1874,15 @@ export function AlertingWorkspace() {
         }}
         profile={matrixProfile}
         types={alertTypes}
+        onSaved={refreshProfiles}
+      />
+
+      <ProfileAssignmentsDrawer
+        open={!!assignmentsProfile}
+        onOpenChange={(open) => {
+          if (!open) setAssignmentsProfile(null);
+        }}
+        profile={assignmentsProfile}
         onSaved={refreshProfiles}
       />
 

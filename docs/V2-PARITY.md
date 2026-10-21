@@ -75,43 +75,48 @@ V2:
   area is now at parity except cosmetic word-diff pairing in split view.
 - **v0.11.348** — Flow analytics (filters, throughput chart, byte-ranked distributions, degraded
   window disclosure, conversation drill-down, samples inspector, CSV export).
+- **v0.11.349** — Event-rule profile assignments (sites/devices) with unassign; Alerting is now
+  at parity apart from linked detections and parsed syslog fields in triage.
 
 ## Top gaps
 
-1. **No charts in V2.** No charting dependency. V1 draws ~30 series (dashboard
-   resource trend, events rollups/short-window/security analytics, flows
-   bandwidth, syslog/trap trends, device and per-interface/per-tunnel traffic,
-   connection bandwidth/gauge charts).
-2. **Interactive topology map.** V1 is a Cytoscape graph (pan/zoom, compound
-   sites, expandable tunnel bundles, VLAN sublanes, LLDP evidence, alert
-   overlays). V2 lists VPN-carrying devices.
-3. **Connection detail.** Five tabs are raw JSON; the standalone detail page
-   (bridge, gauges, tunnel tables, traffic analysis) has no V2 equivalent.
-4. **Event rule/profile authoring.** V2 lists/toggles rules only — no
-   create/edit/delete, condition builder, dampening, priority, expiry, profile
-   matrix or assignments.
-5. **Device detail.** No telemetry charts, per-interface/tunnel traffic, config
-   **diff viewer**, HA, SD-WAN, ping SLA, AV/IPS/web-filter, licences, per-core
-   CPU/disk/load.
-6. **Alerts triage.** No range pills, stat tiles, charts, device/site/type/
-   severity filters, snoozed toggle, paging, selection or linked detections.
-7. **NOC wallboard.** Raw JSON snapshot; no vitals, cards, live feed or threat
-   lists.
-8. **Account security.** No 2FA enrollment/disable, no passkey registration, no
-   admin reset-password/disable-user, no token expiry, no audit paging.
-9. **IRC channels/commands.** No CRUD (counts only); server editor omits
-   NickServ/SASL/server password/auto-reconnect.
-10. **Maintenance scoping** to a device or site is not exposed.
+The scoreboard above is the **v0.11.333 audit baseline**; the per-version log
+records what has closed since. Re-auditing all 296 units is pending, so this
+list — not the table — is the current backlog.
 
-Raw-JSON stubs: event detail, security event detail, syslog detail, flow sample,
-trap detail, connection detail, IPSec CLI preview, device capabilities,
-effective-policy simulator.
+1. **Topology map and connection detail.** V1 is a Cytoscape graph (pan/zoom,
+   compound sites, expandable tunnel bundles, VLAN sublanes, LLDP evidence,
+   alert overlays) plus a standalone connection page (bridge/gauges/tunnel
+   tables/traffic analysis). V2 lists connections and IPSec data; the map and
+   the five connection detail tabs are still classic-only. IPSec CLI preview is
+   a raw-JSON stub.
+2. **Events depth.** Analytics and rollups exist, but event/security-event
+   detail is still a raw-JSON drawer, and several security columns/filters and
+   per-type breakdowns remain classic-only.
+3. **Syslog and traps depth.** Detail views are raw JSON; trap/syslog trend
+   charts and some filters are still missing.
+4. **Dashboard resource trend.** The classic dashboard draws host CPU/memory/
+   disk trends over time; V2 shows current values only.
+5. **Alert triage leftovers.** Parsed syslog fields, linked flow detections and
+   per-alert-type trend breakdowns.
+6. **Storage / archive leftovers.** The storage page and archive/export flows
+   still miss several controls from the classic console.
+7. **Account security leftovers.** 2FA "decline with risk acknowledgement",
+   passkey rename, and the profile "member since" line.
+8. **Collectors / sites leftovers.** Several collector and site editor fields
+   and bulk actions remain classic-only.
+9. **Profile effective view.** Assignments now work; the classic per-profile
+   "effective" preview is represented by the Configuration Overview rather than
+   a profile-scoped view.
+
+Raw-JSON stubs still present: event detail, security event detail, syslog
+detail, trap detail, connection detail, IPSec CLI preview, device capabilities
+and the effective-policy simulator.
 
 ## Where V2 points at V1
 
-Each thin surface renders a `ClassicFallback` notice with a link to the
-equivalent classic page: NOC, topology map, connection detail, device detail,
-event-rule authoring, alerts analytics, profile security, IRC management,
-maintenance scoping and threat-intel lookup. The shell also carries a
-`PREVIEW` pill and a dismissible notice, and the classic sidebar links to
+Thin surfaces still render a `ClassicFallback` notice with a link to the
+equivalent classic page: the **topology map / connection detail** and the
+**alert triage analytics** that are still classic-only. The shell also carries
+a `PREVIEW` pill and a dismissible notice, and the classic sidebar links to
 `/admin/v2` with a `Preview` badge.

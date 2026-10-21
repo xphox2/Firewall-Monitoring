@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.349] - 2026-10-20
+
+### Added — Event-rule profile assignments in the Admin UI V2 preview
+
+- Each profile card gains an **Assignments** drawer: its current sites and devices with one-click unassign, plus pickers for the remaining entities and an Add action using the additive batch endpoint. Assigning moves an entity from any other profile; unassigning returns it to the Default → Site → Device chain.
+- Selections are reset when the drawer targets another profile (and the Add buttons only enable for a value present in the current options), so a pending selection can no longer be applied to the wrong profile.
+- Assignment changes refresh the profile counts, the assignments list and the Configuration Overview; unassign buttons are gated while any assignment mutation is in flight.
+- The last Alerting `ClassicFallback` notice is gone: rules, profiles, the On/Off/Inherit matrix, assignments and the overview are all in V2.
+- `docs/V2-PARITY.md` now carries a current "Top gaps" list (topology/connection detail, event/syslog/trap depth, dashboard trends, storage/system leftovers) instead of the stale v0.11.333 list; the scoreboard remains the audit baseline.
+
 ## [0.11.348] - 2026-10-20
 
 ### Added — Flow analytics in the Admin UI V2 preview
