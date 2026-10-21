@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,9 +9,22 @@ import {
   Clock,
   Sparkles,
   CheckCheck,
+  BellOff,
+  Filter,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
+import {
+  ALERT_RANGES,
+  EMPTY_ALERT_FILTERS,
+  alertState,
+  buildAlertQuery,
+  pageRange,
+  trendBars,
+  type AlertFilters,
+} from '@/lib/alerts';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
@@ -20,30 +33,59 @@ import { ColumnDef } from '@tanstack/react-table';
 
 type AlertsTab = 'open' | 'incidents' | 'history';
 
+const PAGE_SIZE = 50;
+
 interface AlertRow {
   id: number;
   device_id?: number;
+  site_id?: number | null;
   device_name?: string;
   alert_type: string;
   severity: string;
   title?: string;
   message: string;
+  metric_name?: string;
+  threshold?: number;
+  current_value?: number;
   acknowledged: boolean;
+  acknowledged_at?: string | null;
+  resolved_at?: string | null;
   snoozed_until?: string | null;
+  snoozed_reason?: string;
   notes?: string;
   timestamp?: string;
   created_at?: string;
 }
 
+interface AlertStats {
+  total: number;
+  by_severity?: Array<{ key: string; count: number }>;
+  by_type?: Array<{ key: string; count: number }>;
+  over_time?: Array<{ bucket: string; count: number }>;
+}
+
 interface IncidentRow {
   id: number;
   title: string;
-  status: string;
   severity: string;
   alert_count: number;
   started_at: string;
+  resolved_at?: string | null;
   updated_at?: string;
 }
+
+const SEVERITY_STYLE: Record<string, string> = {
+  critical: 'bg-sig-crit/15 text-sig-crit',
+  warning: 'bg-sig-warn/15 text-sig-warn',
+  info: 'bg-accent/15 text-accent',
+};
+
+const STATE_STYLE: Record<string, string> = {
+  open: 'bg-sig-crit/15 text-sig-crit',
+  acknowledged: 'bg-sig-ok/15 text-sig-ok',
+  snoozed: 'bg-accent/15 text-accent',
+  resolved: 'bg-bg-panel text-text-faint',
+};
 
 export function AlertsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -59,17 +101,14 @@ export function AlertsWorkspace() {
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-accent">
             <Bell className="h-3.5 w-3.5" />
-            Security & Alerts / Triage Queue
+            Security & Alerts / Incident Response
           </div>
           <h1 className="text-xl font-semibold text-text mt-0.5">
-            Active Alerts, Storm Incidents & Triage Queue
+            Alert Queue, Storm Incidents & History
           </h1>
-          <p className="text-xs text-text-dim mt-0.5">
-            Acknowledge, snooze, or generate a 1-click Suppress/Customize Event Rule from any noisy alert.
-          </p>
         </div>
 
-        <div className="flex items-center gap-1 rounded-lg bg-bg-panel p-1 border border-border self-start">
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-panel p-1">
           <button
             type="button"
             onClick={() => setTab('open')}
@@ -77,7 +116,7 @@ export function AlertsWorkspace() {
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'open'
                 ? 'bg-bg-card text-text shadow-sm border border-border'
-                : 'text-text-dim hover:text-text'
+                : 'text-text-dim hover:text-text',
             )}
           >
             <Bell className="h-3.5 w-3.5 text-accent" />
@@ -90,7 +129,7 @@ export function AlertsWorkspace() {
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'incidents'
                 ? 'bg-bg-card text-text shadow-sm border border-border'
-                : 'text-text-dim hover:text-text'
+                : 'text-text-dim hover:text-text',
             )}
           >
             <Flame className="h-3.5 w-3.5 text-sig-warn" />
@@ -103,7 +142,7 @@ export function AlertsWorkspace() {
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'history'
                 ? 'bg-bg-card text-text shadow-sm border border-border'
-                : 'text-text-dim hover:text-text'
+                : 'text-text-dim hover:text-text',
             )}
           >
             <History className="h-3.5 w-3.5 text-accent" />
@@ -113,91 +152,177 @@ export function AlertsWorkspace() {
       </div>
 
       <ClassicFallback
-        title="Alert filters, analytics and full triage are still in the classic console"
-        description="The preview supports acknowledge, snooze, notes and incidents. Range pills, stat tiles, charts, device/site/type/severity filters, the snoozed toggle, paging, bulk selection and linked detections are not rebuilt yet."
+        title="Some alert analytics remain in the classic console"
+        description="Filtering, stats, bulk acknowledge/snooze, pagination and detail actions are now here. Parsed syslog fields, linked flow detections and alert-type trend breakdowns are still classic-only."
         href="/admin/alerts"
         label="Open full alerts"
       />
 
-      {activeTab === 'open' && <AlertsQueueSubTab acknowledged={false} />}
+      {activeTab === 'open' && <AlertsQueue acknowledged={false} />}
       {activeTab === 'incidents' && <StormIncidentsSubTab />}
-      {activeTab === 'history' && <AlertsQueueSubTab acknowledged={true} />}
+      {activeTab === 'history' && <AlertsQueue acknowledged={true} />}
     </div>
   );
 }
 
-function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
+function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const [selectedAlert, setSelectedAlert] = useState<AlertRow | null>(null);
+  const [range, setRange] = useState('24h');
+  const [filters, setFilters] = useState<AlertFilters>(EMPTY_ALERT_FILTERS);
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [detail, setDetail] = useState<AlertRow | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
+  const [snoozeHours, setSnoozeHours] = useState('1');
+  const [bulkSnoozeOpen, setBulkSnoozeOpen] = useState(false);
+  const [bulkHours, setBulkHours] = useState('1');
+  const [bulkReason, setBulkReason] = useState('');
   const [suggestedRule, setSuggestedRule] = useState<any>(null);
 
-  const { data: alertsRes, isLoading } = useQuery({
-    queryKey: ['alerts-list', acknowledged],
+  const hours = ALERT_RANGES.find((r) => r.value === range)?.hours ?? 24;
+
+  const { data: devices = [] } = useQuery({
+    queryKey: ['alert-devices'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/devices'),
+  });
+  const { data: sites = [] } = useQuery({
+    queryKey: ['alert-sites'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/sites'),
+  });
+
+  const { data: stats } = useQuery({
+    queryKey: ['alert-stats', hours, filters.deviceId],
     queryFn: () =>
-      apiFetch<any>(`/admin/api/alerts?acknowledged=${acknowledged ? 'true' : 'false'}&limit=100`),
+      apiFetch<AlertStats>(
+        `/admin/api/alerts/stats?hours=${hours}${filters.deviceId ? `&device_id=${filters.deviceId}` : ''}`,
+      ),
+    refetchInterval: 30_000,
+  });
+
+  const offset = page * PAGE_SIZE;
+  const { data: listRes, isLoading } = useQuery({
+    queryKey: ['alerts-list', acknowledged, filters, page],
+    queryFn: () =>
+      apiFetch<{ alerts?: AlertRow[]; total?: number }>(
+        `/admin/api/alerts?${buildAlertQuery({ acknowledged, filters, offset, limit: PAGE_SIZE })}`,
+      ),
     refetchInterval: 15_000,
   });
 
-  const alerts: AlertRow[] = Array.isArray(alertsRes)
-    ? alertsRes
-    : alertsRes?.alerts ?? alertsRes?.items ?? alertsRes?.data ?? [];
+  const alerts = listRes?.alerts ?? [];
+  const total = listRes?.total ?? 0;
 
-  const ackMutation = useMutation({
-    mutationFn: async (id: number) => apiFetch(`/admin/api/alerts/${id}/acknowledge`, { method: 'POST' }),
-    onSuccess: () => {
-      toast({ title: 'Alert acknowledged', variant: 'success' });
-      queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
-    },
-  });
+  const updateFilters = (patch: Partial<AlertFilters>) => {
+    // Reset synchronously with the filter change: an effect would render once
+    // with the new filters and the stale offset and fire a wasted request.
+    setFilters((current) => ({ ...current, ...patch }));
+    setPage(0);
+    setSelected(new Set());
+  };
 
-  const snoozeMutation = useMutation({
-    mutationFn: async ({ id, minutes }: { id: number; minutes: number }) =>
-      // SnoozeAlert binds `hours`; duration_minutes was ignored and the server
-      // fell back to its 1h clamp, so any other duration silently snoozed 1h.
-      apiFetch(`/admin/api/alerts/${id}/snooze`, {
-        method: 'POST',
-        body: { hours: Math.max(1, Math.round(minutes / 60)) },
-      }),
-    onSuccess: () => {
-      toast({ title: 'Alert snoozed', variant: 'info' });
-      queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
-    },
-    onError: (err: Error) => {
-      toast({ title: 'Snooze failed', description: err.message, variant: 'error' });
-    },
-  });
+  useEffect(() => {
+    setNotesDraft(detail?.notes ?? '');
+    setSnoozeHours('1');
+    setSuggestedRule(null);
+  }, [detail]);
 
-  const bulkAckMutation = useMutation({
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
+    queryClient.invalidateQueries({ queryKey: ['alert-stats'] });
+  };
+
+  const bulkAck = useMutation({
     mutationFn: async () =>
       apiFetch('/admin/api/alerts/bulk-acknowledge', {
         method: 'POST',
-        // BulkAcknowledgeAlerts binds `ids`; alert_ids made every call 400.
-        body: { ids: alerts.map((a) => a.id) },
+        body: { ids: Array.from(selected) },
       }),
     onSuccess: () => {
-      toast({ title: 'All visible alerts acknowledged', variant: 'success' });
-      queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
+      toast({ title: `Acknowledged ${selected.size} alert(s)`, variant: 'success' });
+      setSelected(new Set());
+      invalidate();
     },
-    onError: (err: Error) => {
-      toast({ title: 'Bulk acknowledge failed', description: err.message, variant: 'error' });
-    },
+    onError: (err: Error) =>
+      toast({ title: 'Bulk acknowledge failed', description: err.message, variant: 'error' }),
   });
 
-  const saveNotesMutation = useMutation({
+  const bulkSnooze = useMutation({
+    mutationFn: async () =>
+      apiFetch('/admin/api/alerts/bulk-snooze', {
+        method: 'POST',
+        body: {
+          ids: Array.from(selected),
+          hours: Math.max(1, Number(bulkHours) || 1),
+          reason: bulkReason.trim(),
+        },
+      }),
+    onSuccess: () => {
+      toast({ title: `Snoozed ${selected.size} alert(s)`, variant: 'info' });
+      setSelected(new Set());
+      setBulkSnoozeOpen(false);
+      setBulkReason('');
+      setBulkHours('1');
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Bulk snooze failed', description: err.message, variant: 'error' }),
+  });
+
+  const ackOne = useMutation({
+    mutationFn: async (id: number) =>
+      apiFetch(`/admin/api/alerts/${id}/acknowledge`, { method: 'POST', body: { notes: notesDraft } }),
+    onSuccess: () => {
+      toast({ title: 'Alert acknowledged', variant: 'success' });
+      setDetail(null);
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Acknowledge failed', description: err.message, variant: 'error' }),
+  });
+
+  const snoozeOne = useMutation({
+    mutationFn: async (id: number) =>
+      apiFetch(`/admin/api/alerts/${id}/snooze`, {
+        method: 'POST',
+        body: { hours: Math.max(1, Number(snoozeHours) || 1) },
+      }),
+    onSuccess: () => {
+      toast({ title: 'Alert snoozed', variant: 'info' });
+      setDetail(null);
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Snooze failed', description: err.message, variant: 'error' }),
+  });
+
+  const unsnooze = useMutation({
+    mutationFn: async (id: number) =>
+      apiFetch(`/admin/api/alerts/${id}/unsnooze`, { method: 'POST' }),
+    onSuccess: () => {
+      toast({ title: 'Snooze cleared', variant: 'info' });
+      setDetail(null);
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Unsnooze failed', description: err.message, variant: 'error' }),
+  });
+
+  const saveNotes = useMutation({
     mutationFn: async () => {
-      if (!selectedAlert) return;
-      return apiFetch(`/admin/api/alerts/${selectedAlert.id}/notes`, {
+      if (!detail) return;
+      return apiFetch(`/admin/api/alerts/${detail.id}/notes`, {
         method: 'POST',
         body: { notes: notesDraft },
       });
     },
     onSuccess: () => {
       toast({ title: 'Operator notes saved', variant: 'success' });
-      queryClient.invalidateQueries({ queryKey: ['alerts-list'] });
+      invalidate();
     },
+    onError: (err: Error) =>
+      toast({ title: 'Save notes failed', description: err.message, variant: 'error' }),
   });
 
   const loadSuggestedRule = async (alertId: number) => {
@@ -213,16 +338,10 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
     }
   };
 
-  const createSuggestedRuleMutation = useMutation({
+  const createSuggestedRule = useMutation({
     mutationFn: async () => {
-      // The endpoint returns SuggestResult {supported, rule, …}; posting the
-      // envelope (or rule.suggested_name) to CreateEventRule failed binding
-      // because EventRule requires `name`.
       const rule = suggestedRule?.rule;
       if (!rule) throw new Error('No suggested rule to create');
-      // expires_hours/profile_name are suggestion metadata, not EventRule
-      // columns: EventRule takes an absolute expires_at. Leaving expires_hours
-      // in the body silently turned a 24h mute into a permanent one.
       const { suggested_name: suggestedName, expires_hours: expiresHours, profile_name, ...rest } =
         rule;
       void profile_name;
@@ -235,25 +354,67 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
         body: {
           ...rest,
           name: suggestedName || 'Suppress similar alerts',
-          // GORM omits the false zero value on INSERT and the table default is
-          // true, but CreateEventRule force-disables when Enabled is false —
-          // so an omitted field produced a rule that never fires.
           enabled: true,
           ...(expiresAt ? { expires_at: expiresAt } : {}),
         },
       });
     },
     onSuccess: () => {
-      toast({ title: 'Suppression rule created from alert', variant: 'success' });
+      toast({ title: 'Suppression rule created', variant: 'success' });
       setSuggestedRule(null);
+      if (detail) {
+        void apiFetch(`/admin/api/alerts/${detail.id}/acknowledge`, {
+          method: 'POST',
+          body: { notes: 'Suppressed via Event Rule' },
+        }).catch(() => {});
+      }
+      invalidate();
     },
-    onError: (err: Error) => {
-      toast({ title: 'Rule creation failed', description: err.message, variant: 'error' });
-    },
+    onError: (err: Error) =>
+      toast({ title: 'Rule creation failed', description: err.message, variant: 'error' }),
   });
+
+  const toggleSelected = (id: number) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const pageIds = alerts.map((a) => a.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
 
   const columns = useMemo<ColumnDef<AlertRow, unknown>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <input
+            type="checkbox"
+            aria-label="Select all alerts on this page"
+            checked={allPageSelected}
+            onChange={() => {
+              setSelected((current) => {
+                const next = new Set(current);
+                if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+                else pageIds.forEach((id) => next.add(id));
+                return next;
+              });
+            }}
+          />
+        ),
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            aria-label={`Select alert ${row.original.id}`}
+            checked={selected.has(row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            onChange={() => toggleSelected(row.original.id)}
+          />
+        ),
+      },
       {
         accessorKey: 'timestamp',
         header: 'Triggered',
@@ -266,90 +427,259 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
       {
         accessorKey: 'severity',
         header: 'Severity',
-        cell: ({ row }) => {
-          const sev = (row.original.severity || 'warning').toLowerCase();
-          return (
-            <span
-              className={cn(
-                'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                sev === 'critical'
-                  ? 'bg-sig-crit/15 text-sig-crit'
-                  : sev === 'warning'
-                    ? 'bg-sig-warn/15 text-sig-warn'
-                    : 'bg-accent/15 text-accent'
-              )}
-            >
-              {row.original.severity}
-            </span>
-          );
-        },
-      },
-      {
-        accessorKey: 'device_name',
-        header: 'Device',
         cell: ({ row }) => (
-          <span className="font-semibold text-xs text-text">
-            {row.original.device_name || (row.original.device_id ? `Dev #${row.original.device_id}` : 'System')}
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+              SEVERITY_STYLE[row.original.severity] ?? 'bg-bg-panel text-text-dim',
+            )}
+          >
+            {row.original.severity}
           </span>
         ),
       },
       {
         accessorKey: 'alert_type',
-        header: 'Type & Message',
+        header: 'Type / Message',
         cell: ({ row }) => (
-          <div>
-            <span className="font-mono text-[11px] font-semibold text-accent mr-2">
-              {row.original.alert_type}
-            </span>
-            <span className="text-xs text-text">{row.original.message}</span>
+          <div className="min-w-[190px]">
+            <div className="text-xs font-semibold text-text">
+              {row.original.alert_type || 'Alert'}
+            </div>
+            <div className="line-clamp-2 text-[11px] text-text-dim">{row.original.message}</div>
           </div>
         ),
+      },
+      {
+        id: 'device',
+        header: 'Device',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-text-dim">
+            {row.original.device_name || (row.original.device_id ? `#${row.original.device_id}` : '—')}
+          </span>
+        ),
+      },
+      {
+        id: 'state',
+        header: 'State',
+        cell: ({ row }) => {
+          const state = alertState(row.original);
+          return (
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                STATE_STYLE[state],
+              )}
+            >
+              {state}
+            </span>
+          );
+        },
       },
       {
         id: 'actions',
         header: '',
         cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-            {!row.original.acknowledged && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => ackMutation.mutate(row.original.id)}
-                  className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok"
-                >
-                  <Check className="h-3 w-3" /> Ack
-                </button>
-                <button
-                  type="button"
-                  onClick={() => snoozeMutation.mutate({ id: row.original.id, minutes: 60 })}
-                  className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text"
-                >
-                  <Clock className="h-3 w-3" /> 1h
-                </button>
-              </>
+          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+            {!row.original.acknowledged && !row.original.resolved_at && (
+              <button
+                type="button"
+                onClick={() => ackOne.mutate(row.original.id)}
+                className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text hover:bg-bg-hover"
+              >
+                <Check className="h-3 w-3 text-sig-ok" /> Ack
+              </button>
             )}
           </div>
         ),
       },
     ],
-    [ackMutation, snoozeMutation]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, allPageSelected, alerts, ackOne],
   );
 
+  const severityCounts = useMemo(() => {
+    const map = new Map((stats?.by_severity ?? []).map((s) => [s.key, s.count]));
+    return {
+      critical: map.get('critical') ?? 0,
+      warning: map.get('warning') ?? 0,
+      info: map.get('info') ?? 0,
+    };
+  }, [stats]);
+  const bars = useMemo(
+    () => trendBars(stats?.over_time, 12, hours > 48),
+    [stats, hours],
+  );
+  const maxBar = Math.max(1, ...bars.map((b) => b.count));
+  const alertTypes = (stats?.by_type ?? []).map((t) => t.key).filter(Boolean);
+
   return (
-    <div className="space-y-3">
-      {!acknowledged && alerts.length > 0 && (
-        <div className="flex items-center justify-between rounded-lg border border-border bg-bg-card px-3.5 py-2">
-          <span className="text-xs text-text-dim">
-            Showing <strong className="text-text">{alerts.length}</strong> open unacknowledged alerts
-          </span>
+    <div className="space-y-4">
+      {/* Stats for the selected window */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[10px] uppercase text-text-faint">Alerts in {range}</div>
+          <div className="mt-0.5 font-mono text-xl font-bold text-text">
+            {stats?.total ?? 0}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[10px] uppercase text-text-faint">Critical</div>
+          <div className="mt-0.5 font-mono text-xl font-bold text-sig-crit">
+            {severityCounts.critical}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[10px] uppercase text-text-faint">Warning</div>
+          <div className="mt-0.5 font-mono text-xl font-bold text-sig-warn">
+            {severityCounts.warning}
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[10px] uppercase text-text-faint">Info</div>
+          <div className="mt-0.5 font-mono text-xl font-bold text-accent">
+            {severityCounts.info}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-border bg-bg-card p-3.5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold text-text">Alert volume</h2>
+          <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-panel p-1">
+            {ALERT_RANGES.map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                onClick={() => setRange(r.value)}
+                className={cn(
+                  'rounded px-2 py-1 font-mono text-[11px] font-medium',
+                  range === r.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                )}
+              >
+                {r.value}
+              </button>
+            ))}
+          </div>
+        </div>
+        {bars.length === 0 ? (
+          <p className="py-3 text-center text-[11px] text-text-faint">No alerts in this window.</p>
+        ) : (
+          <div className="flex items-end gap-1.5 overflow-x-auto pb-1" style={{ height: 90 }}>
+            {bars.map((bar, idx) => (
+              <div key={`${bar.label}-${idx}`} className="flex min-w-[28px] flex-1 flex-col items-center gap-1">
+                <div className="text-[9px] font-mono text-text-faint">{bar.count}</div>
+                <div
+                  className="w-full rounded-t bg-accent/70"
+                  style={{ height: `${Math.max(2, (bar.count / maxBar) * 52)}px` }}
+                  title={`${bar.label}: ${bar.count}`}
+                />
+                <div className="font-mono text-[9px] text-text-faint">{bar.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
+        <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
+        <select
+          value={filters.deviceId}
+          onChange={(e) => updateFilters({ deviceId: e.target.value })}
+          aria-label="Filter by device"
+          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+        >
+          <option value="">All devices</option>
+          {devices.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.siteId}
+          onChange={(e) => updateFilters({ siteId: e.target.value })}
+          aria-label="Filter by site"
+          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+        >
+          <option value="">All sites</option>
+          <option value="unassigned">Unassigned</option>
+          {sites.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.severity}
+          onChange={(e) => updateFilters({ severity: e.target.value })}
+          aria-label="Filter by severity"
+          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+        >
+          <option value="">All severities</option>
+          <option value="critical">Critical</option>
+          <option value="warning">Warning</option>
+          <option value="info">Info</option>
+        </select>
+        <select
+          value={filters.alertType}
+          onChange={(e) => updateFilters({ alertType: e.target.value })}
+          aria-label="Filter by alert type"
+          className="max-w-[220px] rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+        >
+          <option value="">All types</option>
+          {alertTypes.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>
+        <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
+          <input
+            type="checkbox"
+            checked={filters.includeSnoozed}
+            onChange={(e) => updateFilters({ includeSnoozed: e.target.checked })}
+          />
+          Include snoozed
+        </label>
+        <button
+          type="button"
+          onClick={() => {
+            setFilters(EMPTY_ALERT_FILTERS);
+            setPage(0);
+            setSelected(new Set());
+          }}
+          className="ml-auto rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text"
+        >
+          Clear
+        </button>
+      </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2">
+          <span className="text-xs font-semibold text-text">{selected.size} selected</span>
           <button
             type="button"
-            disabled={bulkAckMutation.isPending}
-            onClick={() => bulkAckMutation.mutate()}
-            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
+            onClick={() => bulkAck.mutate()}
+            disabled={bulkAck.isPending}
+            className="flex items-center gap-1 rounded bg-sig-ok px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
           >
-            <CheckCheck className="h-3.5 w-3.5" />
-            Acknowledge All Visible
+            <CheckCheck className="h-3 w-3" /> Acknowledge
+          </button>
+          <button
+            type="button"
+            onClick={() => setBulkSnoozeOpen(true)}
+            className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] font-semibold text-text"
+          >
+            <BellOff className="h-3 w-3" /> Snooze
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-[11px] text-text-dim hover:text-text"
+          >
+            Clear selection
           </button>
         </div>
       )}
@@ -358,95 +688,253 @@ function AlertsQueueSubTab({ acknowledged }: { acknowledged: boolean }) {
         data={alerts}
         columns={columns}
         isLoading={isLoading}
-        onRowClick={(row) => {
-          setSelectedAlert(row);
-          setNotesDraft(row.notes || '');
-          setSuggestedRule(null);
-        }}
-        emptyTitle={acknowledged ? 'No historical alerts.' : 'Zero open alerts — fleet is healthy.'}
+        getRowId={(row) => String(row.id)}
+        onRowClick={(row) => setDetail(row)}
+        emptyTitle={acknowledged ? 'No acknowledged alerts.' : 'No open alerts.'}
+        emptyDescription="Adjust the filters or widen the stats window."
         renderMobileCard={(a) => (
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-xs font-semibold text-accent">{a.alert_type}</span>
-              <span className="font-mono text-[11px] text-text-dim">
-                {formatRelativeTime(a.timestamp || a.created_at)}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-text">{a.alert_type}</span>
+              <span
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                  SEVERITY_STYLE[a.severity] ?? 'bg-bg-panel text-text-dim',
+                )}
+              >
+                {a.severity}
               </span>
             </div>
-            <div className="text-xs text-text">{a.message}</div>
+            <p className="line-clamp-2 text-[11px] text-text-dim">{a.message}</p>
+            <div className="flex items-center justify-between font-mono text-[10px] text-text-faint">
+              <span>{a.device_name || `#${a.device_id ?? '?'}`}</span>
+              <span>{formatRelativeTime(a.timestamp || a.created_at)}</span>
+            </div>
           </div>
         )}
       />
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] text-text-dim">
+          {pageRange(offset, alerts.length, total)}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            className="inline-flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
+          >
+            <ChevronLeft className="h-3 w-3" /> Prev
+          </button>
+          <button
+            type="button"
+            disabled={offset + alerts.length >= total}
+            onClick={() => setPage((p) => p + 1)}
+            className="inline-flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
+          >
+            Next <ChevronRight className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Detail drawer */}
       <SlideOverDrawer
-        open={Boolean(selectedAlert)}
+        open={Boolean(detail)}
         onOpenChange={(open) => {
-          if (!open) setSelectedAlert(null);
+          if (!open) setDetail(null);
         }}
-        title={`Alert #${selectedAlert?.id ?? ''}: ${selectedAlert?.alert_type ?? ''}`}
-        subtitle={selectedAlert?.device_name || 'Alert Triage & Rule Suggestion'}
+        title={detail ? `${detail.alert_type} — ${detail.severity}` : 'Alert detail'}
+        subtitle={detail ? formatRelativeTime(detail.timestamp || detail.created_at) : undefined}
+        size="lg"
       >
-        {selectedAlert && (
+        {detail && (
           <div className="space-y-4">
-            <div className="rounded-lg border border-border bg-bg-panel p-3 text-xs text-text">
-              {selectedAlert.message}
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={cn(
+                  'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
+                  STATE_STYLE[alertState(detail)],
+                )}
+              >
+                {alertState(detail)}
+              </span>
+              {detail.device_name && (
+                <span className="font-mono text-[11px] text-text-dim">{detail.device_name}</span>
+              )}
+              {detail.snoozed_until && (
+                <span className="text-[11px] text-accent">
+                  snoozed until {new Date(detail.snoozed_until).toLocaleString()}
+                </span>
+              )}
             </div>
+
+            <p className="rounded-lg border border-border bg-bg-panel p-3 text-xs text-text">
+              {detail.message}
+            </p>
+
+            {detail.metric_name && (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border border-border bg-bg-panel p-2.5">
+                  <div className="text-[10px] uppercase text-text-faint">Metric</div>
+                  <div className="font-mono text-xs text-text">{detail.metric_name || '—'}</div>
+                </div>
+                <div className="rounded-lg border border-border bg-bg-panel p-2.5">
+                  <div className="text-[10px] uppercase text-text-faint">Threshold</div>
+                  <div className="font-mono text-xs text-text">
+                    {detail.threshold != null ? detail.threshold : '—'}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border bg-bg-panel p-2.5">
+                  <div className="text-[10px] uppercase text-text-faint">Current</div>
+                  <div className="font-mono text-xs text-text">
+                    {detail.current_value != null ? detail.current_value : '—'}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Operator Investigation Notes</label>
+              <label className="mb-1 block text-xs font-medium text-text-dim">Operator notes</label>
               <textarea
                 rows={3}
+                maxLength={4000}
                 value={notesDraft}
                 onChange={(e) => setNotesDraft(e.target.value)}
-                placeholder="Add incident ticket or root-cause notes..."
                 className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
               />
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => saveNotesMutation.mutate()}
-                  className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
-                >
-                  Save Notes
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => saveNotes.mutate()}
+                disabled={saveNotes.isPending}
+                className="mt-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text disabled:opacity-50"
+              >
+                Save notes
+              </button>
             </div>
 
-            <div className="pt-3 border-t border-border space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+              {!detail.acknowledged && !detail.resolved_at && (
+                <button
+                  type="button"
+                  onClick={() => ackOne.mutate(detail.id)}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-sig-ok px-3 py-1.5 text-xs font-semibold text-white"
+                >
+                  <Check className="h-3.5 w-3.5" /> Acknowledge
+                </button>
+              )}
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  value={snoozeHours}
+                  onChange={(e) => setSnoozeHours(e.target.value)}
+                  aria-label="Snooze hours"
+                  className="w-16 rounded border border-border bg-bg-panel px-2 py-1.5 font-mono text-xs text-text"
+                />
+                <button
+                  type="button"
+                  onClick={() => snoozeOne.mutate(detail.id)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text"
+                >
+                  <Clock className="h-3.5 w-3.5" /> Snooze hours
+                </button>
+              </div>
+              {detail.snoozed_until && (
+                <button
+                  type="button"
+                  onClick={() => unsnooze.mutate(detail.id)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-sig-warn/40 bg-sig-warn/10 px-3 py-1.5 text-xs font-medium text-sig-warn"
+                >
+                  <BellOff className="h-3.5 w-3.5" /> Unsnooze
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-border bg-bg-card p-3">
+              <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-xs font-semibold text-text">Silence or Customize Future Occurrences</div>
+                  <div className="text-xs font-semibold text-text">Suggest a suppression rule</div>
                   <div className="text-[11px] text-text-dim">
-                    Generate a pre-filled Event Rule matching this alert's source and type.
+                    Pre-fill a rule for this alert&apos;s source and type.
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => loadSuggestedRule(selectedAlert.id)}
-                  className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
+                  onClick={() => loadSuggestedRule(detail.id)}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-[11px] font-medium text-text"
                 >
-                  <Sparkles className="h-3.5 w-3.5 text-accent" />
-                  Suggest Rule
+                  <Sparkles className="h-3 w-3 text-accent" /> Suggest
                 </button>
               </div>
-
               {suggestedRule && (
-                <div className="space-y-2">
-                  <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto">
+                <div className="mt-2 space-y-2">
+                  <pre className="max-h-48 overflow-auto rounded border border-border bg-bg-panel p-2 font-mono text-[10px] text-text-dim">
                     {JSON.stringify(suggestedRule?.rule ?? suggestedRule, null, 2)}
                   </pre>
                   <button
                     type="button"
-                    disabled={!suggestedRule?.rule || createSuggestedRuleMutation.isPending}
-                    onClick={() => createSuggestedRuleMutation.mutate()}
-                    className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    disabled={!suggestedRule?.rule || createSuggestedRule.isPending}
+                    onClick={() => createSuggestedRule.mutate()}
+                    className="w-full rounded bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                   >
-                    Create Event Rule
+                    Create rule and acknowledge
                   </button>
                 </div>
               )}
             </div>
           </div>
         )}
+      </SlideOverDrawer>
+
+      {/* Bulk snooze */}
+      <SlideOverDrawer
+        open={bulkSnoozeOpen}
+        onOpenChange={setBulkSnoozeOpen}
+        title={`Snooze ${selected.size} alert(s)`}
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkSnoozeOpen(false)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => bulkSnooze.mutate()}
+              disabled={bulkSnooze.isPending}
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              Snooze
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Hours</span>
+            <input
+              type="number"
+              min={1}
+              value={bulkHours}
+              onChange={(e) => setBulkHours(e.target.value)}
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Reason (optional)</span>
+            <input
+              type="text"
+              value={bulkReason}
+              onChange={(e) => setBulkReason(e.target.value)}
+              placeholder="Change window / known maintenance"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+            />
+          </label>
+        </div>
       </SlideOverDrawer>
     </div>
   );
@@ -466,15 +954,36 @@ function StormIncidentsSubTab() {
     () => [
       {
         accessorKey: 'title',
-        header: 'Incident Group',
-        cell: ({ row }) => <span className="font-semibold text-text">{row.original.title}</span>,
+        header: 'Incident',
+        cell: ({ row }) => (
+          <div>
+            <div className="text-xs font-semibold text-text">{row.original.title}</div>
+            <div className="text-[11px] text-text-dim">
+              {row.original.alert_count ?? 0} linked alerts
+            </div>
+          </div>
+        ),
       },
       {
-        accessorKey: 'alert_count',
-        header: 'Correlated Alerts',
+        accessorKey: 'severity',
+        header: 'Severity',
         cell: ({ row }) => (
-          <span className="rounded bg-sig-warn/15 px-2 py-0.5 font-mono text-xs font-semibold text-sig-warn">
-            {row.original.alert_count}
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+              SEVERITY_STYLE[row.original.severity] ?? 'bg-bg-panel text-text-dim',
+            )}
+          >
+            {row.original.severity}
+          </span>
+        ),
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] uppercase text-text-dim">
+            {row.original.resolved_at ? 'resolved' : 'open'}
           </span>
         ),
       },
@@ -482,11 +991,13 @@ function StormIncidentsSubTab() {
         accessorKey: 'started_at',
         header: 'Started',
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-text-dim">{formatRelativeTime(row.original.started_at)}</span>
+          <span className="font-mono text-[11px] text-text-dim">
+            {formatRelativeTime(row.original.started_at)}
+          </span>
         ),
       },
     ],
-    []
+    [],
   );
 
   return (
@@ -494,11 +1005,14 @@ function StormIncidentsSubTab() {
       data={incidents}
       columns={columns}
       isLoading={isLoading}
-      emptyTitle="No active alert storm incidents."
-      renderMobileCard={(inc) => (
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-text">{inc.title}</span>
-          <span className="font-mono text-sig-warn">{inc.alert_count} alerts</span>
+      emptyTitle="No storm incidents."
+      emptyDescription="Bursts that cross the digest threshold are grouped here."
+      renderMobileCard={(i) => (
+        <div className="space-y-1">
+          <div className="text-xs font-semibold text-text">{i.title}</div>
+          <div className="text-[11px] text-text-dim">
+            {i.severity} · {i.resolved_at ? 'resolved' : 'open'} · {i.alert_count ?? 0} alerts
+          </div>
         </div>
       )}
     />

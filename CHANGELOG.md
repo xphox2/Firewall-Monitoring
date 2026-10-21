@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.339] - 2026-10-20
+
+### Added — Alerts triage in the Admin UI V2 preview
+
+- **Filters**: device, site (including the unassigned bucket), severity, alert type and an include-snoozed toggle, with a single Clear action. Filter changes reset paging/selection synchronously.
+- **Stats window** (1h/6h/12h/24h/7d/30d): total and per-severity tiles plus an alert-volume bar chart. The stats endpoint buckets hourly, so windows longer than 48h are aggregated per day locally (twelve hourly bars would otherwise cover half a day).
+- **Bulk actions**: row selection with a select-page header, bulk acknowledge and bulk snooze (hours + reason), and per-row acknowledge.
+- **Detail drawer**: state chip (open/acknowledged/snoozed/resolved), metric/threshold/current value for metric alerts, operator notes, acknowledge, snooze/unsnooze and the suggest-a-rule flow (which now also acknowledges the source alert).
+- **Pagination**: "x–y of N" with Prev/Next, 50 rows per page.
+- **Storm incidents**: open/resolved is derived from `resolved_at` (the model has no status column, so the old column was always blank).
+- Pure query/state helpers in `ui-v2/src/lib/alerts.ts` with tests (suite now 73). Remaining classic-only alert views: parsed syslog fields, linked flow detections and per-type trend breakdowns.
+
 ## [0.11.338] - 2026-10-20
 
 ### Added — Device operational panels in the Admin UI V2 preview
