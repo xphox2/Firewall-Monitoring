@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.359] - 2026-10-21
+
+### Added — Server resource trend on the V2 dashboard
+
+- The Overview health tab now draws the host CPU, memory, root-disk and database-volume history from
+  `GET /api/system/metrics/chart`, with 1h/6h/24h/7d/30d pills and a 60-second refresh (the same
+  four quantities the classic dashboard trends).
+- Unprobed database-volume buckets stay **gaps** rather than being bridged or plotted as 0%: the
+  shared chart gained a `spanGaps` option (default unchanged) and this chart disables it.
+- Nulls are never coerced to zero, so a failed volume probe still cannot read as "healthy".
+
 ## [0.11.358] - 2026-10-21
 
 ### Added — Per-alert-type volume trends in the V2 alerts page
