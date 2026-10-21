@@ -268,6 +268,42 @@ func TestGetEventProfileAssignments_LiveJoin(t *testing.T) {
 	}
 }
 
+// A stored toggle whose alert type is no longer in the registry cannot be sent
+// back (the handler rejects unknown types), so a full replace must leave it
+// alone instead of deleting it.
+func TestReplaceProfileToggles_PreservesUnknownTypes(t *testing.T) {
+	db := NewDatabaseForTesting(t)
+	_, profID := seedProfileWorld(t, db)
+	if err := db.Gorm().Create(&models.EventRuleProfileToggle{
+		ProfileID: profID,
+		AlertType: models.AlertType("LEGACY_REMOVED_TYPE"),
+		Enabled:   false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceProfileToggles(profID, []models.EventRuleProfileToggle{
+		{AlertType: models.AlertTypeCPUHigh, Enabled: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	toggles, err := db.GetProfileToggles(profID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy, cpu bool
+	for _, toggle := range toggles {
+		switch toggle.AlertType {
+		case models.AlertType("LEGACY_REMOVED_TYPE"):
+			legacy = true
+		case models.AlertTypeCPUHigh:
+			cpu = true
+		}
+	}
+	if !legacy || !cpu {
+		t.Fatalf("expected the legacy row preserved and CPU written, got %+v", toggles)
+	}
+}
+
 func TestReplaceProfileToggles_FullSparseReplace(t *testing.T) {
 	db := NewDatabaseForTesting(t)
 	_, profID := seedProfileWorld(t, db)

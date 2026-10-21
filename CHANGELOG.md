@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.344] - 2026-10-20
+
+### Added — Event-rule profile management in the Admin UI V2 preview
+
+- **Profiles**: create, rename/re-describe, clone and delete (the Default profile is protected from rename/delete by both UI and server), with live rule/toggle/site/device counts.
+- **Toggle matrix**: every alert type from the server registry (`/api/alert-types`), grouped by family, with a per-type tri-state **On / Inherit / Off**. Inherit is expressed by omission (the server stores a sparse set), family-level bulk actions apply to the whole family even when filtered, and saves only send On/Off rows.
+- The matrix re-initialises after a save and never clobbers unsaved edits; it waits for the registry before initialising, and stored toggle types that the registry no longer lists are preserved with an explicit warning.
+- New pure helpers in `ui-v2/src/lib/event-profiles.ts` with tests (suite now 87).
+- Remaining classic-only surface: assigning profiles to sites/devices and the per-profile effective view.
+
 ## [0.11.343] - 2026-10-20
 
 ### Added — IRC channel and command management in the Admin UI V2 preview

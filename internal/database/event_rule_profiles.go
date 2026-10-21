@@ -180,8 +180,21 @@ func (d *Database) GetProfileToggles(profileID uint) ([]models.EventRuleProfileT
 // AlertRule batch upsert could).
 func (d *Database) ReplaceProfileToggles(profileID uint, toggles []models.EventRuleProfileToggle) error {
 	return d.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("profile_id = ?", profileID).Delete(&models.EventRuleProfileToggle{}).Error; err != nil {
-			return err
+		// Full replace ONLY within the current togglable registry. A row whose
+		// alert type is no longer in AllAlertTypes() (a type removed in a later
+		// release, or a legacy clone) cannot be sent back — PutProfileToggles
+		// rejects unknown types with a 400 — so a blanket delete-all would make
+		// it unrecoverable and any edit to the profile would either erase it or
+		// fail. Preserve those rows.
+		known := make([]models.AlertType, 0, len(models.AllAlertTypes()))
+		for _, info := range models.AllAlertTypes() {
+			known = append(known, info.Type)
+		}
+		if len(known) > 0 {
+			if err := tx.Where("profile_id = ? AND alert_type IN ?", profileID, known).
+				Delete(&models.EventRuleProfileToggle{}).Error; err != nil {
+				return err
+			}
 		}
 		for i := range toggles {
 			t := models.EventRuleProfileToggle{ProfileID: profileID, AlertType: toggles[i].AlertType, Enabled: toggles[i].Enabled}
