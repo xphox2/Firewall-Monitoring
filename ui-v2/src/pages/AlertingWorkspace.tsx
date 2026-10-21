@@ -27,6 +27,10 @@ import {
 } from '@/components/alerting/event-rule-drawer';
 import { ProfileMatrixDrawer } from '@/components/alerting/profile-matrix-drawer';
 import { ProfileAssignmentsDrawer } from '@/components/alerting/profile-assignments-drawer';
+import {
+  RuleTestResultPanel,
+  type RuleTestResult,
+} from '@/components/alerting/rule-test-result';
 import type { AlertTypeInfo } from '@/lib/event-profiles';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
@@ -622,14 +626,14 @@ export function AlertingWorkspace() {
   // =========================================================================
   const [testerOpen, setTesterOpen] = useState(false);
   const [testMatchJson, setTestMatchJson] = useState('');
-  const [testResultJson, setTestResultJson] = useState<any>(null);
+  const [testResultJson, setTestResultJson] = useState<RuleTestResult | null>(null);
 
   const handleRunRuleTest = async () => {
     if (!testMatchJson.trim()) return;
     try {
       // TestEventRule binds match_json and evaluates it against recent syslog;
       // raw_message was ignored, so every "test" compiled a match-all rule.
-      const res = await apiFetch('/admin/api/event-rules/test', {
+      const res = await apiFetch<RuleTestResult>('/admin/api/event-rules/test', {
         method: 'POST',
         body: { match_json: testMatchJson.trim() },
       });
@@ -1404,11 +1408,7 @@ export function AlertingWorkspace() {
                 </p>
               </div>
 
-              {testResultJson && (
-                <pre className="rounded-md border border-border bg-bg-panel p-3 font-mono text-[11px] text-text overflow-x-auto">
-                  {JSON.stringify(testResultJson, null, 2)}
-                </pre>
-              )}
+              <RuleTestResultPanel result={testResultJson} />
             </div>
           </SlideOverDrawer>
         </div>

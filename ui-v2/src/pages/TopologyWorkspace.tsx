@@ -19,6 +19,10 @@ import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { MapEdge, MapNode, MapSite } from '@/components/topology/topology-map';
 import {
+  IpsecPreviewPanel,
+  type IpsecPreview,
+} from '@/components/topology/ipsec-preview';
+import {
   ConnectionEvidence,
   ConnectionOverview,
   ConnectionTraffic,
@@ -539,7 +543,7 @@ function IpsecTunnelsSubTab() {
 
   const [selectedTunnel, setSelectedTunnel] = useState<IPSecTunnelIntent | null>(null);
   const [tunnelToDeploy, setTunnelToDeploy] = useState<IPSecTunnelIntent | null>(null);
-  const [previewText, setPreviewText] = useState<any>(null);
+  const [previewText, setPreviewText] = useState<IpsecPreview | null>(null);
 
   const actionMutation = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) =>
@@ -555,8 +559,11 @@ function IpsecTunnelsSubTab() {
 
   const loadPreview = async (tunnel: IPSecTunnelIntent) => {
     setSelectedTunnel(tunnel);
+    // Clear the previous tunnel's render so the drawer cannot show it under the
+    // new tunnel's title while the fetch is in flight.
+    setPreviewText(null);
     try {
-      const res = await apiFetch<any>(`/admin/api/ipsec/tunnels/${tunnel.id}/preview`);
+      const res = await apiFetch<IpsecPreview>(`/admin/api/ipsec/tunnels/${tunnel.id}/preview`);
       setPreviewText(res);
     } catch (err) {
       setPreviewText({ error: err instanceof Error ? err.message : 'Preview failed' });
@@ -663,9 +670,7 @@ function IpsecTunnelsSubTab() {
         title={`IPSec Preview & Saga: ${selectedTunnel?.name ?? ''}`}
         size="xl"
       >
-        <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto whitespace-pre-wrap">
-          {JSON.stringify(previewText ?? {}, null, 2)}
-        </pre>
+        <IpsecPreviewPanel preview={previewText} />
       </SlideOverDrawer>
 
       <ConfirmDialog
