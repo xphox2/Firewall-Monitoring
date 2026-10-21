@@ -60,26 +60,55 @@ type NetEventFilter struct {
 // discipline matches models.NetEvent: a pointer is nil exactly when the vendor
 // did not supply the field.
 type NetEventRow struct {
-	ID         uint      `json:"id"`
-	Ts         time.Time `json:"ts"`
-	DeviceID   uint      `json:"device_id"`
-	ProbeID    uint      `json:"probe_id"`
-	Activity   int16     `json:"activity"`
-	Action     int16     `json:"action"`
-	Direction  *int16    `json:"direction"`
-	SrcIP      *string   `json:"src_ip"`
-	SrcPort    *int32    `json:"src_port"`
-	DstIP      *string   `json:"dst_ip"`
-	DstPort    *int32    `json:"dst_port"`
-	Proto      *int16    `json:"proto"`
-	App        *string   `json:"app"`
-	AppCat     *string   `json:"app_cat"`
-	UserName   *string   `json:"user_name"`
-	SrcCountry *string   `json:"src_country"`
-	DstCountry *string   `json:"dst_country"`
-	BytesIn    *int64    `json:"bytes_in"`
-	BytesOut   *int64    `json:"bytes_out"`
-	ThreatFlag int16     `json:"threat_flag"`
+	ID          uint      `json:"id"`
+	Ts          time.Time `json:"ts"`
+	DeviceID    uint      `json:"device_id"`
+	ProbeID     uint      `json:"probe_id"`
+	Activity    int16     `json:"activity"`
+	Action      int16     `json:"action"`
+	Direction   *int16    `json:"direction"`
+	SrcIP       *string   `json:"src_ip"`
+	SrcPort     *int32    `json:"src_port"`
+	DstIP       *string   `json:"dst_ip"`
+	DstPort     *int32    `json:"dst_port"`
+	Proto       *int16    `json:"proto"`
+	SrcMAC      *string   `json:"src_mac"`
+	DstMAC      *string   `json:"dst_mac"`
+	SrcIf       *string   `json:"src_if"`
+	DstIf       *string   `json:"dst_if"`
+	SrcZone     *string   `json:"src_zone"`
+	DstZone     *string   `json:"dst_zone"`
+	App         *string   `json:"app"`
+	AppCat      *string   `json:"app_cat"`
+	AppRisk     *int16    `json:"app_risk"`
+	UserName    *string   `json:"user_name"`
+	UserGroup   *string   `json:"user_group"`
+	SrcHostname *string   `json:"src_hostname"`
+	DevType     *string   `json:"dev_type"`
+	OSName      *string   `json:"os_name"`
+	RuleKey     *string   `json:"rule_key"`
+	RuleUID     *string   `json:"rule_uid"`
+	RuleName    *string   `json:"rule_name"`
+	RuleIndex   *int32    `json:"rule_index"`
+	Ruleset     *string   `json:"ruleset"`
+	SrcCountry  *string   `json:"src_country"`
+	DstCountry  *string   `json:"dst_country"`
+	BytesIn     *int64    `json:"bytes_in"`
+	BytesOut    *int64    `json:"bytes_out"`
+	PktsIn      *int64    `json:"pkts_in"`
+	PktsOut     *int64    `json:"pkts_out"`
+	DurationMS  *int32    `json:"duration_ms"`
+	SessionID   *string   `json:"session_id"`
+	NatSrcIP    *string   `json:"nat_src_ip"`
+	NatSrcPort  *int32    `json:"nat_src_port"`
+	NatDstIP    *string   `json:"nat_dst_ip"`
+	NatDstPort  *int32    `json:"nat_dst_port"`
+	URLHost     *string   `json:"url_host"`
+	URLPath     *string   `json:"url_path"`
+	DNSQName    *string   `json:"dns_qname" gorm:"column:dns_qname"`
+	DNSQType    *int16    `json:"dns_qtype" gorm:"column:dns_qtype"`
+	WebCat      *string   `json:"web_cat"`
+	ThreatFlag  int16     `json:"threat_flag"`
 	// RawID/RawTS are the provenance back to the syslog_messages row this event
 	// was normalized from (that PK is (id, timestamp) on partitioned installs,
 	// hence both). nil = the vendor supplied no raw line. The list renderer
@@ -94,11 +123,11 @@ type NetEventRow struct {
 	Vendor     string `json:"vendor"`
 }
 
-// netEventSelectColumns is the explicit SELECT list behind ListNetEvents and
-// GetNetEvent, in NetEventRow field order. A hand-written list (not a GORM
-// Select of the model) so only the columns the page and its detail view read
-// are fetched off the leaf. raw_id/raw_ts are included for the detail view's
-// "View raw syslog" link even though the list renderer ignores them.
+// netEventSelectColumns is the explicit SELECT list behind ListNetEvents, in
+// NetEventRow field order. A hand-written list (not a GORM Select of the model)
+// so only the columns the list page reads are fetched off the leaf. The single-
+// row detail getter selects the whole row: the inspector shows rule, zone,
+// interface, identity, NAT, DNS and web fields the list deliberately omits.
 const netEventSelectColumns = "id, ts, device_id, probe_id, activity, action, direction, " +
 	"src_ip, src_port, dst_ip, dst_port, proto, app, app_cat, user_name, " +
 	"src_country, dst_country, bytes_in, bytes_out, threat_flag, raw_id, raw_ts"
@@ -277,7 +306,9 @@ func (d *Database) enrichNetEventRows(rows []NetEventRow) {
 // and the row may legitimately be older than the list's window.
 func (d *Database) GetNetEvent(id uint) (*NetEventRow, error) {
 	var rows []NetEventRow
-	if err := d.db.Table("net_events").Select(netEventSelectColumns).Where("id = ?", id).Limit(1).Scan(&rows).Error; err != nil {
+	// Full row (not netEventSelectColumns): the detail inspector reads fields
+	// the list projection drops.
+	if err := d.db.Table("net_events").Select("*").Where("id = ?", id).Limit(1).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	if len(rows) == 0 {

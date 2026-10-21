@@ -4,7 +4,7 @@ export interface ChartSeries {
   values: Array<number | null>;
 }
 
-export type ChartKind = 'percent' | 'bps' | 'bytes';
+export type ChartKind = 'percent' | 'bps' | 'bytes' | 'count';
 
 /** Median gap between buckets, in seconds. 0 when the series is too short. */
 export function bucketSeconds(timestamps: number[]): number {
@@ -70,6 +70,11 @@ export function formatBitsPerSecond(value: number): string {
 export function formatAxisValue(value: number, kind: ChartKind): string {
   if (!Number.isFinite(value)) return '';
   if (kind === 'percent') return `${Math.round(value)}%`;
+  if (kind === 'count') {
+    if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
+    if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
+    return String(Math.round(value));
+  }
   if (kind === 'bps') {
     if (Math.abs(value) >= 1e12) return `${(value / 1e12).toFixed(2)}T`;
     if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(1)}G`;
@@ -87,6 +92,7 @@ export function formatAxisValue(value: number, kind: ChartKind): string {
 export function formatValue(value: number | null, kind: ChartKind): string {
   if (value == null || !Number.isFinite(value)) return '—';
   if (kind === 'percent') return `${value.toFixed(1)}%`;
+  if (kind === 'count') return `${Math.round(value)}`;
   if (kind === 'bps') return formatBitsPerSecond(value);
   return formatAxisValue(value, 'bytes');
 }

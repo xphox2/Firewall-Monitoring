@@ -77,6 +77,9 @@ V2:
   window disclosure, conversation drill-down, samples inspector, CSV export).
 - **v0.11.349** — Event-rule profile assignments (sites/devices) with unassign; Alerting is now
   at parity apart from linked detections and parsed syslog fields in triage.
+- **v0.11.350** — Event analytics charts + distributions, structured event and security-event
+  inspectors, security class/severity filters and paging. Remaining: syslog/trap detail stubs,
+  dashboard host trends, topology/connection detail, storage/system leftovers.
 
 ## Top gaps
 
