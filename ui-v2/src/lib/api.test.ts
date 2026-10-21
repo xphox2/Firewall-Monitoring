@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, clearCsrfToken } from './api';
+import { ApiError, apiFetch, clearCsrfToken, setSuppressAuthRedirect } from './api';
 
 /**
  * Contract smoke tests for the fetch layer. Every V2 page goes through
@@ -80,6 +80,17 @@ describe('apiFetch', () => {
       status: 409,
       message: 'username already exists',
     });
+  });
+
+  it('does not redirect on 401 while the recovery-codes screen is open', async () => {
+    setSuppressAuthRedirect(true);
+    const location = { href: '' };
+    vi.stubGlobal('window', { location, dispatchEvent: () => true });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'unauthenticated' }, 401));
+
+    await expect(apiFetch('/admin/api/me')).rejects.toMatchObject({ status: 401 });
+    expect(location.href).toBe('');
+    setSuppressAuthRedirect(false);
   });
 
   it('is an ApiError, not a bare Error, so callers can branch on code', async () => {

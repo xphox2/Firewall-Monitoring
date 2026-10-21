@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.341] - 2026-10-20
+
+### Added — 2FA enrollment and passkey registration in the Admin UI V2 preview
+
+- **TOTP wizard**: password re-auth → server-rendered QR (`qr_png`) plus the secret/otpauth URI for manual entry → code verification → one-time recovery codes that stay on screen until the operator dismisses them. Disable requires password **and** a current code.
+- **Passkey management**: register a passkey (name + password + TOTP when enrolled) through the real WebAuthn ceremony, and remove one with the required re-authentication. Removal previously sent no body and always failed.
+- WebAuthn JSON ↔ ArrayBuffer conversion in `ui-v2/src/lib/webauthn.ts` with tests for base64url round-trips, option decoding and attestation encoding (suite now 80).
+- Enabling/disabling 2FA revokes every session. While the one-time recovery codes are displayed, `apiFetch` suppresses the global 401 redirect so the shell's background dashboard poll cannot navigate away before they are saved; the suppression is scoped to that screen and cleared on dismiss/unmount.
+- Remaining account-security gap: the 2FA "decline with risk acknowledgement" path and passkey rename, both classic-only.
+
 ## [0.11.340] - 2026-10-20
 
 ### Added — User administration and audit depth in the Admin UI V2 preview

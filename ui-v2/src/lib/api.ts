@@ -15,6 +15,15 @@ export class ApiError extends Error {
 let cachedCsrfToken: string | null = null;
 let csrfInflight: Promise<string> | null = null;
 
+// While the 2FA enrollment screen shows one-time recovery codes the session has
+// already been revoked (token_version bump). The shell's background poller
+// would otherwise 401 and hard-redirect before the operator can save them.
+let suppressAuthRedirect = false;
+
+export function setSuppressAuthRedirect(suppress: boolean) {
+  suppressAuthRedirect = suppress;
+}
+
 export async function getCsrfToken(forceRefresh = false): Promise<string> {
   if (cachedCsrfToken && !forceRefresh) {
     return cachedCsrfToken;
@@ -28,7 +37,11 @@ export async function getCsrfToken(forceRefresh = false): Promise<string> {
       headers: { Accept: 'application/json' },
     });
     if (res.status === 401) {
-      window.top ? (window.top.location.href = '/admin/login') : (window.location.href = '/admin/login');
+      if (!suppressAuthRedirect) {
+        window.top
+          ? (window.top.location.href = '/admin/login')
+          : (window.location.href = '/admin/login');
+      }
       throw new ApiError('Authentication required', 401);
     }
     if (!res.ok) {
@@ -118,7 +131,7 @@ export async function apiFetch<T = unknown>(
     res = await execute();
   }
 
-  if (res.status === 401 && !options.skipAuthRedirect) {
+  if (res.status === 401 && !options.skipAuthRedirect && !suppressAuthRedirect) {
     if (window.top) {
       window.top.location.href = '/admin/login';
     } else {
