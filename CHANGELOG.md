@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.338] - 2026-10-20
+
+### Added — Device operational panels in the Admin UI V2 preview
+
+The device detail page now renders the telemetry it was already fetching but hiding:
+
+- **Resources**: per-core CPU bars, filesystem usage bars (used/total/percent) and 1/5/15-minute load average.
+- **Security**: AV, IPS (including critical/high) and web-filter counters, licence/subscription cards with expiry tone, and the vendor capability matrix moved into a collapsible disclosure instead of occupying the tab.
+- **Diagnostics**: HA cluster members (mode, group, member, serial, sync state, CPU/mem/sessions), SD-WAN health (state, latency, packet loss) and ping-SLA targets (avg/min/max, loss, samples, freshness).
+- **Lifecycle**: the device's ten most recent alerts, above the retire/purge controls.
+- HA sync colouring and licence expiry/status are pure helpers in `ui-v2/src/lib/device-status.ts` with tests (suite now 64). A licence that expired earlier today is reported **expired**, not "expiring in 0d", and the badge tone always matches its word.
+- Remaining device-page gaps are now only the in-place revision viewer and split/tree diff views, both documented in `docs/V2-PARITY.md`.
+
 ## [0.11.337] - 2026-10-20
 
 ### Added — Config diff viewer in the Admin UI V2 preview

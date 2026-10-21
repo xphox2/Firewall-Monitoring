@@ -49,6 +49,9 @@ V2:
 - **v0.11.337** — Device config diff viewer (revision compare, verdict, object + line diff,
   search/severity filters, revision download). Remaining device gaps: HA, SD-WAN, ping SLA,
   AV/IPS/web-filter, licences, per-core CPU/disk/load, config revision in-place viewer.
+- **v0.11.338** — Device operational panels (per-core CPU, filesystems, load average, security
+  counters, licences, HA, SD-WAN, ping SLA, recent alerts). Device page remaining gaps: in-place
+  revision viewer and split/tree diff views.
 
 ## Top gaps
 
