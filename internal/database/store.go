@@ -414,6 +414,7 @@ type ChartStore interface {
 // EventStatsStore covers the alert/syslog/trap/flow statistics aggregates.
 type EventStatsStore interface {
 	GetAlertStats(hours int, deviceID uint) (*EventStatsResult, error)
+	GetAlertStatsByType(hours int, deviceID uint, alertType string) (*EventStatsResult, error)
 	GetSyslogStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetTrapStats(hours int, deviceID uint) (*EventStatsResult, error)
 	GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsResult, error)

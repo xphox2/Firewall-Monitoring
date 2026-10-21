@@ -178,6 +178,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   const queryClient = useQueryClient();
 
   const [range, setRange] = useState('24h');
+  const [trendType, setTrendType] = useState('');
   const [filters, setFilters] = useState<AlertFilters>(EMPTY_ALERT_FILTERS);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -208,6 +209,23 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
       ),
     refetchInterval: 30_000,
   });
+
+  const { data: typeStats, isFetching: typeStatsLoading } = useQuery({
+    queryKey: ['alert-stats-type', hours, filters.deviceId, trendType],
+    queryFn: () =>
+      apiFetch<AlertStats>(
+        `/admin/api/alerts/stats?hours=${hours}&alert_type=${encodeURIComponent(trendType)}${
+          filters.deviceId ? `&device_id=${filters.deviceId}` : ''
+        }`,
+      ),
+    enabled: Boolean(trendType),
+    refetchInterval: 30_000,
+    placeholderData: (previous) => previous,
+  });
+
+  // The volume card, total and severity tiles follow the selected type; the
+  // by-type distribution always stays fleet-wide.
+  const activeStats = trendType ? typeStats : stats;
 
   const offset = page * PAGE_SIZE;
   const { data: listRes, isLoading } = useQuery({
@@ -523,19 +541,30 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   );
 
   const severityCounts = useMemo(() => {
-    const map = new Map((stats?.by_severity ?? []).map((s) => [s.key, s.count]));
+    const map = new Map((activeStats?.by_severity ?? []).map((s) => [s.key, s.count]));
     return {
       critical: map.get('critical') ?? 0,
       warning: map.get('warning') ?? 0,
       info: map.get('info') ?? 0,
     };
-  }, [stats]);
+  }, [activeStats]);
   const bars = useMemo(
-    () => trendBars(stats?.over_time, 12, hours > 48),
-    [stats, hours],
+    () => trendBars(activeStats?.over_time, 12, hours > 48),
+    [activeStats, hours],
   );
   const maxBar = Math.max(1, ...bars.map((b) => b.count));
-  const alertTypes = (stats?.by_type ?? []).map((t) => t.key).filter(Boolean);
+  const alertTypes = useMemo(
+    () => (stats?.by_type ?? []).map((t) => t.key).filter(Boolean),
+    [stats],
+  );
+
+  // A range/device change can drop the selected type from the window; leaving
+  // the state set would render a controlled select with no matching option.
+  useEffect(() => {
+    if (trendType && alertTypes.length > 0 && !alertTypes.includes(trendType)) {
+      setTrendType('');
+    }
+  }, [alertTypes, trendType]);
 
   return (
     <div className="space-y-4">
@@ -544,7 +573,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Alerts in {range}</div>
           <div className="mt-0.5 font-mono text-xl font-bold text-text">
-            {stats?.total ?? 0}
+            {activeStats?.total ?? 0}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
@@ -569,21 +598,41 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
 
       <div className="rounded-xl border border-border bg-bg-card p-3.5">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-xs font-semibold text-text">Alert volume</h2>
-          <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-panel p-1">
-            {ALERT_RANGES.map((r) => (
-              <button
-                key={r.value}
-                type="button"
-                onClick={() => setRange(r.value)}
-                className={cn(
-                  'rounded px-2 py-1 font-mono text-[11px] font-medium',
-                  range === r.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
-                )}
-              >
-                {r.value}
-              </button>
-            ))}
+          <h2 className="text-xs font-semibold text-text">
+            Alert volume{trendType ? ` — ${trendType}` : ''}
+            {trendType && typeStatsLoading ? (
+              <span className="ml-1.5 font-mono text-[10px] text-text-faint">loading…</span>
+            ) : null}
+          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={trendType}
+              onChange={(e) => setTrendType(e.target.value)}
+              aria-label="Alert type for the volume trend"
+              className="max-w-[220px] rounded border border-border bg-bg-panel px-2 py-1 font-mono text-[11px] text-text"
+            >
+              <option value="">All types</option>
+              {alertTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+            <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-panel p-1">
+              {ALERT_RANGES.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => setRange(r.value)}
+                  className={cn(
+                    'rounded px-2 py-1 font-mono text-[11px] font-medium',
+                    range === r.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                  )}
+                >
+                  {r.value}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         {bars.length === 0 ? (
@@ -617,7 +666,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
           }
         />
         <p className="mt-1 text-[10px] text-text-faint">
-          Per-type time series and structured syslog-field parsing remain in the classic console.
+          Structured syslog-field parsing remains in the classic console.
         </p>
       </div>
 

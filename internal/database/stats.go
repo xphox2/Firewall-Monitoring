@@ -188,6 +188,68 @@ func (d *Database) GetAlertStats(hours int, deviceID uint) (*EventStatsResult, e
 	return result, nil
 }
 
+// GetAlertStatsByType is GetAlertStats scoped to one alert type. The generic
+// groupByString/timeSeriesCount helpers take only a device filter, and this is
+// the only caller that needs a type predicate, so the queries are built here
+// rather than widening every helper's signature.
+func (d *Database) GetAlertStatsByType(hours int, deviceID uint, alertType string) (*EventStatsResult, error) {
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+	result := &EventStatsResult{}
+
+	base := func() *gorm.DB {
+		q := d.db.Model(&models.Alert{}).Where("timestamp > ?", cutoff)
+		if deviceID != 0 {
+			q = q.Where("device_id = ?", deviceID)
+		}
+		if alertType != "" {
+			q = q.Where("alert_type = ?", alertType)
+		}
+		return q
+	}
+
+	if err := base().Count(&result.Total).Error; err != nil {
+		return nil, err
+	}
+
+	var sevRows []struct {
+		Key   string
+		Count int64
+	}
+	if err := base().Select(d.dialect.QuoteIdent("severity") + " as key, COUNT(*) as count").
+		Group("key").Order("count DESC").Scan(&sevRows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range sevRows {
+		result.BySeverity = append(result.BySeverity, KeyCount{Key: r.Key, Count: r.Count})
+	}
+
+	var typeRows []struct {
+		Key   string
+		Count int64
+	}
+	if err := base().Select(d.dialect.QuoteIdent("alert_type") + " as key, COUNT(*) as count").
+		Group("key").Order("count DESC").Scan(&typeRows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range typeRows {
+		result.ByType = append(result.ByType, KeyCount{Key: r.Key, Count: r.Count})
+	}
+
+	var bucketRows []struct {
+		Bucket string
+		Count  int64
+	}
+	if err := base().Select(d.dialect.TimeBucket("hour", "timestamp") + " as bucket, COUNT(*) as count").
+		Group("bucket").Order("bucket ASC").Scan(&bucketRows).Error; err != nil {
+		return nil, err
+	}
+	for _, r := range bucketRows {
+		result.OverTime = append(result.OverTime, TimeBucket{Bucket: r.Bucket, Count: r.Count})
+	}
+
+	return result, nil
+}
+
 // GetTrapStats returns aggregated trap statistics. deviceID semantics
 // same as GetAlertStats. Trap rows are matched on `device_id` when set;
 // trap events arriving from unknown sources are excluded from a per-

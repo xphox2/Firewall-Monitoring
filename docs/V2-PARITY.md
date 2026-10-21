@@ -21,7 +21,7 @@ gaps list below are the actionable view.
 | Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
 | Devices | At parity: charts, traffic, config diff/split/revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | Cosmetic word-diff pairing in split diff |
 | Collectors / Sites | Not re-audited since the baseline | Collector/site editor fields and bulk actions may still lag the classic console |
-| Alerts | At parity: filters, stats + volume chart, by-type distribution, bulk ack/snooze, paging, linked flow detections, incidents | Per-type time series (one trend line per type); structured syslog-field parsing |
+| Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, incidents | Structured syslog-field parsing |
 | Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
 | Storage / Archive | Not re-audited since the baseline | Some storage/archive controls may still be classic-only |
 | Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
@@ -112,6 +112,10 @@ V2:
 - **v0.11.354** — Alert linked flow detections, source-address chip and by-type distribution;
   the last classic-only banner was removed. Remaining alert sub-gaps are named inline.
 - **v0.11.355** — Structured IPSec preview (findings + per-end CLI) and event-rule tester result.
+- **v0.11.356** — Parity document refreshed (current-state table + historical baseline).
+- **v0.11.357** — In-app DB-IP credit removed; attribution kept in NOTICE / THIRD-PARTY-NOTICES.
+- **v0.11.358** — Per-alert-type volume trends (`alert_type` on /alerts/stats, type selector on the
+  volume card). The only remaining alert sub-gap is structured syslog-field parsing.
 
 ## Remaining gaps
 
@@ -122,8 +126,8 @@ V2:
 2. **Dashboard host trends.** The classic dashboard draws host CPU/memory/disk
    over time; V2 shows current values only. No fleet-trend endpoint exists, so
    this needs a data source rather than a UI port.
-3. **Alert sub-gaps.** Per-type time series (one trend line per alert type) and
-   structured syslog-field parsing; both are named inline on the Alerts page.
+3. **Alert sub-gap.** Structured syslog-field parsing; it is named inline on the
+   Alerts page. Per-type volume trends are now in the preview.
 4. **Storage / archive.** Not re-audited; some controls may still be classic-only.
 5. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
 6. **Account security leftovers.** 2FA "decline with risk acknowledgement",
