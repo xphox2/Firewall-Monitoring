@@ -1255,7 +1255,17 @@ func TestGetNetEvent_Found(t *testing.T) {
 	ts := time.Date(2026, 10, 1, 10, 5, 0, 0, time.UTC)
 	rawID := int64(4242)
 	src := "10.0.0.5"
-	row := &models.NetEvent{Ts: ts, DeviceID: dev.ID, Activity: 3, Action: 2, SrcIP: &src, RawID: &rawID, RawTS: &ts}
+	dst := "198.51.100.9"
+	ruleName := "allow-web"
+	srcMAC := "00:11:22:33:44:55"
+	pktsIn := int64(7)
+	urlHost := "example.test"
+	dnsName := "example.test"
+	row := &models.NetEvent{
+		Ts: ts, DeviceID: dev.ID, Activity: 3, Action: 2, SrcIP: &src, DstIP: &dst,
+		RawID: &rawID, RawTS: &ts, RuleName: &ruleName, SrcMAC: &srcMAC, PktsIn: &pktsIn,
+		URLHost: &urlHost, DNSQName: &dnsName,
+	}
 	if err := db.Gorm().Create(row).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -1275,6 +1285,19 @@ func TestGetNetEvent_Found(t *testing.T) {
 	}
 	if got.RawID == nil || *got.RawID != 4242 || got.RawTS == nil || !got.RawTS.Equal(ts) {
 		t.Fatalf("provenance = %v/%v, want 4242/%v", got.RawID, got.RawTS, ts)
+	}
+	// The inspector needs the full row, not the list projection.
+	if got.RuleName == nil || *got.RuleName != ruleName {
+		t.Fatalf("rule_name = %v, want %q", got.RuleName, ruleName)
+	}
+	if got.SrcMAC == nil || *got.SrcMAC != srcMAC {
+		t.Fatalf("src_mac = %v, want %q", got.SrcMAC, srcMAC)
+	}
+	if got.PktsIn == nil || *got.PktsIn != pktsIn {
+		t.Fatalf("pkts_in = %v, want %d", got.PktsIn, pktsIn)
+	}
+	if got.URLHost == nil || *got.URLHost != urlHost || got.DNSQName == nil || *got.DNSQName != dnsName {
+		t.Fatalf("web/dns = %v/%v, want %q/%q", got.URLHost, got.DNSQName, urlHost, dnsName)
 	}
 }
 

@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.350] - 2026-10-20
+
+### Added — Event analytics, charts and structured inspectors in the Admin UI V2 preview
+
+- **Charts**: policy throughput (bytes → bits/s) and denied-event counts over time, hourly for 1h–24h and from the daily rollup for 7d/30d. A new `count` chart kind formats hit series without pretending they are bytes.
+- **Distributions**: top policies, source/destination countries, applications, application/web categories, DNS, users, identity (source IP/MAC), rollup directions/rulesets and a NAT translation table, each ranked with an in-row bar.
+- **Structured event inspector**: the normalized event drawer now renders Event, Rule & policy, Endpoints (zones/interfaces/MACs/countries), Identity & application, Traffic, NAT, Web & DNS sections plus a raw-JSON disclosure. `GetNetEvent` now selects the full row and `NetEventRow` carries the rule/zone/interface/identity/counter/NAT/web/DNS fields, so the detail view is no longer limited to the list projection.
+- **Security events**: class (finding/auth/network/VPN/device-health/config) and severity filters, 50-row pagination with a `10,000+` capped total, labeled class/activity/action/severity columns, and a structured inspector covering findings, admin actions, tunnels/health and config changes.
+- Severity is decoded on the **CEF 0–10** scale the store actually uses (info 2, low 3, medium 5, high 7, critical 9; numeric CEF headers pass through), not an OCSF 1–6 scale, and the filter offers every value that can occur.
+- `ui-v2/src/lib/events.ts` label/series helpers and `time-buckets.ts` (shared with flows) with tests (suite now 124); a database test pins the full-row detail projection.
+
 ## [0.11.349] - 2026-10-20
 
 ### Added — Event-rule profile assignments in the Admin UI V2 preview

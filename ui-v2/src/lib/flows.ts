@@ -1,3 +1,7 @@
+import { bucketToMs } from './time-buckets';
+
+export { bucketToMs } from './time-buckets';
+
 export interface FlowFilters {
   deviceId: string;
   protocol: string;
@@ -112,23 +116,6 @@ export function buildFlowQuery(
   if (filters.flowSource) params.set('flow_source', filters.flowSource);
   if (filters.firewallEvent) params.set('firewall_event', filters.firewallEvent);
   return params.toString();
-}
-
-/**
- * Stats buckets come from the SQL dialect as "YYYY-MM-DD HH:MM" in UTC (or an
- * ISO string on drivers that format timestamps that way). Normalise both to
- * epoch ms so the chart's x-axis is timezone-correct.
- */
-export function bucketToMs(bucket: string): number | null {
-  const raw = String(bucket ?? '').trim();
-  if (!raw) return null;
-  // Day buckets are date-only ("2026-10-20"); "2026-10-20Z" is not ISO and
-  // only parses by engine leniency, so build a midnight explicitly.
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return Date.parse(`${raw}T00:00:00Z`);
-  let iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
-  if (!/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)) iso += 'Z';
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? ms : null;
 }
 
 export interface BytesPoint {
