@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyRound, Shield, Trash2 } from 'lucide-react';
+import { KeyRound, Pencil, Shield, Trash2 } from 'lucide-react';
 import { apiFetch, ApiError, setSuppressAuthRedirect, type MeResponse } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -44,11 +44,36 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
   const [disableOpen, setDisableOpen] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
   const [disableCode, setDisableCode] = useState('');
+  const [declining, setDeclining] = useState(false);
 
   useEffect(() => {
     setSuppressAuthRedirect(recoveryCodes !== null);
     return () => setSuppressAuthRedirect(false);
   }, [recoveryCodes]);
+
+  const decline = async () => {
+    setDeclining(true);
+    try {
+      await apiFetch('/admin/api/me/mfa-decline', {
+        method: 'POST',
+        body: { acknowledge_risk: true },
+      });
+      toast({
+        title: '2FA enrollment declined',
+        description: 'You can enable it at any time from this page.',
+        variant: 'info',
+      });
+      onChanged();
+    } catch (err) {
+      toast({
+        title: 'Could not record the decline',
+        description: errorMessage(err),
+        variant: 'error',
+      });
+    } finally {
+      setDeclining(false);
+    }
+  };
 
   const resetWizard = () => {
     setPassword('');
@@ -137,6 +162,23 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
           {me?.totp_enabled ? 'Enabled' : 'Off'}
         </span>
       </div>
+
+      {me && !me.totp_enabled && me.mfa_prompt_dismissed === false && (
+        <div className="space-y-1.5 rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+          <p>
+            No authenticator is enrolled. Declining means a stolen password alone can sign in; you
+            can still enable 2FA here at any time.
+          </p>
+          <button
+            type="button"
+            disabled={declining}
+            onClick={decline}
+            className="rounded border border-sig-warn/50 bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn disabled:opacity-50"
+          >
+            {declining ? 'Recording…' : 'Don\'t ask again'}
+          </button>
+        </div>
+      )}
 
       {me?.totp_enabled ? (
         <button
@@ -346,6 +388,9 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
   const [removeTarget, setRemoveTarget] = useState<PasskeyEntry | null>(null);
   const [removePassword, setRemovePassword] = useState('');
   const [removeCode, setRemoveCode] = useState('');
+  const [renameTarget, setRenameTarget] = useState<PasskeyEntry | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renaming, setRenaming] = useState(false);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['my-passkeys'] });
@@ -376,6 +421,25 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
       toast({ title: 'Passkey registration failed', description: errorMessage(err), variant: 'error' });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const rename = async () => {
+    if (!renameTarget || !renameName.trim()) return;
+    setRenaming(true);
+    try {
+      await apiFetch(`/admin/api/passkeys/${renameTarget.id}`, {
+        method: 'PUT',
+        body: { name: renameName.trim() },
+      });
+      toast({ title: 'Passkey renamed', variant: 'success' });
+      setRenameTarget(null);
+      setRenameName('');
+      refresh();
+    } catch (err) {
+      toast({ title: 'Could not rename passkey', description: errorMessage(err), variant: 'error' });
+    } finally {
+      setRenaming(false);
     }
   };
 
@@ -454,14 +518,27 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
                   {pk.last_used_at ? ` · last used ${formatRelativeTime(pk.last_used_at)}` : ''}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setRemoveTarget(pk)}
-                aria-label={`Remove ${pk.name}`}
-                className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRenameTarget(pk);
+                    setRenameName(pk.name);
+                  }}
+                  aria-label={`Rename ${pk.name}`}
+                  className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRemoveTarget(pk)}
+                  aria-label={`Remove ${pk.name}`}
+                  className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -524,6 +601,40 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
             className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
           >
             {busy ? 'Waiting for authenticator…' : 'Register passkey'}
+          </button>
+        </div>
+      </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!renameTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameTarget(null);
+            setRenameName('');
+          }
+        }}
+        title={`Rename passkey ${renameTarget?.name ?? ''}`}
+        subtitle="The name is only a label; no re-authentication is required."
+        size="md"
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Passkey name</span>
+            <input
+              type="text"
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+              maxLength={64}
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!renameName.trim() || renaming}
+            onClick={rename}
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            {renaming ? 'Saving…' : 'Save name'}
           </button>
         </div>
       </SlideOverDrawer>

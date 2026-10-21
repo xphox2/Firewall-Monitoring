@@ -18,7 +18,7 @@ import {
   Lock,
 } from 'lucide-react';
 import { apiFetch, SystemSetting, type MeResponse } from '@/lib/api';
-import { cn, formatRelativeTime, setDisplayTimezone } from '@/lib/utils';
+import { cn, formatDate, formatRelativeTime, setDisplayTimezone } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -1664,6 +1664,9 @@ function MyProfileSubTab() {
       <div className="space-y-5">
         <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
           <h2 className="text-sm font-semibold text-text">My Operator Profile</h2>
+          <p className="text-[11px] text-text-faint">
+            Member since {formatDate(me?.created_at)}
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-text-dim mb-1">Username</label>
