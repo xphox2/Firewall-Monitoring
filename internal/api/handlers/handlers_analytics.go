@@ -1102,7 +1102,16 @@ func (h *Handler) GetAlertStats(c *gin.Context) {
 	hours := httputil.ParseHours(c)
 	deviceID := parseStatsDeviceFilter(c)
 
-	stats, err := db.GetAlertStats(hours, deviceID)
+	// Per-type trend: ?alert_type= scopes the whole stats payload (total,
+	// severity split and hourly series) to one type. Absent → the aggregate.
+	alertType := strings.TrimSpace(c.Query("alert_type"))
+	var stats *database.EventStatsResult
+	var err error
+	if alertType != "" {
+		stats, err = db.GetAlertStatsByType(hours, deviceID, alertType)
+	} else {
+		stats, err = db.GetAlertStats(hours, deviceID)
+	}
 	if err != nil {
 		httputil.InternalError(c, "Failed to get alert stats", err)
 		return

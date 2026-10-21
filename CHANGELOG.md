@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.358] - 2026-10-21
+
+### Added — Per-alert-type volume trends in the V2 alerts page
+
+- `GET /api/alerts/stats` accepts `alert_type`; the new `GetAlertStatsByType` scopes total, severity split and the hourly series to one type (absent = aggregate). Covered by a database test.
+- The volume card gains an **All types** selector: choosing a type switches the volume bars, total and severity tiles to that type's trend while the "Alerts by type" distribution stays fleet-wide. The scoped query auto-refreshes every 30s, keeps the previous data while loading, and the selection clears when a range/device change removes the type from the window.
+- Removed "per-type time series" from the remaining alert sub-gaps; structured syslog-field parsing is the only one left.
+
 ## [0.11.357] - 2026-10-21
 
 ### Changed — Removed the in-app DB-IP credit line
