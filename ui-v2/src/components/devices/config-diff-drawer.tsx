@@ -70,6 +70,7 @@ export function ConfigDiffDrawer({
   const [query, setQuery] = useState('');
   const [severities, setSeverities] = useState<Set<DiffSeverity> | null>(null);
   const [hideEqual, setHideEqual] = useState(true);
+  const [lineView, setLineView] = useState<'unified' | 'split'>('unified');
   const [visibleRows, setVisibleRows] = useState(ROW_PAGE);
 
   const enabled = open && !!from && !!to && from.id !== to.id;
@@ -268,14 +269,32 @@ export function ConfigDiffDrawer({
                 })}
               </div>
             ) : (
-              <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
-                <input
-                  type="checkbox"
-                  checked={hideEqual}
-                  onChange={(e) => setHideEqual(e.target.checked)}
-                />
-                Hide unchanged
-              </label>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-0.5 rounded border border-border bg-bg-panel p-0.5">
+                  {(['unified', 'split'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={lineView === mode}
+                      onClick={() => setLineView(mode)}
+                      className={cn(
+                        'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
+                        lineView === mode ? 'bg-bg-card text-text shadow-sm' : 'text-text-dim',
+                      )}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
+                  <input
+                    type="checkbox"
+                    checked={hideEqual}
+                    onChange={(e) => setHideEqual(e.target.checked)}
+                  />
+                  Hide unchanged
+                </label>
+              </div>
             )}
           </div>
 
@@ -367,33 +386,89 @@ export function ConfigDiffDrawer({
                 </p>
               ) : (
                 <>
-                  <div className="max-h-[60vh] overflow-auto">
-                    {filteredRows.slice(0, visibleRows).map((row, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          'flex items-start gap-2 whitespace-pre-wrap break-all px-2 py-0.5 font-mono text-[11px]',
-                          LINE_STYLE[row.op] ?? LINE_STYLE['equal'],
-                        )}
-                      >
-                        <span className="w-10 shrink-0 select-none text-right text-text-faint">
-                          {row.a || ''}
-                        </span>
-                        <span className="w-10 shrink-0 select-none text-right text-text-faint">
-                          {row.b || ''}
-                        </span>
-                        <span className="w-3 shrink-0 select-none">
-                          {LINE_PREFIX[row.op] ?? ' '}
-                        </span>
-                        <span className="min-w-0 flex-1">{row.text}</span>
-                        {row.vname && (
-                          <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
-                            {row.vname}
+                  {lineView === 'unified' ? (
+                    <div className="max-h-[60vh] overflow-auto">
+                      {filteredRows.slice(0, visibleRows).map((row, idx) => (
+                        <div
+                          key={idx}
+                          className={cn(
+                            'flex items-start gap-2 whitespace-pre-wrap break-all px-2 py-0.5 font-mono text-[11px]',
+                            LINE_STYLE[row.op] ?? LINE_STYLE['equal'],
+                          )}
+                        >
+                          <span className="w-10 shrink-0 select-none text-right text-text-faint">
+                            {row.a || ''}
                           </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                          <span className="w-10 shrink-0 select-none text-right text-text-faint">
+                            {row.b || ''}
+                          </span>
+                          <span className="w-3 shrink-0 select-none">
+                            {LINE_PREFIX[row.op] ?? ' '}
+                          </span>
+                          <span className="min-w-0 flex-1">{row.text}</span>
+                          {row.vname && (
+                            <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
+                              {row.vname}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="max-h-[60vh] overflow-auto font-mono text-[11px]">
+                      {filteredRows.slice(0, visibleRows).map((row, idx) => {
+                        // A volatile row carries only the b-side text; showing it
+                        // in the from column would claim both sides are equal.
+                        const volatile = row.op === 'volatile';
+                        const leftText = row.op === 'insert' || volatile ? '' : row.text;
+                        const rightText = row.op === 'delete' ? '' : row.text;
+                        return (
+                          <div key={idx} className="grid grid-cols-2 border-b border-border/40">
+                            <div
+                              className={cn(
+                                'flex items-start gap-2 whitespace-pre-wrap break-all px-2 py-0.5',
+                                row.op === 'delete'
+                                  ? LINE_STYLE['delete']
+                                  : row.op === 'volatile'
+                                    ? LINE_STYLE['volatile']
+                                    : 'text-text-dim',
+                              )}
+                            >
+                              <span className="w-8 shrink-0 select-none text-right text-text-faint">
+                                {row.a || ''}
+                              </span>
+                              <span className="min-w-0 flex-1">{leftText}</span>
+                              {volatile && (
+                                <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
+                                  volatile{row.vname ? `: ${row.vname}` : ''}
+                                </span>
+                              )}
+                            </div>
+                            <div
+                              className={cn(
+                                'flex items-start gap-2 whitespace-pre-wrap break-all border-l border-border/40 px-2 py-0.5',
+                                row.op === 'insert'
+                                  ? LINE_STYLE['insert']
+                                  : row.op === 'volatile'
+                                    ? LINE_STYLE['volatile']
+                                    : 'text-text-dim',
+                              )}
+                            >
+                              <span className="w-8 shrink-0 select-none text-right text-text-faint">
+                                {row.b || ''}
+                              </span>
+                              <span className="min-w-0 flex-1">{rightText}</span>
+                              {row.vname && (
+                                <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
+                                  {row.vname}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {filteredRows.length > visibleRows && (
                     <button
                       type="button"

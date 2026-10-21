@@ -26,7 +26,7 @@ import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ConfigDiffDrawer } from '@/components/devices/config-diff-drawer';
 import {
@@ -805,9 +805,37 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     enabled: activeTab === 'config',
   });
   const configRevs = configHistory?.revisions ?? [];
+  const [revisionToView, setRevisionToView] = useState<number | null>(null);
+  const {
+    data: revisionData,
+    isLoading: revisionLoading,
+    error: revisionError,
+  } = useQuery({
+    queryKey: ['device-config-revision', deviceId, revisionToView],
+    queryFn: () =>
+      apiFetch<{
+        revision?: { id: number; timestamp: string; checksum: string; config_text: string; length: number };
+      }>(`/admin/api/devices/${deviceId}/config-history/${revisionToView}/view`),
+    enabled: revisionToView != null,
+  });
+  const viewedRevision = revisionData?.revision;
   const [diffFrom, setDiffFrom] = useState<number | null>(null);
   const [diffTo, setDiffTo] = useState<number | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [revisionToDelete, setRevisionToDelete] = useState<number | null>(null);
+  const deleteRevisionMutation = useMutation({
+    mutationFn: async (revId: number) =>
+      apiFetch(`/admin/api/devices/${deviceId}/config-history/${revId}`, { method: 'DELETE' }),
+    onSuccess: (_data, revId) => {
+      toast({ title: `Revision #${revId} deleted`, variant: 'info' });
+      setRevisionToDelete(null);
+      if (revisionToView === revId) setRevisionToView(null);
+      queryClient.invalidateQueries({ queryKey: ['device-config-history', deviceId] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Delete failed', description: err.message, variant: 'error' }),
+  });
+
   const selectedFrom = configRevs.find((r) => r.id === diffFrom) ?? null;
   const selectedTo = configRevs.find((r) => r.id === diffTo) ?? null;
 
@@ -1021,12 +1049,6 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
 
   return (
     <div className="space-y-5">
-      <ClassicFallback
-        title="A few device views are still in the classic console"
-        description="Charts, traffic, config diff, HA, SD-WAN, ping SLA, security/licence panels and per-core resources are now in the preview. Still classic-only: the in-place revision viewer and split/tree diff views."
-        href={`/admin/devices/${deviceId ?? ''}`}
-        label="Open this device in classic"
-      />
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-border pb-4">
         <div className="flex items-center gap-3">
@@ -1444,13 +1466,33 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                             {rev.checksum?.slice(0, 12)}
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <a
-                              href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setRevisionToView(rev.id)}
+                                aria-label={`View revision ${rev.id}`}
+                                title="View this revision"
+                                className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                              >
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <a
+                                href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
                               title="Download this revision"
                               className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
                             >
-                              <Download className="h-3.5 w-3.5" />
-                            </a>
+                                <Download className="h-3.5 w-3.5" />
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => setRevisionToDelete(rev.id)}
+                                aria-label={`Delete revision ${rev.id}`}
+                                title="Delete this revision"
+                                className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1466,6 +1508,99 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 deviceId={Number(deviceId)}
                 from={selectedFrom}
                 to={selectedTo}
+              />
+
+              <SlideOverDrawer
+                open={revisionToView != null}
+                onOpenChange={(open) => {
+                  if (!open) setRevisionToView(null);
+                }}
+                title={`Configuration revision #${revisionToView ?? ''}`}
+                subtitle={
+                  viewedRevision
+                    ? `${new Date(viewedRevision.timestamp).toLocaleString()} · ${viewedRevision.length} bytes`
+                    : undefined
+                }
+                size="2xl"
+                footer={
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <a
+                      href={`/admin/api/devices/${deviceId}/config-history/${revisionToView ?? ''}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text-dim hover:text-text"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download
+                    </a>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = viewedRevision?.config_text;
+                          if (!text) return;
+                          if (!navigator.clipboard) {
+                            toast({
+                              title: 'Copy unavailable',
+                              description: 'The clipboard API needs a secure context.',
+                              variant: 'error',
+                            });
+                            return;
+                          }
+                          void navigator.clipboard
+                            .writeText(text)
+                            .then(() => toast({ title: 'Config copied', variant: 'success' }))
+                            .catch(() => toast({ title: 'Copy failed', variant: 'error' }));
+                        }}
+                        className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text"
+                      >
+                        Copy config
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRevisionToView(null)}
+                        className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                }
+              >
+                {revisionLoading ? (
+                  <p className="p-6 text-center text-xs text-text-dim">Loading revision…</p>
+                ) : revisionError ? (
+                  <div className="m-4 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+                    Could not load the revision:{' '}
+                    {revisionError instanceof Error ? revisionError.message : 'request failed'}
+                  </div>
+                ) : viewedRevision?.config_text ? (
+                  <div className="space-y-2">
+                    <div className="font-mono text-[11px] text-text-faint">
+                      checksum {viewedRevision.checksum?.slice(0, 16)}
+                    </div>
+                    <pre className="max-h-[70vh] overflow-auto rounded-lg border border-border bg-bg-panel p-3 font-mono text-[11px] text-text whitespace-pre">
+                      {viewedRevision.config_text}
+                    </pre>
+                  </div>
+                ) : (
+                  <p className="p-6 text-center text-xs text-text-faint">
+                    This revision has no stored config text.
+                  </p>
+                )}
+              </SlideOverDrawer>
+
+              <ConfirmDialog
+                open={revisionToDelete != null}
+                onOpenChange={(open) => {
+                  if (!open) setRevisionToDelete(null);
+                }}
+                title={`Delete revision #${revisionToDelete ?? ''}?`}
+                description="The stored config snapshot is removed permanently; other revisions are untouched."
+                confirmLabel="Delete revision"
+                destructive
+                pending={deleteRevisionMutation.isPending}
+                onConfirm={() =>
+                  revisionToDelete != null && deleteRevisionMutation.mutate(revisionToDelete)
+                }
               />
             </div>
           )}
