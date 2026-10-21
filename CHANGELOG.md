@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.354] - 2026-10-21
+
+### Added — Alert detail depth; the last classic-only notice is gone
+
+- **Linked flow detections** in the alert drawer: the detail endpoint's `detections` join is now rendered (detector, category, severity, source → destination:port, score, message, time), with loading, empty and error states.
+- **Source address** for flow-security alerts is shown as a chip, and the queue gains an **Alerts by type** distribution from the stats `by_type` ranking (with an explicit "+N more types" footer instead of silently truncating).
+- Removed the final `ClassicFallback` notice from the console. The two remaining alert sub-gaps are named inline instead of behind a banner: per-type time series and structured syslog-field parsing.
+- `BarList` gained an optional footer for truncation notes.
+
 ## [0.11.353] - 2026-10-21
 
 ### Added — Full connection detail in the Admin UI V2 preview

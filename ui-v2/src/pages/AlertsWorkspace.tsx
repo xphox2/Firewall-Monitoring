@@ -15,7 +15,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { cn, formatRelativeTime } from '@/lib/utils';
+import { cn, formatCompactNumber, formatRelativeTime } from '@/lib/utils';
 import {
   ALERT_RANGES,
   EMPTY_ALERT_FILTERS,
@@ -27,7 +27,7 @@ import {
 } from '@/lib/alerts';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
+import { BarList } from '@/components/ui/bar-list';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -53,8 +53,23 @@ interface AlertRow {
   snoozed_until?: string | null;
   snoozed_reason?: string;
   notes?: string;
+  source_addr?: string;
   timestamp?: string;
   created_at?: string;
+}
+
+interface LinkedDetection {
+  id: number;
+  detected_at?: string;
+  detector?: string;
+  category?: string;
+  severity?: string;
+  src_addr?: string;
+  dst_addr?: string;
+  dst_port?: number;
+  score?: number;
+  message?: string;
+  acknowledged?: boolean;
 }
 
 interface AlertStats {
@@ -151,13 +166,6 @@ export function AlertsWorkspace() {
         </div>
       </div>
 
-      <ClassicFallback
-        title="Some alert analytics remain in the classic console"
-        description="Filtering, stats, bulk acknowledge/snooze, pagination and detail actions are now here. Parsed syslog fields, linked flow detections and alert-type trend breakdowns are still classic-only."
-        href="/admin/alerts"
-        label="Open full alerts"
-      />
-
       {activeTab === 'open' && <AlertsQueue acknowledged={false} />}
       {activeTab === 'incidents' && <StormIncidentsSubTab />}
       {activeTab === 'history' && <AlertsQueue acknowledged={true} />}
@@ -213,6 +221,22 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
 
   const alerts = listRes?.alerts ?? [];
   const total = listRes?.total ?? 0;
+
+  // The detail endpoint joins the flow detections behind this alert.
+  const {
+    data: alertDetailData,
+    isPending: alertDetailLoading,
+    isError: alertDetailError,
+  } = useQuery({
+    queryKey: ['alert-detail', detail?.id],
+    queryFn: () =>
+      apiFetch<{ alert?: AlertRow; detections?: LinkedDetection[] }>(
+        `/admin/api/alerts/${detail?.id}`,
+      ),
+    enabled: Boolean(detail?.id),
+  });
+  const linkedDetections = alertDetailData?.detections ?? [];
+  const sourceAddr = alertDetailData?.alert?.source_addr;
 
   const updateFilters = (patch: Partial<AlertFilters>) => {
     // Reset synchronously with the filter change: an effect would render once
@@ -581,6 +605,22 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         )}
       </div>
 
+      <div>
+        <BarList
+          title={`Alerts by type — ${range}`}
+          rows={(stats?.by_type ?? []).map((row) => ({ key: row.key, value: row.count }))}
+          empty="No alerts in this window."
+          footer={
+            (stats?.by_type ?? []).length > 8
+              ? `+${(stats?.by_type ?? []).length - 8} more type(s) not shown`
+              : undefined
+          }
+        />
+        <p className="mt-1 text-[10px] text-text-faint">
+          Per-type time series and structured syslog-field parsing remain in the classic console.
+        </p>
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
@@ -767,6 +807,11 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                   snoozed until {new Date(detail.snoozed_until).toLocaleString()}
                 </span>
               )}
+              {sourceAddr && (
+                <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 font-mono text-[10px] text-sig-crit">
+                  source {sourceAddr}
+                </span>
+              )}
             </div>
 
             <p className="rounded-lg border border-border bg-bg-panel p-3 text-xs text-text">
@@ -793,6 +838,62 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                 </div>
               </div>
             )}
+
+            <div>
+              <h3 className="mb-1.5 text-xs font-semibold text-text">
+                Linked flow detections ({linkedDetections.length})
+              </h3>
+              {alertDetailLoading ? (
+                <p className="text-[11px] text-text-dim">Loading linked detections…</p>
+              ) : alertDetailError ? (
+                <p className="text-[11px] text-sig-crit">Could not load linked detections.</p>
+              ) : linkedDetections.length === 0 ? (
+                <p className="text-[11px] text-text-faint">No linked flow detections.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {linkedDetections.map((detection) => (
+                    <div
+                      key={detection.id}
+                      className="rounded-lg border border-border bg-bg-panel px-2.5 py-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                              SEVERITY_STYLE[detection.severity ?? 'info'] ?? SEVERITY_STYLE['info'],
+                            )}
+                          >
+                            {detection.severity || 'info'}
+                          </span>
+                          <span className="font-mono text-[11px] text-text">
+                            {detection.detector || 'detector'}
+                          </span>
+                          {detection.category && (
+                            <span className="text-[10px] text-text-faint">{detection.category}</span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[10px] text-text-faint">
+                          {formatRelativeTime(detection.detected_at)}
+                        </span>
+                      </div>
+                      <div className="mt-1 font-mono text-[11px] text-text-dim">
+                        {detection.src_addr || '—'} → {detection.dst_addr || '—'}
+                        {detection.dst_port ? `:${detection.dst_port}` : ''}
+                      </div>
+                      {detection.message && (
+                        <div className="text-[11px] text-text-dim">{detection.message}</div>
+                      )}
+                      {detection.score != null && (
+                        <div className="font-mono text-[10px] text-text-faint">
+                          score {formatCompactNumber(detection.score)}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div>
               <label className="mb-1 block text-xs font-medium text-text-dim">Operator notes</label>

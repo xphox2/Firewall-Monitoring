@@ -15,12 +15,14 @@ export function BarList({
   bytes = false,
   flag = false,
   empty,
+  footer,
 }: {
   title: string;
   rows: BarRow[] | undefined;
   bytes?: boolean;
   flag?: boolean;
   empty: string;
+  footer?: string;
 }) {
   const items = (rows ?? []).slice(0, 8);
   const max = Math.max(1, ...items.map((r) => r.value));
@@ -54,6 +56,7 @@ export function BarList({
           ))}
         </div>
       )}
+      {footer && <p className="mt-1.5 text-[10px] text-text-faint">{footer}</p>}
     </div>
   );
 }
