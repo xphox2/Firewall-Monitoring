@@ -88,6 +88,7 @@ V2:
   correlation, traffic chart). Remaining: graph bundle/VLAN expansion and alert overlays.
 - **v0.11.354** — Alert linked flow detections, source-address chip and by-type distribution;
   the last classic-only banner was removed. Remaining alert sub-gaps are named inline.
+- **v0.11.355** — Structured IPSec preview (findings + per-end CLI) and event-rule tester result.
 
 ## Top gaps
 
@@ -99,7 +100,7 @@ list — not the table — is the current backlog.
    IPSec tunnels, filters, zoom/fit) and a five-tab connection detail (overview,
    source/dest tunnels, LLDP/FDB/ARP + interface + phase-2 evidence, traffic
    chart). Still classic-only: expanding tunnel bundles / VLAN sublanes in the
-   graph itself, graph alert overlays, and the IPSec CLI preview raw-JSON stub.
+   graph itself and graph alert overlays.
 2. **Events depth.** Analytics and rollups exist, but event/security-event
    detail is still a raw-JSON drawer, and several security columns/filters and
    per-type breakdowns remain classic-only.
@@ -120,10 +121,10 @@ list — not the table — is the current backlog.
    "effective" preview is represented by the Configuration Overview rather than
    a profile-scoped view.
 
-Raw-JSON stubs still present: the IPSec CLI preview, device capabilities and the
-effective-policy simulator. Event, security-event, syslog, trap, flow-sample and
-connection detail are now structured (raw JSON remains available behind a
-disclosure).
+Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
+effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
+connection detail, IPSec preview and the event-rule tester are structured (raw
+JSON remains available behind a disclosure).
 
 ## Where V2 points at V1
 

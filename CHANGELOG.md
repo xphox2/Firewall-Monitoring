@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.355] - 2026-10-21
+
+### Changed — The last raw-JSON surfaces are structured
+
+- **IPSec preview**: validation findings are rendered with block/warn severity, code, endpoint and subject; each end gets its vendor, step count, auto-generated objects and the redacted native CLI preview with a copy button. Switching tunnels clears the previous render while the new one loads.
+- **Event-rule tester**: matched/rate/scanned/vendor KPIs, up to 20 matching sample lines and the coverage note, with the raw JSON behind a disclosure.
+- Removed the never-returned PSK/provisional badges from the preview panel (only the stateless POST preview emits those fields, which the V2 wizard does not call).
+
 ## [0.11.354] - 2026-10-21
 
 ### Added — Alert detail depth; the last classic-only notice is gone
