@@ -13,6 +13,11 @@ export interface TimeSeriesChartProps {
   height?: number;
   isLoading?: boolean;
   emptyMessage?: string;
+  /**
+   * Connect null values across a gap. Default true; pass false when a null
+   * means "the probe failed" and drawing through it would hide an outage.
+   */
+  spanGaps?: boolean;
 }
 
 function cssVar(name: string, fallback: string): string {
@@ -37,6 +42,7 @@ export function TimeSeriesChart({
   height = 220,
   isLoading = false,
   emptyMessage = 'No data in this range.',
+  spanGaps = true,
 }: TimeSeriesChartProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<uPlot | null>(null);
@@ -104,7 +110,7 @@ export function TimeSeriesChart({
               stroke: s.color,
               width: 1.5,
               points: { show: false },
-              spanGaps: true,
+              spanGaps,
             })),
           ],
         },
@@ -137,7 +143,7 @@ export function TimeSeriesChart({
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [timestamps, series, kind, height, hasData, theme]);
+  }, [timestamps, series, kind, height, hasData, theme, spanGaps]);
 
   return (
     <div className="space-y-2">

@@ -19,6 +19,8 @@ import {
 import { apiFetch, type DashboardSummary, type SystemHealthSnapshot } from '@/lib/api';
 import { cn, formatBytes, formatCompactNumber, formatRelativeTime } from '@/lib/utils';
 import { formatBitsPerSecond } from '@/lib/chart';
+import { bucketToMs } from '@/lib/time-buckets';
+import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { mergeFeed } from '@/lib/noc';
 
 type OverviewTab = 'health' | 'noc';
@@ -210,6 +212,8 @@ export function OverviewWorkspace() {
             </div>
           )}
 
+          <ServerTrend />
+
           {/* V2 Workspace Quick-Launch Cards */}
           <section className="rounded-lg border border-border bg-bg-card p-5 space-y-4">
             <div className="flex items-center gap-2">
@@ -342,6 +346,106 @@ export function OverviewWorkspace() {
         </>
       )}
     </div>
+  );
+}
+
+// ============================================================================
+// SERVER RESOURCE TREND (GET /admin/api/system/metrics/chart)
+// ============================================================================
+interface ServerMetricBucket {
+  bucket: string;
+  cpu_percent?: number;
+  mem_percent?: number;
+  load1?: number;
+  root_disk_percent?: number;
+  data_disk_percent?: number | null;
+}
+
+const SERVER_TREND_RANGES = [
+  { value: '1h', label: '1h' },
+  { value: '6h', label: '6h' },
+  { value: '24h', label: '24h' },
+  { value: '7d', label: '7d' },
+  { value: '30d', label: '30d' },
+] as const;
+
+function ServerTrend() {
+  const [range, setRange] = useState<(typeof SERVER_TREND_RANGES)[number]['value']>('24h');
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['server-metric-chart', range],
+    queryFn: () =>
+      apiFetch<ServerMetricBucket[]>(`/admin/api/system/metrics/chart?range=${range}`),
+    refetchInterval: 60_000,
+  });
+
+  const rows = Array.isArray(data) ? data : [];
+
+  const chart = useMemo(() => {
+    const points = rows
+      .map((row) => ({ ts: bucketToMs(row.bucket), row }))
+      .filter((point): point is { ts: number; row: ServerMetricBucket } => point.ts != null)
+      .sort((a, b) => a.ts - b.ts);
+    return {
+      timestamps: points.map((point) => point.ts),
+      cpu: points.map((point) => point.row.cpu_percent ?? null),
+      mem: points.map((point) => point.row.mem_percent ?? null),
+      root: points.map((point) => point.row.root_disk_percent ?? null),
+      // A bucket where the volume could not be probed is unknown, not 0%.
+      data: points.map((point) =>
+        point.row.data_disk_percent == null ? null : point.row.data_disk_percent,
+      ),
+    };
+  }, [rows]);
+
+  return (
+    <section className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-text">Server resource trend</h2>
+          <p className="text-[11px] text-text-faint">
+            Host CPU, memory and disk usage — 5-minute sampling. A gap means the volume could not
+            be probed.
+          </p>
+        </div>
+        <div className="flex items-center gap-0.5 rounded-lg border border-border bg-bg-panel p-1">
+          {SERVER_TREND_RANGES.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={range === option.value}
+              onClick={() => setRange(option.value)}
+              className={cn(
+                'rounded px-2 py-1 font-mono text-[11px] font-medium',
+                range === option.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isError ? (
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+          Could not load the server resource history.
+        </div>
+      ) : (
+        <TimeSeriesChart
+          timestamps={chart.timestamps}
+          series={[
+            { label: 'CPU', color: '#58A6FF', values: chart.cpu },
+            { label: 'Memory', color: '#A371F7', values: chart.mem },
+            { label: 'Root disk', color: '#3FB950', values: chart.root },
+            { label: 'DB volume', color: '#F0883E', values: chart.data },
+          ]}
+          kind="percent"
+          isLoading={isLoading}
+          emptyMessage="No server metric samples in this window."
+          spanGaps={false}
+        />
+      )}
+    </section>
   );
 }
 

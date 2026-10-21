@@ -13,7 +13,7 @@ gaps list below are the actionable view.
 
 | Area | State | Remaining |
 |---|---|---|
-| Dashboard / NOC | NOC wallboard at parity (vitals, site/device health, named-event feed, threats) | Dashboard host CPU/memory/disk **trends**; NOC feed pause/hover hold and per-site drill-down snapshots |
+| Dashboard / NOC | At parity: KPIs, server runtime telemetry, host CPU/memory/root-disk/DB-volume trend, NOC wallboard | NOC feed pause/hover hold and per-site drill-down snapshots |
 | Events | At parity: analytics + rollup charts, distributions, structured event/security inspectors, security class/severity filters and paging | — |
 | Flows | At parity: filters, throughput chart, byte-ranked distributions, degraded-window disclosure, conversation drill-down, sample inspector, CSV export | — |
 | Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
@@ -116,6 +116,8 @@ V2:
 - **v0.11.357** — In-app DB-IP credit removed; attribution kept in NOTICE / THIRD-PARTY-NOTICES.
 - **v0.11.358** — Per-alert-type volume trends (`alert_type` on /alerts/stats, type selector on the
   volume card). The only remaining alert sub-gap is structured syslog-field parsing.
+- **v0.11.359** — Server resource trend (CPU/memory/root disk/DB volume) on the dashboard, with
+  unprobed volume buckets kept as gaps.
 
 ## Remaining gaps
 
@@ -123,20 +125,17 @@ V2:
    IPSec tunnels, filters, zoom/fit and device drill-through, and the detail
    drawer has the five tabs. Still classic-only: expanding tunnel bundles /
    VLAN sublanes inside the graph and alert overlays on nodes.
-2. **Dashboard host trends.** The classic dashboard draws host CPU/memory/disk
-   over time; V2 shows current values only. No fleet-trend endpoint exists, so
-   this needs a data source rather than a UI port.
-3. **Alert sub-gap.** Structured syslog-field parsing; it is named inline on the
+2. **Alert sub-gap.** Structured syslog-field parsing; it is named inline on the
    Alerts page. Per-type volume trends are now in the preview.
-4. **Storage / archive.** Not re-audited; some controls may still be classic-only.
-5. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
-6. **Account security leftovers.** 2FA "decline with risk acknowledgement",
+3. **Storage / archive.** Not re-audited; some controls may still be classic-only.
+4. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
+5. **Account security leftovers.** 2FA "decline with risk acknowledgement",
    passkey rename, and the profile "member since" line.
-7. **Profile effective view.** Assignments work; the classic per-profile
+6. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
-8. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
+7. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
    line's delete+insert into one word-diff row.
-9. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
+8. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
