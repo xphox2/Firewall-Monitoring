@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.345] - 2026-10-20
+
+### Added — Live NOC wallboard in the Admin UI V2 preview
+
+- Replaced the raw JSON pane with a real wallboard driven by `/api/noc/snapshot` and the SSE stream:
+  - **Vitals**: throughput, flows over the snapshot window, unique sources→destinations, threat flows, probes up/down, devices up/down, active threat-intel indicators.
+  - **Site/device health**: per-site cards with worst severity, device counts, alert counts, probe-offline and threat-flow badges, plus a device table view with throughput and last-polled; device rows link to the device page and are keyboard-accessible.
+  - **Live feed**: merges alert, detection and silenced lists from the stream's **named `feed` event** (previously ignored), newest-first, with kind/count filters, repeat counts and stable dedup keys.
+  - **Threats — last 60s**: inbound/outbound entries with service, requests, bytes, IP-vs-ASN match, inferred and blocked counts, plus the summary.
+- Connection state distinguishes "connecting" from "reconnecting", and the fullscreen control reflects its state.
+- `lib/noc.ts` feed-merge helper with tests (suite now 92).
+
 ## [0.11.344] - 2026-10-20
 
 ### Added — Event-rule profile management in the Admin UI V2 preview

@@ -66,6 +66,9 @@ V2:
   auto-reconnect). The Integrations area is now at parity.
 - **v0.11.344** — Event-rule profile CRUD + tri-state toggle matrix. Remaining: profile
   assignments to sites/devices and the effective profile view.
+- **v0.11.345** — Live NOC wallboard (vitals, site/device health, named-event feed, threats
+  last 60s). Remaining: feed pause/hover hold, per-site drill-down snapshots, and NOC focus
+  links from the topology map.
 
 ## Top gaps
 
