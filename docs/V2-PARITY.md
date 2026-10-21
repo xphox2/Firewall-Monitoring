@@ -55,6 +55,8 @@ V2:
 - **v0.11.339** — Alerts triage (filters, stats + volume chart, bulk ack/snooze, pagination,
   detail drawer, incidents open/resolved). Remaining alert gaps: parsed syslog fields, linked
   flow detections, per-type trend breakdowns.
+- **v0.11.340** — User administration (disable/enable, reset password, remove passkeys, status),
+  API token expiry/status and audit paging/filters. Next: 2FA enrollment and passkey registration.
 
 ## Top gaps
 

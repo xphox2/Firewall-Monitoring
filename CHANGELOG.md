@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.340] - 2026-10-20
+
+### Added — User administration and audit depth in the Admin UI V2 preview
+
+- **Users**: status column (`active` / `disabled` / `password change pending`), enable/disable, **reset password** (server-generated temporary password shown once, sessions revoked and passkeys cleared), and **remove all passkeys**. The current account cannot change its own role or disable itself (the controls are disabled and the server rejects it).
+- **API tokens**: optional lifetime (`expires_in_days`, 0 = never) and a status column (`active` / `expired` / `revoked`) with the remaining days; Revoke is hidden on already-revoked tokens.
+- **Audit log**: actor and action-route filters, 1h/24h/7d/30d range, and 50-row pagination with totals.
+- Reset-password is single-flight: a double-click can no longer race two temp passwords and leave the operator copying a stale one.
+- Remaining account-security gaps (2FA enrollment, passkey registration) are the next workstream and are listed in `docs/V2-PARITY.md`.
+
 ## [0.11.339] - 2026-10-20
 
 ### Added — Alerts triage in the Admin UI V2 preview
