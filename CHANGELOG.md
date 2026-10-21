@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.342] - 2026-10-20
+
+### Added — Maintenance scoping in the Admin UI V2 preview
+
+- Windows can now target **all devices & sites**, **one device**, or **one site** (explicit scope mode; switching modes keeps each selection until saved).
+- When "suppress all" is off, the alert types to suppress are chosen from the server registry (`/api/alert-types`, grouped by family). At least one type is required: the server treats an empty list as *all types*, so an empty selection would suppress everything.
+- The window table and mobile cards show the resolved scope and the suppression mode; legacy windows with no type filter render as "All (no type filter)" and can still be edited without re-expressing that choice.
+- Fixed the first implementation's circular scope model (device/site could never be selected) before release; a follow-up review passed with only cosmetic nits.
+- Recurrence fields exist in the model but neither console exposes them; noted in `docs/V2-PARITY.md`.
+
 ## [0.11.341] - 2026-10-20
 
 ### Added — 2FA enrollment and passkey registration in the Admin UI V2 preview

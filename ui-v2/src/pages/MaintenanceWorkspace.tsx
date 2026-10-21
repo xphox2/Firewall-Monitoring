@@ -6,7 +6,6 @@ import { formatDateTime } from '@/lib/utils';
 import { fromLocalInput, toLocalInput } from '@/lib/datetime';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -21,6 +20,7 @@ interface MaintenanceWindow {
   end_time: string;
   suppress_all?: boolean;
   suppress_alerts?: boolean;
+  alert_types?: string;
   recurring?: boolean;
   created_by?: string;
 }
@@ -43,7 +43,35 @@ export function MaintenanceWorkspace() {
   const windows = windowsList ?? [];
   const activeWindows = activeList ?? [];
 
+  const { data: devices = [] } = useQuery({
+    queryKey: ['maint-devices'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/devices'),
+  });
+  const { data: sites = [] } = useQuery({
+    queryKey: ['maint-sites'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/sites'),
+  });
+  const { data: alertTypes = [] } = useQuery({
+    queryKey: ['alert-types'],
+    queryFn: () =>
+      apiFetch<Array<{ type: string; family: string; description: string }>>(
+        '/admin/api/alert-types',
+      ),
+  });
+  const groupedAlertTypes = useMemo(() => {
+    const map = new Map<string, Array<{ type: string; description: string }>>();
+    for (const info of alertTypes) {
+      const list = map.get(info.family) ?? [];
+      list.push({ type: info.type, description: info.description });
+      map.set(info.family, list);
+    }
+    return Array.from(map.entries());
+  }, [alertTypes]);
+
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Scope is an explicit mode, not inferred from the pointer: a selected scope
+  // with no id yet must still render its picker.
+  const [scopeMode, setScopeMode] = useState<'all' | 'device' | 'site'>('all');
   const [editing, setEditing] = useState<Partial<MaintenanceWindow>>({
     name: '',
     notes: '',
@@ -62,10 +90,35 @@ export function MaintenanceWorkspace() {
       if (new Date(endIso) <= new Date(startIso)) {
         throw new Error('End time must be after the start time');
       }
+      const hasSelectedTypes = (editing.alert_types ?? '')
+        .split(',')
+        .some((t) => t.trim());
+      // A legacy row with suppress_all off and no type list already suppresses
+      // everything server-side; allow unrelated edits without forcing the
+      // operator to re-express that choice.
+      const legacySuppressAll = Boolean(editing.id) && editing.suppress_all === false && !hasSelectedTypes;
+      if (scopeMode === 'device' && !editing.device_id) {
+        throw new Error('Select a device for this window (or switch the scope to all devices & sites)');
+      }
+      if (scopeMode === 'site' && !editing.site_id) {
+        throw new Error('Select a site for this window (or switch the scope to all devices & sites)');
+      }
+      if (editing.suppress_all === false && !hasSelectedTypes && !legacySuppressAll) {
+        // The server skips the type filter when alert_types is empty, so
+        // "suppress_all off + no types" suppresses EVERYTHING — the opposite
+        // of what an empty list looks like. Refuse it.
+        throw new Error(
+          'Select at least one alert type (or enable "suppress all") — an empty list would suppress every alert',
+        );
+      }
       const payload = {
         ...editing,
         notes: editing.notes ?? editing.description ?? '',
         suppress_all: editing.suppress_all ?? editing.suppress_alerts ?? true,
+        // Only the active scope's id is sent; the inactive one stays in the
+        // draft so switching modes back does not lose the selection.
+        device_id: scopeMode === 'device' ? (editing.device_id ?? null) : null,
+        site_id: scopeMode === 'site' ? (editing.site_id ?? null) : null,
         start_time: startIso,
         end_time: endIso,
       };
@@ -104,6 +157,27 @@ export function MaintenanceWorkspace() {
     },
   });
 
+  const selectedTypes = new Set(
+    (editing.alert_types ?? '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean),
+  );
+
+  const toggleAlertType = (type: string) => {
+    setEditing((p) => {
+      const next = new Set(
+        (p.alert_types ?? '')
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
+      );
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return { ...p, alert_types: Array.from(next).join(',') };
+    });
+  };
+
   const columns = useMemo<ColumnDef<MaintenanceWindow, unknown>[]>(
     () => [
       {
@@ -138,13 +212,57 @@ export function MaintenanceWorkspace() {
         ),
       },
       {
+        id: 'scope',
+        header: 'Scope',
+        cell: ({ row }) => {
+          const w = row.original;
+          if (w.device_id) {
+            return (
+              <span className="font-mono text-[11px] text-text">
+                {devices.find((d) => d.id === w.device_id)?.name ?? `Device #${w.device_id}`}
+              </span>
+            );
+          }
+          if (w.site_id) {
+            return (
+              <span className="font-mono text-[11px] text-text">
+                Site: {sites.find((s) => s.id === w.site_id)?.name ?? `#${w.site_id}`}
+              </span>
+            );
+          }
+          return <span className="text-[11px] text-text-dim">All devices & sites</span>;
+        },
+      },
+      {
         accessorKey: 'suppress_all',
         header: 'Alert Suppression',
         cell: ({ row }) => {
           const suppress = row.original.suppress_all ?? row.original.suppress_alerts ?? true;
+          if (suppress) {
+            return (
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+                All notifications
+              </span>
+            );
+          }
+          const types = (row.original.alert_types ?? '')
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
+          if (types.length === 0) {
+            // Legacy row: suppress_all off with no type filter suppresses all.
+            return (
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+                All (no type filter)
+              </span>
+            );
+          }
           return (
-            <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
-              {suppress ? 'Suppress Notifications' : 'Log Only'}
+            <span
+              className="rounded bg-bg-panel px-2 py-0.5 text-[10px] font-semibold uppercase text-text-dim"
+              title={types.join(', ')}
+            >
+              {types.length} alert type(s)
             </span>
           );
         },
@@ -157,6 +275,9 @@ export function MaintenanceWorkspace() {
             <button
               type="button"
               onClick={() => {
+                setScopeMode(
+                  row.original.site_id ? 'site' : row.original.device_id ? 'device' : 'all',
+                );
                 setEditing({
                   ...row.original,
                   notes: row.original.notes ?? row.original.description ?? '',
@@ -181,7 +302,7 @@ export function MaintenanceWorkspace() {
         ),
       },
     ],
-    [deleteMutation]
+    [deleteMutation, devices, sites]
   );
 
   return (
@@ -203,6 +324,7 @@ export function MaintenanceWorkspace() {
         <button
           type="button"
           onClick={() => {
+            setScopeMode('all');
             setEditing({
               name: '',
               notes: '',
@@ -218,13 +340,6 @@ export function MaintenanceWorkspace() {
           Schedule Window
         </button>
       </div>
-
-      <ClassicFallback
-        title="Device and site scoping is not in the preview yet"
-        description="Windows created here apply globally. Scoping a window to one firewall or site, and choosing which alert types it suppresses, is still in the classic console."
-        href="/admin/maintenance"
-        label="Open scoped maintenance"
-      />
 
       {activeWindows.length > 0 && (
         <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/10 p-3.5 flex items-center gap-2.5 text-xs text-sig-warn">
@@ -245,6 +360,13 @@ export function MaintenanceWorkspace() {
             <div className="font-semibold text-sm text-text">{w.name}</div>
             <div className="text-xs font-mono text-text-dim">
               {formatDateTime(w.start_time)} → {formatDateTime(w.end_time)}
+            </div>
+            <div className="text-[11px] text-text-faint">
+              {w.device_id
+                ? devices.find((d) => d.id === w.device_id)?.name ?? `Device #${w.device_id}`
+                : w.site_id
+                  ? `Site: ${sites.find((s) => s.id === w.site_id)?.name ?? `#${w.site_id}`}`
+                  : 'All devices & sites'}
             </div>
           </div>
         )}
@@ -314,6 +436,69 @@ export function MaintenanceWorkspace() {
               className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
             />
           </div>
+          <div className="space-y-2">
+            <span className="block text-xs font-medium text-text-dim">Scope</span>
+            <div className="flex flex-wrap items-center gap-4 text-xs text-text">
+              {(
+                [
+                  { id: 'all', label: 'All devices & sites' },
+                  { id: 'device', label: 'One device' },
+                  { id: 'site', label: 'One site' },
+                ] as const
+              ).map((opt) => (
+                <label key={opt.id} className="inline-flex items-center gap-1.5">
+                  <input
+                    type="radio"
+                    name="maint-scope"
+                    checked={scopeMode === opt.id}
+                    onChange={() => setScopeMode(opt.id)}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+            {scopeMode === 'device' && (
+              <select
+                value={editing.device_id ?? ''}
+                onChange={(e) =>
+                  setEditing((p) => ({
+                    ...p,
+                    device_id: e.target.value ? Number(e.target.value) : null,
+                  }))
+                }
+                aria-label="Maintenance window device"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              >
+                <option value="">Select a device…</option>
+                {devices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {scopeMode === 'site' && (
+              <select
+                value={editing.site_id ?? ''}
+                onChange={(e) =>
+                  setEditing((p) => ({
+                    ...p,
+                    site_id: e.target.value ? Number(e.target.value) : null,
+                  }))
+                }
+                aria-label="Maintenance window site"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              >
+                <option value="">Select a site…</option>
+                {sites.map((site) => (
+                  <option key={site.id} value={site.id}>
+                    {site.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
           <label className="flex items-center gap-2 text-xs text-text">
             <input
               type="checkbox"
@@ -321,8 +506,52 @@ export function MaintenanceWorkspace() {
               onChange={(e) => setEditing((p) => ({ ...p, suppress_all: e.target.checked }))}
               className="h-4 w-4 rounded accent-accent"
             />
-            Suppress outbound alert notifications during window
+            Suppress all outbound alert notifications during the window
           </label>
+
+          {editing.suppress_all === false && (
+            <div className="rounded-lg border border-border bg-bg-panel/40">
+              <div className="border-b border-border px-3 py-2 text-[11px] text-text-dim">
+                Suppress only these alert types ({selectedTypes.size} selected). At least one is
+                required: the server treats an empty list as “all types”.
+                {Boolean(editing.id) && selectedTypes.size === 0 && (
+                  <span className="mt-1 block text-sig-warn">
+                    This existing window has no type filter, so it suppresses every alert type.
+                    Selecting a type narrows it.
+                  </span>
+                )}
+              </div>
+              <div className="max-h-64 overflow-y-auto p-2 space-y-2">
+                {groupedAlertTypes.map(([family, types]) => (
+                  <div key={family}>
+                    <div className="px-1 py-1 text-[10px] font-semibold uppercase tracking-wider text-text-faint">
+                      {family}
+                    </div>
+                    {types.map((t) => (
+                      <label
+                        key={t.type}
+                        className="flex items-start gap-2 rounded px-1 py-1 text-[11px] text-text hover:bg-bg-hover"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedTypes.has(t.type)}
+                          onChange={() => toggleAlertType(t.type)}
+                          className="mt-0.5 h-3.5 w-3.5 rounded accent-accent"
+                        />
+                        <span>
+                          <span className="font-mono">{t.type}</span>
+                          <span className="ml-1.5 text-text-faint">{t.description}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ))}
+                {alertTypes.length === 0 && (
+                  <p className="p-2 text-[11px] text-text-faint">Alert types unavailable.</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </SlideOverDrawer>
     </div>
