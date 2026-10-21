@@ -64,6 +64,8 @@ V2:
   server registry. Recurrence remains unexposed in both consoles.
 - **v0.11.343** — IRC channels/commands CRUD and advanced server credentials (NickServ/SASL,
   auto-reconnect). The Integrations area is now at parity.
+- **v0.11.344** — Event-rule profile CRUD + tri-state toggle matrix. Remaining: profile
+  assignments to sites/devices and the effective profile view.
 
 ## Top gaps
 

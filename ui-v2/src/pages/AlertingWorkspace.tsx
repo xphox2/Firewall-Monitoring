@@ -26,6 +26,8 @@ import {
   EventRuleDrawer,
   type EventRuleRecord,
 } from '@/components/alerting/event-rule-drawer';
+import { ProfileMatrixDrawer } from '@/components/alerting/profile-matrix-drawer';
+import type { AlertTypeInfo } from '@/lib/event-profiles';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
 
@@ -54,9 +56,15 @@ interface EventRuleProfile {
   name: string;
   description?: string;
   is_default?: boolean;
-  device_count?: number;
-  site_count?: number;
-  disabled_count?: number;
+  // ListEventRuleProfiles nests these under `counts`.
+  counts?: {
+    rule_count?: number;
+    temp_rule_count?: number;
+    toggle_count?: number;
+    toggle_off_count?: number;
+    site_count?: number;
+    device_count?: number;
+  };
 }
 
 type EventRule = EventRuleRecord;
@@ -380,6 +388,12 @@ export function AlertingWorkspace() {
     enabled: activeTab === 'event-rules' || activeTab === 'effective',
   });
 
+  const { data: alertTypes = [] } = useQuery({
+    queryKey: ['alert-types'],
+    queryFn: () => apiFetch<AlertTypeInfo[]>('/admin/api/alert-types'),
+    enabled: activeTab === 'event-rules',
+  });
+
   const { data: eventRules = [], refetch: refetchEventRules } = useQuery({
     queryKey: ['event-rules'],
     queryFn: () => apiFetch<EventRule[]>('/admin/api/event-rules'),
@@ -405,6 +419,87 @@ export function AlertingWorkspace() {
   const [editingRule, setEditingRule] = useState<EventRuleRecord | null>(null);
   const [ruleToDelete, setRuleToDelete] = useState<EventRuleRecord | null>(null);
   const [ruleToDisable, setRuleToDisable] = useState<EventRuleRecord | null>(null);
+
+  const [profileFormOpen, setProfileFormOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState<{
+    id?: number;
+    name: string;
+    description: string;
+    isDefault?: boolean;
+  }>({ name: '', description: '' });
+  const [matrixProfile, setMatrixProfile] = useState<{ id: number; name: string } | null>(null);
+  const [profileToDelete, setProfileToDelete] = useState<EventRuleProfile | null>(null);
+  const [cloneSource, setCloneSource] = useState<EventRuleProfile | null>(null);
+  const [cloneName, setCloneName] = useState('');
+  const [profileBusy, setProfileBusy] = useState(false);
+
+  const refreshProfiles = () => {
+    queryClient.invalidateQueries({ queryKey: ['event-rule-profiles'] });
+    queryClient.invalidateQueries({ queryKey: ['alert-config-overview'] });
+  };
+
+  const saveProfile = async () => {
+    if (!profileForm.name.trim() || profileBusy) {
+      if (!profileForm.name.trim()) toast.error('Profile name is required');
+      return;
+    }
+    setProfileBusy(true);
+    try {
+      if (profileForm.id) {
+        await apiFetch(`/admin/api/event-rule-profiles/${profileForm.id}`, {
+          method: 'PUT',
+          body: { name: profileForm.name.trim(), description: profileForm.description.trim() },
+        });
+        toast.success('Profile updated');
+      } else {
+        await apiFetch('/admin/api/event-rule-profiles', {
+          method: 'POST',
+          body: { name: profileForm.name.trim(), description: profileForm.description.trim() },
+        });
+        toast.success('Profile created');
+      }
+      setProfileFormOpen(false);
+      refreshProfiles();
+    } catch (err) {
+      toast.error('Could not save profile', err instanceof ApiError ? err.message : 'Error');
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const cloneProfile = async () => {
+    if (!cloneSource || !cloneName.trim() || profileBusy) return;
+    setProfileBusy(true);
+    try {
+      await apiFetch(`/admin/api/event-rule-profiles/${cloneSource.id}/clone`, {
+        method: 'POST',
+        body: { name: cloneName.trim() },
+      });
+      toast.success('Profile cloned');
+      setCloneSource(null);
+      setCloneName('');
+      refreshProfiles();
+    } catch (err) {
+      toast.error('Clone failed', err instanceof ApiError ? err.message : 'Error');
+    } finally {
+      setProfileBusy(false);
+    }
+  };
+
+  const deleteProfile = async (profile: EventRuleProfile) => {
+    if (profileBusy) return;
+    setProfileBusy(true);
+    try {
+      await apiFetch(`/admin/api/event-rule-profiles/${profile.id}`, { method: 'DELETE' });
+      toast.success('Profile deleted');
+      setProfileToDelete(null);
+      refreshProfiles();
+    } catch (err) {
+      toast.error('Delete failed', err instanceof ApiError ? err.message : 'Error');
+    } finally {
+      setProfileBusy(false);
+    }
+  };
 
   const deleteRule = async (rule: EventRuleRecord) => {
     try {
@@ -1023,10 +1118,10 @@ export function AlertingWorkspace() {
       {activeTab === 'event-rules' && (
         <div className="space-y-6">
           <ClassicFallback
-            title="Profile management is not in the preview yet"
-            description="Event rules can now be created, edited, previewed and deleted here. Creating/cloning event-rule profiles, editing their per-alert-type On/Off/Inherit matrix and assigning them to sites or devices is still in the classic console."
+            title="Profile assignments and the effective view are still in the classic console"
+            description="Profiles and their On/Off/Inherit toggle matrix are now editable here. Assigning a profile to sites or devices, and the per-profile effective view, are still classic-only."
             href="/admin/event-rules"
-            label="Open profile management"
+            label="Open assignments"
           />
           {/* Event Rule Profiles */}
           <section className="rounded-lg border border-border bg-bg-card overflow-hidden">
@@ -1039,6 +1134,19 @@ export function AlertingWorkspace() {
                   Enable or mute built-in alert types across sites or devices without writing regex rules.
                 </p>
               </div>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProfileForm({ name: '', description: '' });
+                    setProfileFormOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Profile
+                </button>
+              )}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 p-4">
               {eventProfiles.map((prof) => (
@@ -1059,11 +1167,62 @@ export function AlertingWorkspace() {
                       <p className="text-xs text-text-faint mt-1">{prof.description}</p>
                     )}
                   </div>
-                  <div className="flex items-center justify-between text-[11px] font-mono text-text-faint border-t border-border pt-2.5">
-                    <span>{prof.disabled_count ?? 0} muted types</span>
-                    <span>
-                      {prof.site_count ?? 0} sites · {prof.device_count ?? 0} devices
-                    </span>
+                  <div className="space-y-2 border-t border-border pt-2.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-text-faint">
+                      <span>{prof.counts?.toggle_off_count ?? 0} muted types</span>
+                      <span>
+                        {prof.counts?.site_count ?? 0} sites · {prof.counts?.device_count ?? 0}{' '}
+                        devices
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() =>
+                          setMatrixProfile({ id: prof.id, name: prof.name })
+                        }
+                        className="rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-accent hover:border-accent disabled:opacity-40"
+                      >
+                        Matrix
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => {
+                          setProfileForm({
+                            id: prof.id,
+                            name: prof.name,
+                            description: prof.description ?? '',
+                            isDefault: prof.is_default,
+                          });
+                          setProfileFormOpen(true);
+                        }}
+                        className="rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-text-dim hover:text-text disabled:opacity-40"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => {
+                          setCloneSource(prof);
+                          setCloneName(`${prof.name} copy`);
+                        }}
+                        className="rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-text-dim hover:text-text disabled:opacity-40"
+                      >
+                        Clone
+                      </button>
+                      {!prof.is_default && (
+                        <button
+                          type="button"
+                          onClick={() => setProfileToDelete(prof)}
+                          className="rounded border border-sig-crit/30 bg-sig-crit/10 px-2 py-1 text-[10px] font-semibold uppercase text-sig-crit"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1605,6 +1764,126 @@ export function AlertingWorkspace() {
           )}
         </section>
       )}
+
+      <SlideOverDrawer
+        open={profileFormOpen}
+        onOpenChange={setProfileFormOpen}
+        title={profileForm.id ? `Edit profile: ${profileForm.name}` : 'New event-rule profile'}
+        subtitle="Profiles layer rules and toggles (Default → Site → Device)."
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setProfileFormOpen(false)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!profileForm.name.trim() || profileBusy}
+              onClick={saveProfile}
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {profileForm.id ? 'Save profile' : 'Create profile'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Name</span>
+            <input
+              type="text"
+              value={profileForm.name}
+              disabled={profileForm.isDefault}
+              onChange={(e) => setProfileForm((f) => ({ ...f, name: e.target.value }))}
+              maxLength={200}
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text disabled:opacity-60"
+            />
+            {profileForm.isDefault && (
+              <span className="mt-1 block text-[11px] text-text-faint">
+                The Default profile is the chain anchor and cannot be renamed; its description and
+                matrix can still be edited.
+              </span>
+            )}
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-text-dim">Description</span>
+            <textarea
+              rows={3}
+              value={profileForm.description}
+              onChange={(e) => setProfileForm((f) => ({ ...f, description: e.target.value }))}
+              maxLength={1000}
+              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+            />
+          </label>
+        </div>
+      </SlideOverDrawer>
+
+      <SlideOverDrawer
+        open={!!cloneSource}
+        onOpenChange={(open) => {
+          if (!open) setCloneSource(null);
+        }}
+        title={`Clone profile: ${cloneSource?.name ?? ''}`}
+        subtitle="Copies the profile's toggle matrix; rules are not duplicated."
+        size="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCloneSource(null)}
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!cloneName.trim() || profileBusy}
+              onClick={cloneProfile}
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              Clone profile
+            </button>
+          </div>
+        }
+      >
+        <label className="block">
+          <span className="mb-1 block text-xs font-medium text-text-dim">New profile name</span>
+          <input
+            type="text"
+            value={cloneName}
+            onChange={(e) => setCloneName(e.target.value)}
+            maxLength={200}
+            className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+          />
+        </label>
+      </SlideOverDrawer>
+
+      <ProfileMatrixDrawer
+        open={!!matrixProfile}
+        onOpenChange={(open) => {
+          if (!open) setMatrixProfile(null);
+        }}
+        profile={matrixProfile}
+        types={alertTypes}
+        onSaved={refreshProfiles}
+      />
+
+      <ConfirmDialog
+        open={!!profileToDelete}
+        onOpenChange={(open) => {
+          if (!open) setProfileToDelete(null);
+        }}
+        title={`Delete profile ${profileToDelete?.name ?? ''}?`}
+        description="Devices and sites assigned to this profile fall back to their next layer. Rules bound to it are not deleted."
+        confirmLabel="Delete profile"
+        destructive
+        pending={profileBusy}
+        onConfirm={() => profileToDelete && void deleteProfile(profileToDelete)}
+      />
 
       <EventRuleDrawer
         open={ruleDrawerOpen}
