@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.352] - 2026-10-21
+
+### Added — Interactive topology map in the Admin UI V2 preview
+
+- The map tab is now a real **Cytoscape** graph (cytoscape 3.34 + fcose 2.2, lazily loaded as its own chunk) instead of a device list:
+  - device nodes grouped into **site compound nodes**, coloured by status;
+  - declared **connections** as solid edges and **IPSec tunnels** as dashed edges, with status colours and labels;
+  - unmatched tunnel peers render as external diamond nodes;
+  - link-type filter (all / connections / tunnels), site-group toggle, zoom in/out, fit and re-layout;
+  - clicking a device node opens its device page; a small panel shows the selected node.
+- **Peer resolution** uses the backend's authoritative `matched_device_id` (a dialup tunnel's `remote_ip` is a NAT gateway, not the peer), so NAT/dialup and provisioned tunnels draw the correct edge; unmatched peers stay external.
+- The graph is memoised on the query data and the select handler, so the 20–30s background refetches no longer destroy and re-lay-out the canvas (pan/zoom and selection survive); it rebuilds only when the data or a display filter actually changes.
+- KPI counters and edge colours share one `linkState` helper: `unknown`/`stale` are neither "up" nor "down".
+- Remaining classic-map depth (documented): LLDP/CDP edge evidence, expandable tunnel bundles with VLAN sublanes, and the five-tab connection detail drawer.
+- `lib/topology.ts` classification helper with tests (suite now 130).
+
 ## [0.11.351] - 2026-10-21
 
 ### Added — Syslog and SNMP trap analytics and inspectors in the Admin UI V2 preview
