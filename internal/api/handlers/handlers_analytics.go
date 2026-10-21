@@ -372,6 +372,13 @@ func (h *Handler) GetTraps(c *gin.Context) {
 	if trapType := c.Query("trap_type"); trapType != "" {
 		query = query.Where("trap_type = ?", trapType)
 	}
+	// Optional window so the traps page's range pills bound the LIST too (not
+	// just the stats chart). Absent means "no time filter" for API back-compat.
+	if hq := c.Query("hours"); hq != "" {
+		if v, err := strconv.Atoi(hq); err == nil && v > 0 && v <= 8760 {
+			query = query.Where("timestamp > ?", time.Now().Add(-time.Duration(v)*time.Hour))
+		}
+	}
 
 	var traps []models.TrapEvent
 	if err := query.Find(&traps).Error; err != nil {

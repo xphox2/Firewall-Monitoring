@@ -133,6 +133,20 @@ export function eventBytesSeries(
   return { timestamps: points.map((p) => p.ts), values: points.map((p) => p.bps) };
 }
 
+/** Generic stats TimeBucket {bucket,count} → counts (syslog/trap/alerts). */
+export function timeBucketSeries(
+  buckets: Array<{ bucket: string; count: number }> | undefined,
+): { timestamps: number[]; values: number[] } {
+  const points: Array<{ ts: number; count: number }> = [];
+  for (const bucket of buckets ?? []) {
+    const ts = bucketToMs(bucket.bucket);
+    if (ts == null) continue;
+    points.push({ ts, count: Number(bucket.count) || 0 });
+  }
+  points.sort((a, b) => a.ts - b.ts);
+  return { timestamps: points.map((p) => p.ts), values: points.map((p) => p.count) };
+}
+
 /** {hour|day, hits} → event counts. */
 export function eventHitsSeries(rows: EventBucket[] | undefined): {
   timestamps: number[];

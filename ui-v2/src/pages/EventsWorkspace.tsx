@@ -21,9 +21,10 @@ import {
 } from '@/lib/events';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { BarList } from '@/components/ui/bar-list';
+import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
-import type { ReactNode } from 'react';
 
 type EventsTab = 'stream' | 'analytics' | 'security';
 type TimeWindow = '1h' | '6h' | '12h' | '24h' | '7d' | '30d';
@@ -650,81 +651,6 @@ function NetEventInspector({ event }: { event: NetEventRow | undefined }) {
   );
 }
 
-function Bars({
-  title,
-  rows,
-  bytes = false,
-  flag = false,
-  empty,
-}: {
-  title: string;
-  rows: Array<{ key: string; value: number }> | undefined;
-  bytes?: boolean;
-  flag?: boolean;
-  empty: string;
-}) {
-  const items = (rows ?? []).slice(0, 8);
-  const max = Math.max(1, ...items.map((r) => r.value));
-  return (
-    <div className="rounded-xl border border-border bg-bg-card p-3.5">
-      <h3 className="mb-2 text-xs font-semibold text-text">{title}</h3>
-      {items.length === 0 ? (
-        <p className="py-1 text-[11px] text-text-faint">{empty}</p>
-      ) : (
-        <div className="space-y-1.5">
-          {items.map((row, idx) => (
-            <div key={`${row.key}-${idx}`} className="space-y-0.5">
-              <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
-                <span className="min-w-0 truncate text-text">
-                  {flag && row.key.length === 2 ? (
-                    <span className="mr-1.5">{countryCodeToFlag(row.key)}</span>
-                  ) : null}
-                  {row.key || 'Unknown'}
-                </span>
-                <span className="shrink-0 text-text-dim">
-                  {bytes ? formatBytes(row.value) : formatCompactNumber(row.value)}
-                </span>
-              </div>
-              <div className="h-1 overflow-hidden rounded-full bg-bg-panel">
-                <div
-                  className="h-full rounded-full bg-accent/70"
-                  style={{ width: `${Math.max(2, (row.value / max) * 100)}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function DetailSection({
-  title,
-  fields,
-}: {
-  title: string;
-  fields: Array<[string, ReactNode]>;
-}) {
-  const visible = fields.filter(
-    ([, value]) => value !== null && value !== undefined && value !== '' && value !== '—',
-  );
-  if (visible.length === 0) return null;
-  return (
-    <section className="space-y-1.5">
-      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-faint">{title}</h4>
-      <div className="grid grid-cols-2 gap-2">
-        {visible.map(([label, value]) => (
-          <div key={label} className="rounded-lg border border-border bg-bg-panel px-2.5 py-2">
-            <div className="text-[10px] uppercase text-text-faint">{label}</div>
-            <div className="break-words font-mono text-[11px] text-text">{value}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const hours = windowToHours(windowRange);
   const days = windowToDays(windowRange);
@@ -838,34 +764,34 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        <Bars
+        <BarList
           title={`Top firewall policies (${days === 1 ? '24h' : `${days}d`} rollup)`}
           rows={policies}
           empty="No policy rollup data."
         />
-        <Bars title="Top destination countries" rows={geoDst} flag empty="No geo data." />
-        <Bars title="Top source countries" rows={geoSrc} flag empty="No geo data." />
-        <Bars title="Applications" rows={keyRows(analytics?.apps)} empty="No app telemetry." />
-        <Bars
+        <BarList title="Top destination countries" rows={geoDst} flag empty="No geo data." />
+        <BarList title="Top source countries" rows={geoSrc} flag empty="No geo data." />
+        <BarList title="Applications" rows={keyRows(analytics?.apps)} empty="No app telemetry." />
+        <BarList
           title="Application categories"
           rows={keyRows(analytics?.app_categories)}
           empty="No category telemetry."
         />
-        <Bars
+        <BarList
           title="Web categories"
           rows={keyRows(analytics?.web_categories)}
           empty="No web-category telemetry."
         />
-        <Bars title="DNS queries" rows={keyRows(analytics?.dns)} empty="No DNS telemetry." />
-        <Bars title="Users" rows={keyRows(analytics?.users)} empty="No user telemetry." />
-        <Bars title="Identity (source)" rows={identity} empty="No identity telemetry." />
-        <Bars title="Directions (rollup)" rows={directions} empty="No direction rollup." />
-        <Bars
+        <BarList title="DNS queries" rows={keyRows(analytics?.dns)} empty="No DNS telemetry." />
+        <BarList title="Users" rows={keyRows(analytics?.users)} empty="No user telemetry." />
+        <BarList title="Identity (source)" rows={identity} empty="No identity telemetry." />
+        <BarList title="Directions (rollup)" rows={directions} empty="No direction rollup." />
+        <BarList
           title="Rulesets (rollup)"
           rows={keyRows(rollups?.rulesets)}
           empty="No ruleset rollup."
         />
-        <Bars
+        <BarList
           title="Rollup application categories"
           rows={keyRows(rollups?.app_categories)}
           empty="No rollup categories."
