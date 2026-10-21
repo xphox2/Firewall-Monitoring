@@ -29,6 +29,17 @@ import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ConfigDiffDrawer } from '@/components/devices/config-diff-drawer';
+import {
+  CoreCpuPanel,
+  DiskUsagePanel,
+  HAPanel,
+  LicencePanel,
+  LoadAveragePanel,
+  PingSlaPanel,
+  RecentAlertsPanel,
+  SdwanPanel,
+  SecurityStatsPanel,
+} from '@/components/devices/device-ops-panels';
 import type { RevisionMeta } from '@/lib/config-diff';
 import {
   bucketSeconds,
@@ -820,6 +831,15 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   const interfaces: any[] = detail?.interfaces ?? [];
   const vpns: any[] = detail?.vpn_status ?? detail?.vpn_statuses ?? detail?.vpns ?? [];
   const sensors: any[] = detail?.hardware_sensors ?? [];
+  const processorStats: any[] = detail?.processor_stats ?? [];
+  const disks: any[] = detail?.disk_usage ?? [];
+  const loadAverage: any = detail?.load_average ?? null;
+  const recentAlerts: any[] = detail?.recent_alerts ?? [];
+  const pingStats: any[] = detail?.ping_stats ?? [];
+  const haStatus: any[] = detail?.ha_status ?? [];
+  const securityStats: any = detail?.security_stats ?? null;
+  const sdwanHealth: any[] = detail?.sdwan_health ?? [];
+  const licenceInfo: any[] = detail?.license_info ?? [];
   const cpuUsage = detail?.system_status?.cpu_usage ?? device?.cpu_usage ?? 0;
   const memoryUsage = detail?.system_status?.memory_usage ?? device?.memory_usage ?? 0;
 
@@ -1002,8 +1022,8 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   return (
     <div className="space-y-5">
       <ClassicFallback
-        title="Device charts, config diff and diagnostics are still in the classic console"
-        description="Charts, per-interface/per-tunnel traffic and config diff are now in the preview. HA, SD-WAN, ping SLA, AV/IPS/web-filter, licence panels and per-core CPU/disk/load are still classic-only."
+        title="A few device views are still in the classic console"
+        description="Charts, traffic, config diff, HA, SD-WAN, ping SLA, security/licence panels and per-core resources are now in the preview. Still classic-only: the in-place revision viewer and split/tree diff views."
         href={`/admin/devices/${deviceId ?? ''}`}
         label="Open this device in classic"
       />
@@ -1287,26 +1307,59 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                   emptyMessage="This device does not report a CPU breakdown."
                 />
               </div>
+
+              {(processorStats.length > 0 || disks.length > 0 || loadAverage) && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <CoreCpuPanel processors={processorStats} />
+                  <DiskUsagePanel disks={disks} />
+                  {loadAverage && (
+                    <div className="lg:col-span-2">
+                      <LoadAveragePanel load={loadAverage} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {activeTab === 'security' && (
-            <div className="rounded-xl border border-border bg-bg-card p-4 space-y-3">
-              <h2 className="text-sm font-semibold text-text">
-                Vendor Telemetry Capability Matrix (24h Observed)
-              </h2>
-              <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
-                {JSON.stringify(capabilities ?? { status: 'Loaded' }, null, 2)}
-              </pre>
+            <div className="space-y-4">
+              <SecurityStatsPanel stats={securityStats} />
+              <LicencePanel licences={licenceInfo} />
+              {!securityStats && licenceInfo.length === 0 && (
+                <div className="rounded-xl border border-border bg-bg-card p-4 text-xs text-text-dim">
+                  This device does not report security inspection counters or licences.
+                </div>
+              )}
+              <details className="rounded-xl border border-border bg-bg-card p-4">
+                <summary className="cursor-pointer text-sm font-semibold text-text">
+                  Vendor telemetry capability matrix (24h observed)
+                </summary>
+                <pre className="mt-3 rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
+                  {JSON.stringify(capabilities ?? { status: 'Loaded' }, null, 2)}
+                </pre>
+              </details>
             </div>
           )}
 
           {activeTab === 'diagnostics' && (
-            <div className="rounded-xl border border-border bg-bg-card p-4 space-y-2">
-              <h2 className="text-sm font-semibold text-text">Polling & Reachability Diagnostics</h2>
-              <p className="text-xs text-text-dim">
-                Last polled: {formatRelativeTime(device?.last_polled)}
-              </p>
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border bg-bg-card p-4 space-y-2">
+                <h2 className="text-sm font-semibold text-text">
+                  Polling & Reachability Diagnostics
+                </h2>
+                <p className="text-xs text-text-dim">
+                  Last polled: {formatRelativeTime(device?.last_polled)}
+                </p>
+              </div>
+              <HAPanel rows={haStatus} />
+              <SdwanPanel rows={sdwanHealth} />
+              <PingSlaPanel rows={pingStats} />
+              {haStatus.length === 0 && sdwanHealth.length === 0 && pingStats.length === 0 && (
+                <div className="rounded-xl border border-border bg-bg-card p-4 text-xs text-text-dim">
+                  This device does not report HA, SD-WAN or ping-SLA telemetry.
+                </div>
+              )}
             </div>
           )}
 
@@ -1418,7 +1471,9 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           )}
 
           {activeTab === 'lifecycle' && (
-            <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
+            <div className="space-y-4">
+              <RecentAlertsPanel alerts={recentAlerts} />
+              <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
               <h2 className="text-sm font-semibold text-text">Device Lifecycle & Permanent Purge</h2>
               <p className="text-xs text-text-dim">
                 Retiring a device stops polling while preserving historical telemetry. Permanently purging a retired device deletes all historical rows across every partition.
@@ -1450,6 +1505,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                     <Archive className="h-3.5 w-3.5" /> Retire Device (Preserve History)
                   </button>
                 )}
+              </div>
               </div>
             </div>
           )}
