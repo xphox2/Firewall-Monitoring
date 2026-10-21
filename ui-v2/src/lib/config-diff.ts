@@ -162,6 +162,88 @@ export function filterObjectChanges(
   });
 }
 
+export interface SplitSide {
+  line?: number;
+  text: string;
+  op: LineOp;
+}
+
+export interface SplitPair {
+  left: SplitSide | null;
+  right: SplitSide | null;
+  /** Volatile-pattern name, shown on the (right) side that carries the text. */
+  vname?: string;
+}
+
+/**
+ * Align the unified diff into split-view pairs. A run of deletes followed by a
+ * run of inserts is zipped element-wise, so a modified line reads side by side
+ * instead of as two stacked rows; unequal run lengths leave the extra side
+ * empty. Equal rows appear on both sides; volatile rows only on the to-side.
+ */
+export function pairSplitRows(rows: LineRow[]): SplitPair[] {
+  const pairs: SplitPair[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i]!;
+    if (row.op === 'equal') {
+      pairs.push({
+        left: { line: row.a, text: row.text, op: 'equal' },
+        right: { line: row.b, text: row.text, op: 'equal' },
+      });
+      i += 1;
+      continue;
+    }
+    if (row.op === 'volatile') {
+      pairs.push({
+        left: null,
+        right: { line: row.b, text: row.text, op: 'volatile' },
+        vname: row.vname,
+      });
+      i += 1;
+      continue;
+    }
+    if (row.op === 'delete') {
+      const deletes: LineRow[] = [];
+      while (i < rows.length && rows[i]!.op === 'delete') deletes.push(rows[i++]!);
+      const inserts: LineRow[] = [];
+      while (i < rows.length && rows[i]!.op === 'insert') inserts.push(rows[i++]!);
+      const count = Math.max(deletes.length, inserts.length);
+      for (let k = 0; k < count; k += 1) {
+        const removed = deletes[k];
+        const added = inserts[k];
+        pairs.push({
+          left: removed ? { line: removed.a, text: removed.text, op: 'delete' } : null,
+          right: added ? { line: added.b, text: added.text, op: 'insert' } : null,
+        });
+      }
+      continue;
+    }
+    const inserts: LineRow[] = [];
+    while (i < rows.length && rows[i]!.op === 'insert') inserts.push(rows[i++]!);
+    for (const added of inserts) {
+      pairs.push({ left: null, right: { line: added.b, text: added.text, op: 'insert' } });
+    }
+  }
+  return pairs;
+}
+
+export function filterSplitPairs(
+  pairs: SplitPair[],
+  query: string,
+  hideEqual: boolean,
+): SplitPair[] {
+  const needle = query.trim().toLowerCase();
+  return pairs.filter((pair) => {
+    const equal = pair.left?.op === 'equal' && pair.right?.op === 'equal';
+    if (hideEqual && equal) return false;
+    if (!needle) return true;
+    return [pair.left?.text, pair.right?.text].some((text) =>
+      (text ?? '').toLowerCase().includes(needle),
+    );
+  });
+}
+
 export function filterLineRows(rows: LineRow[], query: string, hideEqual: boolean): LineRow[] {
   const needle = query.trim().toLowerCase();
   return rows.filter((row) => {

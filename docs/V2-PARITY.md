@@ -19,7 +19,7 @@ gaps list below are the actionable view.
 | Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
 | Threat Intel | At parity: lookup verdict, feed switch/status, indicator search/add/delete, storm tuning | — |
 | Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
-| Devices | At parity: charts, traffic, config diff/split/revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | Cosmetic word-diff pairing in split diff |
+| Devices | At parity: charts, traffic, config diff/split with paired modifications, revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | — |
 | Collectors / Sites | At parity: probe approve/reject/commands/registration, site CRUD with region/country/timezone/parent hierarchy | — |
 | Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
 | Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
@@ -127,6 +127,8 @@ V2:
   Storage/archive is at parity.
 - **v0.11.364** — Full site fields (region/country/timezone/parent hierarchy). Collectors/Sites is
   at parity.
+- **v0.11.365** — Split diff pairs delete/insert runs side by side. The only remaining backlog is
+  topology graph depth and the profile-scoped effective view.
 
 ## Remaining gaps
 
@@ -136,8 +138,6 @@ V2:
    VLAN sublanes inside the graph and alert overlays on nodes.
 2. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
-3. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
-   line's delete+insert into one word-diff row.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
