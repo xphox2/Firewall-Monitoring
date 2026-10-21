@@ -10,7 +10,6 @@ import {
   UserCheck,
   Plus,
   Trash2,
-  Shield,
   Copy,
   Check,
   RefreshCw,
@@ -23,8 +22,8 @@ import { cn, formatRelativeTime, setDisplayTimezone } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { PasskeyCard, TwoFactorCard } from '@/components/profile/security-panels';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
@@ -68,13 +67,6 @@ interface AuditLogEntry {
   status: number;
   ip_address: string;
   user_agent: string;
-}
-
-interface PasskeyEntry {
-  id: number;
-  name: string;
-  created_at: string;
-  last_used_at?: string;
 }
 
 export function SystemWorkspace() {
@@ -1612,16 +1604,6 @@ function MyProfileSubTab() {
     queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
   });
 
-  const { data: passkeysRes } = useQuery({
-    queryKey: ['my-passkeys'],
-    // ListPasskeys returns {passkeys, notices, max}; typing it as an array made
-    // passkeys.map throw and blank this tab.
-    queryFn: () =>
-      apiFetch<{ passkeys?: PasskeyEntry[]; max?: number }>('/admin/api/passkeys'),
-  });
-
-  const passkeys = passkeysRes?.passkeys ?? [];
-
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -1676,24 +1658,8 @@ function MyProfileSubTab() {
     },
   });
 
-  const deletePasskeyMutation = useMutation({
-    mutationFn: async (id: number) => apiFetch(`/admin/api/passkeys/${id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      toast({ title: 'Passkey removed', variant: 'info' });
-      queryClient.invalidateQueries({ queryKey: ['my-passkeys'] });
-    },
-  });
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-      <div className="lg:col-span-2">
-        <ClassicFallback
-          title="2FA enrollment and passkey registration are still in the classic console"
-          description="The preview can edit your profile and remove passkeys. Enrolling a TOTP authenticator, registering a new passkey, recovering codes and the decline-with-risk flow have not been rebuilt yet."
-          href="/admin/profile"
-          label="Open security settings"
-        />
-      </div>
       {/* Profile & Password */}
       <div className="space-y-5">
         <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
@@ -1783,63 +1749,15 @@ function MyProfileSubTab() {
         </div>
       </div>
 
-      {/* MFA & Passkeys */}
-      <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
-        <div className="flex items-center justify-between border-b border-border pb-3">
-          <div>
-            <h2 className="text-sm font-semibold text-text flex items-center gap-2">
-              <Shield className="h-4 w-4 text-accent" />
-              Multi-Factor Authentication & Passkeys
-            </h2>
-            <p className="text-xs text-text-dim mt-0.5">
-              TOTP authenticator app status and registered WebAuthn hardware passkeys.
-            </p>
-          </div>
-          <span
-            className={cn(
-              'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-              me?.totp_enabled
-                ? 'bg-sig-ok/15 text-sig-ok'
-                : 'bg-bg-panel text-text-dim'
-            )}
-          >
-            {me?.totp_enabled ? 'TOTP Enrolled' : 'TOTP Off'}
-          </span>
-        </div>
-
-        <div className="space-y-2">
-          <div className="text-xs font-semibold text-text-dim">
-            Registered WebAuthn Passkeys ({passkeys.length})
-          </div>
-          {passkeys.length === 0 ? (
-            <div className="rounded-lg border border-border bg-bg-panel p-4 text-xs text-text-dim">
-              No passkeys registered for your account yet.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {passkeys.map((pk) => (
-                <div
-                  key={pk.id}
-                  className="flex items-center justify-between rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs"
-                >
-                  <div>
-                    <div className="font-semibold text-text">{pk.name}</div>
-                    <div className="text-[11px] text-text-dim">
-                      Created {formatRelativeTime(pk.created_at)}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => deletePasskeyMutation.mutate(pk.id)}
-                    className="rounded border border-sig-crit/30 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="space-y-5">
+        <TwoFactorCard
+          me={me}
+          onChanged={() => queryClient.invalidateQueries({ queryKey: ['me'] })}
+        />
+        <PasskeyCard
+          me={me}
+          onChanged={() => queryClient.invalidateQueries({ queryKey: ['me'] })}
+        />
       </div>
     </div>
   );

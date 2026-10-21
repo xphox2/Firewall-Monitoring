@@ -56,7 +56,10 @@ V2:
   detail drawer, incidents open/resolved). Remaining alert gaps: parsed syslog fields, linked
   flow detections, per-type trend breakdowns.
 - **v0.11.340** — User administration (disable/enable, reset password, remove passkeys, status),
-  API token expiry/status and audit paging/filters. Next: 2FA enrollment and passkey registration.
+  API token expiry/status and audit paging/filters.
+- **v0.11.341** — 2FA enrollment/disable wizard and passkey registration/removal (with the
+  real WebAuthn ceremony and required re-auth). Remaining: decline-with-risk, passkey rename,
+  and the profile "member since" line.
 
 ## Top gaps
 
