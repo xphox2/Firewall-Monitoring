@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.365] - 2026-10-21
+
+### Changed — Split diff pairs modified lines
+
+- The split config-diff view now zips a delete-run with the following insert-run element-wise, so a
+  modified line reads side by side instead of as two stacked rows; unequal runs leave the extra
+  side empty. Equal rows stay on both sides and volatile rows stay on the to-side with their
+  pattern chip next to the text.
+- Filtering is applied to whole pairs (hide-equal removes only equal pairs; search matches either
+  side), and the pairing is memoised separately from filtering.
+- Tests for the pairing and pair filtering (suite now 148).
+- Docs: the cosmetic device-diff gap is closed; the remaining backlog is topology graph depth and
+  the profile-scoped effective view.
+
 ## [0.11.364] - 2026-10-21
 
 ### Added — Full site fields in the V2 collectors page

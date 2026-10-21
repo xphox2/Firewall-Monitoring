@@ -17,6 +17,8 @@ import {
   diffVerdict,
   filterLineRows,
   filterObjectChanges,
+  filterSplitPairs,
+  pairSplitRows,
   type ConfigDiffData,
   type DiffSeverity,
   type RevisionMeta,
@@ -95,6 +97,12 @@ export function ConfigDiffDrawer({
     () => filterLineRows(rows, query, hideEqual),
     [rows, query, hideEqual],
   );
+  const pairedRows = useMemo(() => pairSplitRows(rows), [rows]);
+  const splitPairs = useMemo(
+    () => filterSplitPairs(pairedRows, query, hideEqual),
+    [pairedRows, query, hideEqual],
+  );
+  const lineCount = lineView === 'split' ? splitPairs.length : filteredRows.length;
   const verdict = data ? diffVerdict(data) : null;
 
   const toggleSeverity = (severity: DiffSeverity) => {
@@ -380,7 +388,7 @@ export function ConfigDiffDrawer({
 
           {tab === 'lines' && (
             <div className="overflow-hidden rounded-lg border border-border bg-bg-panel">
-              {filteredRows.length === 0 ? (
+              {lineCount === 0 ? (
                 <p className="p-4 text-center text-xs text-text-faint">
                   {rows.length === 0 ? 'No line-level differences.' : 'No lines match the filter.'}
                 </p>
@@ -416,51 +424,42 @@ export function ConfigDiffDrawer({
                     </div>
                   ) : (
                     <div className="max-h-[60vh] overflow-auto font-mono text-[11px]">
-                      {filteredRows.slice(0, visibleRows).map((row, idx) => {
-                        // A volatile row carries only the b-side text; showing it
-                        // in the from column would claim both sides are equal.
-                        const volatile = row.op === 'volatile';
-                        const leftText = row.op === 'insert' || volatile ? '' : row.text;
-                        const rightText = row.op === 'delete' ? '' : row.text;
+                      {splitPairs.slice(0, visibleRows).map((pair, idx) => {
+                        const volatile = pair.right?.op === 'volatile';
                         return (
                           <div key={idx} className="grid grid-cols-2 border-b border-border/40">
                             <div
                               className={cn(
                                 'flex items-start gap-2 whitespace-pre-wrap break-all px-2 py-0.5',
-                                row.op === 'delete'
+                                pair.left?.op === 'delete'
                                   ? LINE_STYLE['delete']
-                                  : row.op === 'volatile'
+                                  : volatile
                                     ? LINE_STYLE['volatile']
                                     : 'text-text-dim',
                               )}
                             >
                               <span className="w-8 shrink-0 select-none text-right text-text-faint">
-                                {row.a || ''}
+                                {pair.left?.line || ''}
                               </span>
-                              <span className="min-w-0 flex-1">{leftText}</span>
-                              {volatile && (
-                                <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
-                                  volatile{row.vname ? `: ${row.vname}` : ''}
-                                </span>
-                              )}
+                              <span className="min-w-0 flex-1">{pair.left?.text ?? ''}</span>
                             </div>
                             <div
                               className={cn(
                                 'flex items-start gap-2 whitespace-pre-wrap break-all border-l border-border/40 px-2 py-0.5',
-                                row.op === 'insert'
+                                pair.right?.op === 'insert'
                                   ? LINE_STYLE['insert']
-                                  : row.op === 'volatile'
+                                  : volatile
                                     ? LINE_STYLE['volatile']
                                     : 'text-text-dim',
                               )}
                             >
                               <span className="w-8 shrink-0 select-none text-right text-text-faint">
-                                {row.b || ''}
+                                {pair.right?.line || ''}
                               </span>
-                              <span className="min-w-0 flex-1">{rightText}</span>
-                              {row.vname && (
+                              <span className="min-w-0 flex-1">{pair.right?.text ?? ''}</span>
+                              {pair.vname && (
                                 <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
-                                  {row.vname}
+                                  {pair.vname}
                                 </span>
                               )}
                             </div>
@@ -469,14 +468,14 @@ export function ConfigDiffDrawer({
                       })}
                     </div>
                   )}
-                  {filteredRows.length > visibleRows && (
+                  {lineCount > visibleRows && (
                     <button
                       type="button"
                       onClick={() => setVisibleRows((n) => n + ROW_PAGE)}
                       className="w-full border-t border-border bg-bg-card px-3 py-2 text-xs font-medium text-accent hover:bg-bg-hover"
                     >
-                      Show {Math.min(ROW_PAGE, filteredRows.length - visibleRows)} more rows (
-                      {filteredRows.length - visibleRows} hidden)
+                      Show {Math.min(ROW_PAGE, lineCount - visibleRows)} more rows (
+                      {lineCount - visibleRows} hidden)
                     </button>
                   )}
                 </>

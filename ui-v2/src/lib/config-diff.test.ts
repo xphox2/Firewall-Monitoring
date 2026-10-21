@@ -5,6 +5,9 @@ import {
   diffVerdict,
   filterLineRows,
   filterObjectChanges,
+  filterSplitPairs,
+  pairSplitRows,
+  type LineRow,
   severityRank,
   type ConfigDiffData,
   type ObjectChange,
@@ -139,5 +142,87 @@ describe('helpers', () => {
       /out-of-band/,
     );
     expect(attributionLabel({ id: 1, timestamp: '' })).toBe('unattributed');
+  });
+});
+
+const line = (op: LineRow['op'], text: string, a = 0, b = 0, vname?: string): LineRow => ({
+  op,
+  text,
+  a,
+  b,
+  vname,
+});
+
+describe('pairSplitRows', () => {
+  it('puts an equal row on both sides', () => {
+    const [pair] = pairSplitRows([line('equal', 'hostname fw', 3, 3)]);
+    expect(pair?.left).toMatchObject({ line: 3, text: 'hostname fw', op: 'equal' });
+    expect(pair?.right).toMatchObject({ line: 3, text: 'hostname fw', op: 'equal' });
+  });
+
+  it('pairs a delete followed by an insert into one row', () => {
+    const pairs = pairSplitRows([
+      line('delete', 'set allowed 10.0.0.1', 10, 0),
+      line('insert', 'set allowed 10.0.0.2', 0, 10),
+    ]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]?.left?.text).toBe('set allowed 10.0.0.1');
+    expect(pairs[0]?.right?.text).toBe('set allowed 10.0.0.2');
+  });
+
+  it('zips unequal runs and leaves the extra side empty', () => {
+    const pairs = pairSplitRows([
+      line('delete', 'a', 1, 0),
+      line('delete', 'b', 2, 0),
+      line('insert', 'c', 0, 1),
+    ]);
+    expect(pairs).toHaveLength(2);
+    expect(pairs[0]).toMatchObject({ left: { text: 'a' }, right: { text: 'c' } });
+    expect(pairs[1]?.left?.text).toBe('b');
+    expect(pairs[1]?.right).toBeNull();
+  });
+
+  it('shows an insert-only run on the right', () => {
+    const pairs = pairSplitRows([line('insert', 'new line', 0, 4)]);
+    expect(pairs).toHaveLength(1);
+    expect(pairs[0]?.left).toBeNull();
+    expect(pairs[0]?.right?.text).toBe('new line');
+  });
+
+  it('shows a volatile row only on the to-side with its name', () => {
+    const [pair] = pairSplitRows([line('volatile', 'set serial 123', 0, 7, 'serial')]);
+    expect(pair?.left).toBeNull();
+    expect(pair?.right?.op).toBe('volatile');
+    expect(pair?.vname).toBe('serial');
+  });
+
+  it('does not pair a delete and insert separated by an equal row', () => {
+    const pairs = pairSplitRows([
+      line('delete', 'old', 1, 0),
+      line('equal', 'same', 2, 2),
+      line('insert', 'new', 0, 3),
+    ]);
+    expect(pairs).toHaveLength(3);
+    expect(pairs[0]?.right).toBeNull();
+    expect(pairs[2]?.left).toBeNull();
+  });
+});
+
+describe('filterSplitPairs', () => {
+  const pairs = pairSplitRows([
+    line('equal', 'same', 1, 1),
+    line('delete', 'old value', 2, 0),
+    line('insert', 'new value', 0, 2),
+    line('volatile', 'serial 999', 0, 3, 'serial'),
+  ]);
+
+  it('hides equal pairs only', () => {
+    expect(filterSplitPairs(pairs, '', true)).toHaveLength(2);
+  });
+
+  it('matches either side of a pair', () => {
+    expect(filterSplitPairs(pairs, 'old value', true)).toHaveLength(1);
+    expect(filterSplitPairs(pairs, 'new value', true)).toHaveLength(1);
+    expect(filterSplitPairs(pairs, 'serial', true)).toHaveLength(1);
   });
 });
