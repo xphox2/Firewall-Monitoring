@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.353] - 2026-10-21
+
+### Added — Full connection detail in the Admin UI V2 preview
+
+- All five connection-detail tabs now render real content instead of raw JSON:
+  - **Overview**: family (tunnel/overlay/direct/off-net), status, type, latency, endpoints, cumulative bytes, throughput (bytes/s converted to bits/s, hidden for direct links where the store returns no throughput), reset-safe window totals and a flow-telemetry badge.
+  - **Source / Destination tunnels**: tunnel name, phase-1, status, remote IP, in/out bytes and uptime.
+  - **Link Evidence**: member interfaces (kind, VLAN, IP/subnet, speed, status), overlays (VNI, carrier, VTEPs) and the LLDP/FDB/ARP evidence rows the backend ships (tier, local port, remote sysname/MAC/IP, VLAN, freshness), plus phase-2 selector correlation and a warning when an endpoint shares one counter series across phase-2 names.
+  - **Traffic & Flows**: inbound/outbound throughput chart over 1h/24h/7d/30d (per-bucket deltas → bits/s), window totals, peaks and a flow-telemetry note.
+- Fixed two phantom fields inherited from the old drawer (`latency_ms`, `bandwidth_mbps`; the model exposes `latency` and no connection-level bandwidth), surfaced detail-load errors, and removed the last `ClassicFallback` on the connections drawer.
+- Remaining classic-map depth: LLDP/VLAN bundle expansion in the graph itself (the evidence is now visible in the detail tabs).
+
 ## [0.11.352] - 2026-10-21
 
 ### Added — Interactive topology map in the Admin UI V2 preview

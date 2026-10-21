@@ -17,8 +17,14 @@ import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { ClassicFallback } from '@/components/ui/classic-fallback';
 import type { MapEdge, MapNode, MapSite } from '@/components/topology/topology-map';
+import {
+  ConnectionEvidence,
+  ConnectionOverview,
+  ConnectionTraffic,
+  ConnectionTunnels,
+  type ConnectionDetail,
+} from '@/components/topology/connection-detail-panels';
 import { linkState } from '@/lib/topology';
 
 // Cytoscape + fcose are ~400 KB; load them only when the map tab is opened.
@@ -341,9 +347,9 @@ function ConnectionsSubTab() {
   const [selectedConn, setSelectedConn] = useState<ConnectionRecord | null>(null);
   const [detailTab, setDetailTab] = useState<'overview' | 'source' | 'dest' | 'evidence' | 'traffic'>('overview');
 
-  const { data: connDetail } = useQuery({
+  const { data: connDetail, isError: connDetailError } = useQuery({
     queryKey: ['connection-detail', selectedConn?.id],
-    queryFn: () => apiFetch<any>(`/admin/api/connections/${selectedConn?.id}/detail`),
+    queryFn: () => apiFetch<ConnectionDetail>(`/admin/api/connections/${selectedConn?.id}/detail`),
     enabled: Boolean(selectedConn?.id),
   });
 
@@ -478,17 +484,26 @@ function ConnectionsSubTab() {
         activeTab={detailTab}
         onTabChange={(id) => setDetailTab(id as typeof detailTab)}
       >
-        <div className="space-y-3">
-          <ClassicFallback
-            title="Full connection detail lives in the classic console"
-            description="Source/destination tunnel tables, per-tunnel traffic charts, LLDP/FDB/ARP evidence and the traffic-analysis charts are not rebuilt here yet."
-            href={`/admin/connections/${selectedConn?.id ?? ''}`}
-            label="Open connection detail"
+        {connDetailError && (
+          <div className="mb-3 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+            Could not load connection detail. It may have been deleted or the endpoint retired.
+          </div>
+        )}
+        {detailTab === 'overview' && <ConnectionOverview detail={connDetail} />}
+        {detailTab === 'source' && (
+          <ConnectionTunnels tunnels={connDetail?.source_tunnels} side="source" />
+        )}
+        {detailTab === 'dest' && (
+          <ConnectionTunnels tunnels={connDetail?.dest_tunnels} side="destination" />
+        )}
+        {detailTab === 'evidence' && <ConnectionEvidence detail={connDetail} />}
+        {detailTab === 'traffic' && selectedConn && (
+          <ConnectionTraffic
+            key={selectedConn.id}
+            connectionId={selectedConn.id}
+            hasFlowData={connDetail?.has_flow_data}
           />
-          <pre className="rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
-            {JSON.stringify(connDetail ?? selectedConn ?? {}, null, 2)}
-          </pre>
-        </div>
+        )}
       </SlideOverDrawer>
 
       <ConfirmDialog

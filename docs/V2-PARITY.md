@@ -83,7 +83,9 @@ V2:
 - **v0.11.351** — Syslog and trap stats charts, range pills, severity filtering and structured
   inspectors; traps list gained a server-side `hours` window.
 - **v0.11.352** — Interactive Cytoscape topology map (site compounds, connection/tunnel edges,
-  filters, zoom/fit, device drill-through). Remaining: LLDP/VLAN bundle depth and connection detail.
+  filters, zoom/fit, device drill-through).
+- **v0.11.353** — Five-tab connection detail (KPIs, tunnel tables, L2 evidence, phase-2
+  correlation, traffic chart). Remaining: graph bundle/VLAN expansion and alert overlays.
 
 ## Top gaps
 
@@ -91,12 +93,11 @@ The scoreboard above is the **v0.11.333 audit baseline**; the per-version log
 records what has closed since. Re-auditing all 296 units is pending, so this
 list — not the table — is the current backlog.
 
-1. **Topology map and connection detail.** V2 now has an interactive Cytoscape
-   map (sites, connections, IPSec tunnels, filters, zoom/fit). Still classic-only:
-   LLDP/CDP edge evidence, expandable tunnel bundles with VLAN sublanes, alert
-   overlays, the standalone connection page (bridge/gauges/tunnel tables/traffic
-   analysis) and the five connection detail tabs. IPSec CLI preview is a raw-JSON
-   stub.
+1. **Topology depth.** V2 has an interactive Cytoscape map (sites, connections,
+   IPSec tunnels, filters, zoom/fit) and a five-tab connection detail (overview,
+   source/dest tunnels, LLDP/FDB/ARP + interface + phase-2 evidence, traffic
+   chart). Still classic-only: expanding tunnel bundles / VLAN sublanes in the
+   graph itself, graph alert overlays, and the IPSec CLI preview raw-JSON stub.
 2. **Events depth.** Analytics and rollups exist, but event/security-event
    detail is still a raw-JSON drawer, and several security columns/filters and
    per-type breakdowns remain classic-only.
@@ -122,8 +123,8 @@ and the effective-policy simulator.
 
 ## Where V2 points at V1
 
-Thin surfaces still render a `ClassicFallback` notice with a link to the
-equivalent classic page: the **topology map / connection detail** and the
-**alert triage analytics** that are still classic-only. The shell also carries
-a `PREVIEW` pill and a dismissible notice, and the classic sidebar links to
-`/admin/v2` with a `Preview` badge.
+One surface still renders a `ClassicFallback` notice: the **alert triage
+analytics** that remain classic-only (parsed syslog fields, linked flow
+detections, per-type trends). The shell also carries a `PREVIEW` pill and a
+dismissible notice, and the classic sidebar links to `/admin/v2` with a
+`Preview` badge.
