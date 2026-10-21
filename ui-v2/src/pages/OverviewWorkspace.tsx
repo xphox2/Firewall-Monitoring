@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -21,6 +21,7 @@ import { cn, formatBytes, formatCompactNumber, formatRelativeTime } from '@/lib/
 import { formatBitsPerSecond } from '@/lib/chart';
 import { bucketToMs } from '@/lib/time-buckets';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
+import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { mergeFeed } from '@/lib/noc';
 
 type OverviewTab = 'health' | 'noc';
@@ -609,6 +610,28 @@ function LiveNocWallboard() {
   const [feedKind, setFeedKind] = useState<FeedKind>('all');
   const [feedCount, setFeedCount] = useState(20);
   const [view, setView] = useState<'site' | 'device'>('site');
+  const [manualPause, setManualPause] = useState(false);
+  const [hoveringFeed, setHoveringFeed] = useState(false);
+  const [drillSite, setDrillSite] = useState<NocSite | null>(null);
+  // Pausing only holds the feed; vitals keep streaming. Hovering the feed also
+  // holds it so a row can be read without it being re-sorted away.
+  // Touch devices can synthesize mouseenter without a matching mouseleave;
+  // only honour hover-hold where hovering is a real input.
+  const hoverCapable =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(hover: hover)').matches
+      : false;
+  const paused = manualPause || (hoverCapable && hoveringFeed);
+  const pausedRef = useRef(false);
+  const pendingFeedRef = useRef<NocFeed | null>(null);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+    if (!paused && pendingFeedRef.current) {
+      setFeed(pendingFeedRef.current);
+      pendingFeedRef.current = null;
+    }
+  }, [paused]);
 
   const { data: initialSnapshot } = useQuery({
     queryKey: ['noc-snapshot'],
@@ -618,7 +641,9 @@ function LiveNocWallboard() {
   useEffect(() => {
     if (initialSnapshot) {
       setSnapshot((current) => current ?? initialSnapshot);
-      if (initialSnapshot.feed) setFeed((current) => current ?? initialSnapshot.feed ?? null);
+      if (initialSnapshot.feed && !pausedRef.current) {
+        setFeed((current) => current ?? initialSnapshot.feed ?? null);
+      }
     }
   }, [initialSnapshot]);
 
@@ -634,7 +659,10 @@ function LiveNocWallboard() {
         setSnapshot(parsed);
         // The one-shot carries the feed inline; the stream normally sends it
         // as a named event, but accept it here too.
-        if (parsed.feed) setFeed(parsed.feed);
+        if (parsed.feed) {
+          if (pausedRef.current) pendingFeedRef.current = parsed.feed;
+          else setFeed(parsed.feed);
+        }
       } catch {
         // keepalive comment
       }
@@ -642,7 +670,9 @@ function LiveNocWallboard() {
     // v0.11.269: the live alert/detection ticker arrives as a named event.
     const onFeed = (ev: MessageEvent) => {
       try {
-        setFeed(JSON.parse(ev.data) as NocFeed);
+        const parsed = JSON.parse(ev.data) as NocFeed;
+        if (pausedRef.current) pendingFeedRef.current = parsed;
+        else setFeed(parsed);
       } catch {
         // ignore malformed frame
       }
@@ -795,9 +825,21 @@ function LiveNocWallboard() {
             {sites.map((site, idx) => (
               <div
                 key={site.site_id ?? `unassigned-${idx}`}
+                onClick={() => {
+                  if (site.site_id) setDrillSite(site);
+                }}
+                role={site.site_id ? 'button' : undefined}
+                tabIndex={site.site_id ? 0 : undefined}
+                onKeyDown={(event) => {
+                  if (site.site_id && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    setDrillSite(site);
+                  }
+                }}
                 className={cn(
                   'rounded-lg border bg-bg-panel p-3 space-y-1.5',
                   severityBorder(site.worst_severity),
+                  site.site_id && 'cursor-pointer hover:border-accent/60',
                 )}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -832,7 +874,10 @@ function LiveNocWallboard() {
                       <button
                         key={d.id}
                         type="button"
-                        onClick={() => navigate(`/devices/${d.id}`)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/devices/${d.id}`);
+                        }}
                         className={cn(
                           'rounded px-1.5 py-0.5 text-[10px] font-mono',
                           d.status === 'online'
@@ -933,8 +978,26 @@ function LiveNocWallboard() {
                   {feed.silenced_total} silenced
                 </span>
               ) : null}
+              {paused && (
+                <span className="ml-2 rounded bg-sig-warn/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-sig-warn">
+                  {manualPause ? 'paused' : 'held'}
+                </span>
+              )}
             </h2>
             <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                aria-pressed={manualPause}
+                onClick={() => setManualPause((value) => !value)}
+                className={cn(
+                  'rounded border px-2 py-1 text-[10px] font-semibold uppercase',
+                  manualPause
+                    ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn'
+                    : 'border-border bg-bg-panel text-text-dim hover:text-text',
+                )}
+              >
+                {manualPause ? 'Resume' : 'Pause'}
+              </button>
               <select
                 value={feedKind}
                 onChange={(e) => setFeedKind(e.target.value as FeedKind)}
@@ -960,7 +1023,11 @@ function LiveNocWallboard() {
               </select>
             </div>
           </div>
-          <div className="max-h-[420px] overflow-y-auto">
+          <div
+            className="max-h-[420px] overflow-y-auto"
+            onMouseEnter={() => setHoveringFeed(true)}
+            onMouseLeave={() => setHoveringFeed(false)}
+          >
             {feedItems.length === 0 ? (
               <p className="p-6 text-center text-xs text-text-faint">
                 Nothing in the feed for this filter.
@@ -1052,6 +1119,151 @@ function LiveNocWallboard() {
           )}
         </div>
       </div>
+
+      <SiteDrilldown
+        site={drillSite}
+        onClose={() => setDrillSite(null)}
+        onOpenDevice={(id) => navigate(`/devices/${id}`)}
+      />
     </div>
+  );
+}
+
+function SiteDrilldown({
+  site,
+  onClose,
+  onOpenDevice,
+}: {
+  site: NocSite | null;
+  onClose: () => void;
+  onOpenDevice: (deviceId: number) => void;
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['noc-site-drilldown', site?.site_id],
+    queryFn: () =>
+      apiFetch<NocSnapshot>(`/admin/api/noc/snapshot?site_id=${site?.site_id}`),
+    enabled: site?.site_id != null,
+    refetchInterval: 30_000,
+  });
+  const filtered = data?.sites?.[0];
+
+  return (
+    <SlideOverDrawer
+      open={Boolean(site)}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={`Site drill-down — ${site?.site_name ?? ''}`}
+      subtitle="Filtered snapshot, refreshed every 30 seconds"
+      size="lg"
+    >
+      {isLoading ? (
+        <p className="p-6 text-center text-xs text-text-dim">Loading site snapshot…</p>
+      ) : isError ? (
+        <p className="p-6 text-center text-xs text-sig-crit">
+          Could not load this site's snapshot.
+        </p>
+      ) : !filtered ? (
+        <p className="p-6 text-center text-xs text-text-faint">
+          No snapshot data for this site.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ['Throughput', formatBitsPerSecond(filtered.bits_per_second ?? 0)],
+                [
+                  'Devices',
+                  `${filtered.devices_online ?? 0} up · ${filtered.devices_offline ?? 0} down`,
+                ],
+                [
+                  'Alerts',
+                  `${filtered.alerts_critical ?? 0} crit · ${filtered.alerts_warning ?? 0} warn`,
+                ],
+                ['Threat flows', formatCompactNumber(filtered.threat_flows ?? 0)],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="rounded-lg border border-border bg-bg-panel p-2.5">
+                <div className="text-[10px] uppercase text-text-faint">{label}</div>
+                <div className="mt-0.5 font-mono text-sm font-bold text-text">{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {filtered.probe_offline && (
+            <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-[11px] text-sig-crit">
+              The site probe is offline — device status may be stale.
+            </div>
+          )}
+
+          {(filtered.devices ?? []).length === 0 ? (
+            <p className="text-[11px] text-text-faint">No devices in this site.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
+                    <th scope="col" className="px-2 py-1.5">Device</th>
+                    <th scope="col" className="px-2 py-1.5">Status</th>
+                    <th scope="col" className="px-2 py-1.5">Severity</th>
+                    <th scope="col" className="px-2 py-1.5 text-right">Throughput</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {(filtered.devices ?? []).map((device) => (
+                    <tr
+                      key={device.id}
+                      role="button"
+                      tabIndex={0}
+                      className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-none"
+                      onClick={() => onOpenDevice(device.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          onOpenDevice(device.id);
+                        }
+                      }}
+                    >
+                      <td className="px-2 py-1.5">
+                        <div className="font-semibold text-text">{device.name}</div>
+                        <div className="font-mono text-[10px] text-text-faint">{device.ip}</div>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span
+                          className={
+                            device.status === 'online'
+                              ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                              : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                          }
+                        >
+                          {device.status || 'unknown'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span
+                          className={
+                            device.worst_severity === 'critical'
+                              ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                              : device.worst_severity === 'warning'
+                                ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
+                                : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                          }
+                        >
+                          {device.worst_severity || 'ok'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-mono text-[11px] text-text-dim">
+                        {formatBitsPerSecond(device.bits_per_second ?? 0)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </SlideOverDrawer>
   );
 }

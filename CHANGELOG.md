@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.362] - 2026-10-21
+
+### Added — NOC polish: site drill-down and feed pause
+
+- **Site drill-down**: clicking a site card (mouse, Enter or Space) opens a drawer with that site's
+  filtered snapshot — throughput, device counts, alert counts, threat flows, the probe-offline
+  warning and a device table that navigates to the device. Refreshes every 30 seconds.
+- **Backend**: a site-filtered NOC snapshot now carries that site's breakdown (including its device
+  rows) instead of omitting the site grid entirely; a site with no devices returns an identity-only
+  row so the drawer shows an honest empty state. The filtered-snapshot test now pins this.
+- **Feed pause**: a Pause/Resume toggle plus hold-while-hovering over the feed list (gated on a
+  hover-capable device, so touch never sticks). Feed frames are buffered while paused and the
+  latest is applied on resume; vitals keep streaming throughout.
+
 ## [0.11.361] - 2026-10-21
 
 ### Added — Parsed syslog fields for syslog-sourced alerts

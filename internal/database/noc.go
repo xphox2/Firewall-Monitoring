@@ -238,6 +238,34 @@ func (d *Database) GetNOCSnapshotFiltered(window time.Duration, filter NOCFilter
 			return nil, fmt.Errorf("noc snapshot: site breakdown: %w", err)
 		}
 		snap.Sites = sites
+	} else if filter.SiteID != nil {
+		// A site drill-down still needs that site's breakdown (devices, alert
+		// counts, probe state). The fleet grid is built once and the matching
+		// row selected; a site with no devices gets an identity-only row so the
+		// drawer can render an honest empty state instead of "no data".
+		sites, err := d.buildSiteBreakdown(cutoff, secs)
+		if err != nil {
+			return nil, fmt.Errorf("noc snapshot: site breakdown: %w", err)
+		}
+		for i := range sites {
+			if sites[i].SiteID != nil && *sites[i].SiteID == *filter.SiteID {
+				snap.Sites = []SiteBreakdown{sites[i]}
+				break
+			}
+		}
+		if len(snap.Sites) == 0 {
+			name := ""
+			if all, err := d.GetAllSites(); err == nil {
+				for _, site := range all {
+					if site.ID == *filter.SiteID {
+						name = site.Name
+						break
+					}
+				}
+			}
+			id := *filter.SiteID
+			snap.Sites = []SiteBreakdown{{SiteID: &id, SiteName: name}}
+		}
 	}
 
 	return snap, nil
