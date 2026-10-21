@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.356] - 2026-10-21
+
+### Changed — V2 parity document refreshed to the current state
+
+- `docs/V2-PARITY.md` now opens with a **Current state (v0.11.355)** table: what is at
+  parity per area and the specific remaining sub-gap, instead of only the stale v0.11.333
+  audit table.
+- The 296-unit audit table is retained as the **historical baseline**, and the "Top gaps"
+  list was rewritten to the remaining backlog (topology graph depth, dashboard host trends,
+  two alert sub-gaps, storage/collectors not re-audited, account-security leftovers, profile
+  effective view, cosmetic diff pairing, NOC polish).
+- Removed stale claims that event/syslog/trap details are raw JSON and that topology/IPSec
+  detail is classic-only.
+
 ## [0.11.355] - 2026-10-21
 
 ### Changed — The last raw-JSON surfaces are structured
