@@ -52,6 +52,9 @@ V2:
 - **v0.11.338** — Device operational panels (per-core CPU, filesystems, load average, security
   counters, licences, HA, SD-WAN, ping SLA, recent alerts). Device page remaining gaps: in-place
   revision viewer and split/tree diff views.
+- **v0.11.339** — Alerts triage (filters, stats + volume chart, bulk ack/snooze, pagination,
+  detail drawer, incidents open/resolved). Remaining alert gaps: parsed syslog fields, linked
+  flow detections, per-type trend breakdowns.
 
 ## Top gaps
 
