@@ -1920,7 +1920,10 @@
                 ' <button class="btn secondary sm" data-action="suppress-with-rule" data-min-role="admin" data-id="' + a.id + '">Suppress with a rule</button>' +
                 ' <button class="btn secondary sm" data-action="customize-with-rule" data-min-role="admin" data-id="' + a.id + '">Customize with a rule</button>';
 
-            var isSyslogAlert = a.metric_name === 'syslog';
+            // The event-rules refactor stores the firing rule's NAME in
+            // metric_name, so the old equality test was dead. Gate on the
+            // syslog-sourced alert types instead.
+            var isSyslogAlert = ['SYSLOG_EMERGENCY', 'SYSLOG_CRITICAL', 'SYSLOG_ALERT', 'LOG_RULE_MATCH'].indexOf(a.alert_type) !== -1;
             var parsedMsg = null;
             if (isSyslogAlert && a.message) {
                 parsedMsg = parseFortiGateLog(a.message);

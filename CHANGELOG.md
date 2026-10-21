@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.361] - 2026-10-21
+
+### Added — Parsed syslog fields for syslog-sourced alerts
+
+- The alert drawer now renders the classic console's **Parsed Syslog Fields** panel for
+  syslog-sourced alerts: FortiGate-style `key=value` extraction (quoted values, repeated keys,
+  the rule/hostname prefix) with the same key list and labels as V1 — source/destination,
+  protocol, action, bytes, duration, policy/session, interfaces, app/risk, virus/file/signature,
+  HA role — plus severity/level and type/subtype badges.
+- Correct gating: the event-rules refactor stores the firing rule's **name** in `metric_name`, so
+  the old `metric_name === 'syslog'` test (used by both consoles) was dead. Both V1 and V2 now gate
+  on `SYSLOG_EMERGENCY` / `SYSLOG_CRITICAL` / `SYSLOG_ALERT` / `LOG_RULE_MATCH`.
+- The inline "structured syslog parsing remains classic-only" note is gone: the alert area is at
+  parity. Parser helpers and gating have tests (suite now 140).
+
 ## [0.11.360] - 2026-10-21
 
 ### Added — Account-security leftovers in the Admin UI V2 preview
