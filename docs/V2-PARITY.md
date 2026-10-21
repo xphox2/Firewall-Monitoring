@@ -69,6 +69,8 @@ V2:
 - **v0.11.345** — Live NOC wallboard (vitals, site/device health, named-event feed, threats
   last 60s). Remaining: feed pause/hover hold, per-site drill-down snapshots, and NOC focus
   links from the topology map.
+- **v0.11.346** — Structured Threat Intel (lookup verdict card, feed master switch and status,
+  indicator search/paging/add/delete, storm tuning on the real field).
 
 ## Top gaps
 

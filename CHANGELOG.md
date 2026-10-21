@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.346] - 2026-10-20
+
+### Added — Structured Threat Intelligence in the Admin UI V2 preview
+
+- **Lookup** now renders a structured verdict card instead of JSON: KNOWN-BAD / Not listed / Not listed — no geo data, with country flag, ASN, organisation/prefix, per-scope matches (IP vs ASN) and severity. The separate geo request is gone; `/threat-intel/lookup` already carries the enrichment.
+- **Feeds**: indicators-loaded/feeds/interval/TTL tiles, a master matching switch (disable is confirmed; stored indicators are retained and matching resumes instantly), and a per-feed table with kind/category, entry count, last sync, status (ok/error/never/disabled) and enable/disable (disable purges that source's indicators, confirmed).
+- **Custom indicators**: add (CIDR, category/ticket, severity, optional local-midnight expiry), searchable and filterable by source/category/severity/active, 50-row pagination with totals, and confirmed deletion.
+- **Storm tuning** now uses the real `storm_sources` field (the previous UI sent `digest_threshold`, which the handler rejects); 0 disables the digest and an empty field cannot be saved as 0.
+- Read failures now surface an inline error instead of an empty table, and the lookup is single-flight.
+- `lib/threat-intel.ts` helper + tests (suite now 101).
+
 ## [0.11.345] - 2026-10-20
 
 ### Added — Live NOC wallboard in the Admin UI V2 preview
