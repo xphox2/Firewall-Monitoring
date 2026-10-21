@@ -28,6 +28,8 @@ import {
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
+import { ParsedSyslogFields } from '@/components/alerts/parsed-syslog-fields';
+import { isSyslogAlertType } from '@/lib/syslog-parse';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 
@@ -665,9 +667,6 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               : undefined
           }
         />
-        <p className="mt-1 text-[10px] text-text-faint">
-          Structured syslog-field parsing remains in the classic console.
-        </p>
       </div>
 
       {/* Filters */}
@@ -862,6 +861,8 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                 </span>
               )}
             </div>
+
+            {isSyslogAlertType(detail.alert_type) && <ParsedSyslogFields raw={detail.message} />}
 
             <p className="rounded-lg border border-border bg-bg-panel p-3 text-xs text-text">
               {detail.message}

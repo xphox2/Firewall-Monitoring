@@ -21,7 +21,7 @@ gaps list below are the actionable view.
 | Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
 | Devices | At parity: charts, traffic, config diff/split/revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | Cosmetic word-diff pairing in split diff |
 | Collectors / Sites | Not re-audited since the baseline | Collector/site editor fields and bulk actions may still lag the classic console |
-| Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, incidents | Structured syslog-field parsing |
+| Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
 | Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
 | Storage / Archive | Not re-audited since the baseline | Some storage/archive controls may still be classic-only |
 | Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
@@ -119,6 +119,8 @@ V2:
 - **v0.11.359** — Server resource trend (CPU/memory/root disk/DB volume) on the dashboard, with
   unprobed volume buckets kept as gaps.
 - **v0.11.360** — Account leftovers: 2FA decline-with-risk, passkey rename, member-since.
+- **v0.11.361** — Parsed syslog fields for syslog-sourced alerts (fixed the dead `metric_name`
+  gate in both consoles). The alert area is now at parity.
 
 ## Remaining gaps
 
@@ -126,15 +128,13 @@ V2:
    IPSec tunnels, filters, zoom/fit and device drill-through, and the detail
    drawer has the five tabs. Still classic-only: expanding tunnel bundles /
    VLAN sublanes inside the graph and alert overlays on nodes.
-2. **Alert sub-gap.** Structured syslog-field parsing; it is named inline on the
-   Alerts page. Per-type volume trends are now in the preview.
-3. **Storage / archive.** Not re-audited; some controls may still be classic-only.
-4. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
-5. **Profile effective view.** Assignments work; the classic per-profile
+2. **Storage / archive.** Not re-audited; some controls may still be classic-only.
+3. **Collectors / sites.** Not re-audited; editor fields and bulk actions may lag.
+4. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
-6. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
+5. **Device diff cosmetic.** Split view aligns rows but does not pair a modified
    line's delete+insert into one word-diff row.
-7. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
+6. **NOC polish.** Live-feed pause/hover hold and per-site drill-down snapshots.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
@@ -143,8 +143,7 @@ JSON remains available behind a disclosure).
 
 ## Where V2 points at V1
 
-No `ClassicFallback` notices remain. The two alert sub-gaps that are still
-classic-only (structured syslog-field parsing, per-type time series) are named
-inline on the page instead. The shell still carries a `PREVIEW` pill and a
-dismissible notice, and the classic sidebar links to `/admin/v2` with a
-`Preview` badge.
+No `ClassicFallback` notices and no inline classic-only sub-gap notes remain.
+The shell still carries a `PREVIEW` pill and a dismissible notice, and the
+classic sidebar links to `/admin/v2` with a `Preview` badge. The remaining
+backlog is listed above.
