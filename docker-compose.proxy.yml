@@ -17,13 +17,18 @@ version: '3.8'
 
 services:
   nginx-proxy-manager:
-    image: jc21/nginx-proxy-manager:latest
+    # Pinned to an immutable @sha256 digest (supply-chain): a mutable `latest`
+    # tag could be re-pointed by a compromised upstream account. Bump the digest
+    # when you intentionally upgrade the proxy.
+    image: jc21/nginx-proxy-manager:latest@sha256:4393e642e233e5efd5adeb7f10918d4aaea71c9ed875b94190273fc8e87f9594
     container_name: nginx-proxy-manager
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"
+      # The admin UI (port 81) is loopback-bound: it must not be reachable from
+      # the public internet.
+      - "127.0.0.1:81:81"
     volumes:
       - ./data/nginx-proxy-manager:/data
       - ./letsencrypt:/etc/letsencrypt
@@ -38,7 +43,7 @@ services:
   # docs/nginx.conf first. This assumes the fwmon container is named
   # `firewall-mon` and reachable on the same compose network.
   # nginx:
-  #   image: nginx:stable
+  #   image: nginx:stable@sha256:a7675fcee220f59b4a99f7098c06a0d5d999c2c0ee37c0211efb780536e5cb20
   #   container_name: firewall-mon-proxy
   #   restart: unless-stopped
   #   ports:

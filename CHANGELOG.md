@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.383] - 2026-10-22
+
+### Security — Pin Docker images to immutable digests
+
+- `docker-compose.yml` now pins the `firewall-mon` image default to an
+  `@sha256` digest (override with `FIREWALL_MON_IMAGE` to track a moving tag).
+- `docker-compose.proxy.yml` pins `jc21/nginx-proxy-manager` and the commented
+  `nginx:stable` to `@sha256` digests, and loopback-binds the proxy admin UI
+  (`127.0.0.1:81:81`) so it is not internet-exposed.
+- Added a guardrail test pinning both compose files' image references and the
+  loopback binding.
+
 ## [0.11.382] - 2026-10-22
 
 ### Security — Stop defaulting the SNMP community to "public"
