@@ -3,11 +3,12 @@ import { installApiMocks } from './mocks';
 
 test('schedules a weekly recurring maintenance window', async ({ page }) => {
   const posted: Array<Record<string, unknown>> = [];
+  let windows: Array<Record<string, unknown>> = [];
   await installApiMocks(page, [
     {
       match: (url) => url.pathname === '/admin/api/maintenance-windows',
       method: 'GET',
-      body: [],
+      onRequest: () => windows,
     },
     {
       match: (url) => url.pathname === '/admin/api/maintenance-windows/active',
@@ -17,8 +18,10 @@ test('schedules a weekly recurring maintenance window', async ({ page }) => {
       match: (url) => url.pathname === '/admin/api/maintenance-windows',
       method: 'POST',
       onRequest: (request) => {
-        posted.push(request.postDataJSON() as Record<string, unknown>);
-        return { id: 42 };
+        const body = request.postDataJSON() as Record<string, unknown>;
+        posted.push(body);
+        windows = [{ id: 42, ...body }];
+        return windows[0];
       },
     },
     {
@@ -43,6 +46,11 @@ test('schedules a weekly recurring maintenance window', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Save Window' }).click();
   await expect(page.getByText('Maintenance window scheduled')).toBeVisible();
+  // The list is refetched after the create: the card/table must show the
+  // recurrence, not just accept the payload.
+  const table = page.getByTestId('responsive-desktop-table');
+  await expect(table.getByText('Weekly patching')).toBeVisible();
+  await expect(table.getByText('Weekly · Mon, Wed')).toBeVisible();
 
   expect(posted).toHaveLength(1);
   expect(posted[0]).toMatchObject({

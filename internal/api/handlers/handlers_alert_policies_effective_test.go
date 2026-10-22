@@ -18,6 +18,7 @@ func TestEffectiveAlertConfigPayload_ChannelsWithoutCredentials(t *testing.T) {
 	resolved := alerts.ResolvedAlertConfig{
 		PolicyID:          &policyID,
 		AlertEnabled:      true,
+		InMaintenance:     true,
 		Threshold:         80,
 		ClearThreshold:    75,
 		CooldownMinutes:   15,
@@ -64,6 +65,9 @@ func TestEffectiveAlertConfigPayload_ChannelsWithoutCredentials(t *testing.T) {
 	}
 	if effective["escalation_enabled"] != true || effective["escalation_minutes"] != 30 {
 		t.Errorf("escalation fields wrong: %+v", effective)
+	}
+	if effective["in_maintenance"] != true {
+		t.Errorf("in_maintenance must reach the simulator: %+v", effective)
 	}
 	gotPolicy, ok := effective["policy_id"].(*uint)
 	if !ok || gotPolicy == nil || *gotPolicy != policyID {

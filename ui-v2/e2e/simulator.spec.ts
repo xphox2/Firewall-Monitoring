@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks } from './mocks';
 
-test('renders the resolved effective alert policy', async ({ page }) => {
+test('renders the resolved effective alert policy including maintenance', async ({ page }) => {
   await installApiMocks(page, [
     {
       match: (url) => url.pathname === '/admin/api/alert-config/overview',
@@ -28,7 +28,7 @@ test('renders the resolved effective alert policy', async ({ page }) => {
           severity: 'critical',
           alert_enabled: true,
           storm_sources: 5,
-          in_maintenance: false,
+          in_maintenance: true,
           policy_id: 3,
           rule_matched: false,
           notify_email: true,
@@ -60,6 +60,6 @@ test('renders the resolved effective alert policy', async ({ page }) => {
     await expect(page.getByText(channel, { exact: true })).toBeVisible();
   }
   await expect(page.getByText('from Global')).toBeVisible();
-  await expect(page.getByText('Active.')).toBeVisible();
+  await expect(page.getByText('In a maintenance window.')).toBeVisible();
   await expect(page.getByText('No channels enabled')).toHaveCount(0);
 });
