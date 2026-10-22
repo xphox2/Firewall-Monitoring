@@ -2,6 +2,15 @@ package configdiff
 
 import "strings"
 
+// Parser limits, mirroring the OPNsense parser's maxOPNDepth / maxOPNObjects.
+// A hostile or pathological config must not drive unbounded stack growth (a
+// deeply nested `config` block would otherwise recurse past memory) or
+// unbounded object allocation (OOM).
+const (
+	maxFortiDepth   = 64
+	maxFortiObjects = 20000
+)
+
 // ParseObjects parses FortiOS config text into vendor-neutral ConfigObjects so
 // the diff can be rendered per-object (e.g. "firewall.policy/12 modified:
 // dstaddr LAN -> all") instead of as a raw line delta. It is deliberately
@@ -80,6 +89,11 @@ func (fortigateNormalizer) ParseObjects(raw []byte) ([]ConfigObject, error) {
 	}
 
 	emit := func(f *frame, kind, name string) {
+		// Bound object allocation so a crafted config cannot OOM the process
+		// by emitting unbounded singleton/table objects.
+		if len(out) >= maxFortiObjects {
+			return
+		}
 		path := kind
 		if name != "" {
 			path = kind + "/" + name
@@ -95,10 +109,16 @@ func (fortigateNormalizer) ParseObjects(raw []byte) ([]ConfigObject, error) {
 		switch {
 		case strings.HasPrefix(line, "config "):
 			stack = append(stack, &frame{seg: dottedSeg(line[len("config "):]), attrs: map[string]string{}})
+			if len(stack) > maxFortiDepth {
+				return out, nil
+			}
 
 		case strings.HasPrefix(line, "edit "):
 			key := unquoteToken(strings.TrimSpace(line[len("edit "):]))
 			stack = append(stack, &frame{isEdit: true, name: key, attrs: map[string]string{}})
+			if len(stack) > maxFortiDepth {
+				return out, nil
+			}
 
 		case line == "next":
 			// Close the nearest edit, emitting it as an object.

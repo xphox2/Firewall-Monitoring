@@ -1,6 +1,8 @@
 package configdiff
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -130,6 +132,47 @@ func TestParseObjectsUnknownVendorNoParser(t *testing.T) {
 	}
 	if !HasObjectParser("fortigate") {
 		t.Error("fortigate must expose an ObjectParser")
+	}
+}
+
+func TestParseObjectsFortiGateDepthLimit(t *testing.T) {
+	t.Parallel()
+	// A pathological config nested far deeper than any real device must stop
+	// descending instead of growing the stack without bound (DoS guard).
+	const depth = 100000
+	var b strings.Builder
+	b.Grow(depth * 16)
+	for i := 0; i < depth; i++ {
+		b.WriteString("config system nested\n")
+	}
+	for i := 0; i < depth; i++ {
+		b.WriteString("end\n")
+	}
+	objs, ok := ParseObjects("fortigate", []byte(b.String()))
+	if !ok {
+		t.Fatal("parser unavailable")
+	}
+	// The parser stops at maxFortiDepth, so it must not have descended all the
+	// way down and emitted unbounded objects.
+	if len(objs) > maxFortiObjects {
+		t.Fatalf("object count %d exceeds cap %d", len(objs), maxFortiObjects)
+	}
+}
+
+func TestParseObjectsFortiGateObjectLimit(t *testing.T) {
+	t.Parallel()
+	// Emitting more than maxFortiObjects objects must be bounded, not OOM.
+	const n = maxFortiObjects + 1000
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "config system\nset hostname %d\nend\n", i)
+	}
+	objs, ok := ParseObjects("fortigate", []byte(b.String()))
+	if !ok {
+		t.Fatal("parser unavailable")
+	}
+	if len(objs) > maxFortiObjects {
+		t.Fatalf("object count %d exceeds cap %d", len(objs), maxFortiObjects)
 	}
 }
 
