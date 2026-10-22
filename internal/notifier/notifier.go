@@ -282,7 +282,7 @@ type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 // endpoints (test-email, manual send-report) pass an SSRF-pinning dialer so a
 // DNS-rebinding host can't be redirected to an internal address after the
 // isValidExternalIP pre-check.
-func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []string, msg []byte, dial dialFunc) error {
+func sendMailWithDeadline(addr, host string, port int, auth smtp.Auth, from string, to []string, msg []byte, dial dialFunc) error {
 	// One absolute deadline covers the whole exchange — dial AND every
 	// subsequent read/write — so the total is bounded by smtpSendTimeout (not
 	// dial-timeout + separate I/O-timeout).
@@ -303,6 +303,20 @@ func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []s
 	// blocking indefinitely.
 	_ = conn.SetDeadline(deadline)
 
+	// Implicit TLS: port 465 (SMTPS) begins the TLS handshake immediately after
+	// dial — there is no STARTTLS on 465. The stdlib's opportunistic STARTTLS
+	// would otherwise never fire here (an SMTPS server speaks TLS first) and the
+	// whole conversation, credentials included, would go out in cleartext.
+	encrypted := false
+	if port == 465 {
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+		if err := tlsConn.Handshake(); err != nil {
+			return fmt.Errorf("smtp: implicit TLS handshake on port 465: %w", err)
+		}
+		conn = tlsConn
+		encrypted = true
+	}
+
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		return err
@@ -312,12 +326,22 @@ func sendMailWithDeadline(addr, host string, auth smtp.Auth, from string, to []s
 	if err := client.Hello("firewall-mon"); err != nil {
 		return err
 	}
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
-			return err
+	if !encrypted {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}); err != nil {
+				return err
+			}
+			encrypted = true
 		}
 	}
 	if auth != nil {
+		// Refuse to send credentials over an unencrypted link: the pre-fix code
+		// silently proceeded in cleartext when STARTTLS wasn't advertised, so an
+		// SMTP_PASSWORD could be transmitted in plaintext. Require either
+		// implicit TLS (465) or a successful STARTTLS upgrade.
+		if !encrypted {
+			return errors.New("smtp: refusing to send credentials over an unencrypted connection (server does not advertise STARTTLS; use port 465 for implicit TLS)")
+		}
 		if ok, _ := client.Extension("AUTH"); ok {
 			if err := client.Auth(auth); err != nil {
 				return err
@@ -390,7 +414,7 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
 		nc.SMTPFrom, nc.SMTPTo, subject, body)
 
-	err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom,
+	err := sendMailWithDeadline(addr, nc.SMTPHost, nc.SMTPPort, auth, nc.SMTPFrom,
 		rcpts, []byte(msg), nil)
 
 	if err != nil {
@@ -841,7 +865,7 @@ func (n *Notifier) sendHTMLEmail(subject, textBody, htmlBody string, attachments
 
 	recipientList := splitRecipients(recipients)
 
-	if err := sendMailWithDeadline(addr, nc.SMTPHost, auth, nc.SMTPFrom, recipientList, msg, dial); err != nil {
+	if err := sendMailWithDeadline(addr, nc.SMTPHost, nc.SMTPPort, auth, nc.SMTPFrom, recipientList, msg, dial); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)
 	}
 	return nil

@@ -2,7 +2,9 @@ package notifier
 
 import (
 	"bufio"
+	"fmt"
 	"net"
+	"net/smtp"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +47,7 @@ func TestSendMailWithDeadline_StalledServerDoesNotHang(t *testing.T) {
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
-		done <- sendMailWithDeadline(ln.Addr().String(), "127.0.0.1", nil,
+		done <- sendMailWithDeadline(ln.Addr().String(), "127.0.0.1", 0, nil,
 			"from@example.com", []string{"to@example.com"}, []byte("test"), nil)
 	}()
 
@@ -182,7 +184,7 @@ func TestSendMailWithDeadline_DialTimeout(t *testing.T) {
 	// 203.0.113.0/24 (TEST-NET-3) is reserved and non-routable → dial stalls.
 	done := make(chan error, 1)
 	go func() {
-		done <- sendMailWithDeadline("203.0.113.1:25", "203.0.113.1", nil,
+		done <- sendMailWithDeadline("203.0.113.1:25", "203.0.113.1", 25, nil,
 			"from@example.com", []string{"to@example.com"}, []byte("test"), nil)
 	}()
 
@@ -193,5 +195,22 @@ func TestSendMailWithDeadline_DialTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("dial did not respect the timeout")
+	}
+}
+
+// TestSendMailWithDeadline_RefusesCredentialsCleartext pins the H-3 fix: a
+// server that does not advertise STARTTLS must not be sent SMTP credentials in
+// cleartext. sendMailWithDeadline must refuse (rather than the pre-fix silent
+// plaintext send) when auth is configured and the link is unencrypted.
+func TestSendMailWithDeadline_RefusesCredentialsCleartext(t *testing.T) {
+	port, _ := startFakeSMTP(t) // plaintext, no STARTTLS
+	auth := smtp.PlainAuth("", "user", "pass", "127.0.0.1")
+	err := sendMailWithDeadline(fmt.Sprintf("127.0.0.1:%d", port), "127.0.0.1", port, auth,
+		"from@example.com", []string{"to@example.com"}, []byte("test"), nil)
+	if err == nil {
+		t.Fatal("expected refusal to send credentials over cleartext, got nil")
+	}
+	if !strings.Contains(err.Error(), "unencrypted") {
+		t.Fatalf("error should mention the unencrypted connection, got %q", err)
 	}
 }

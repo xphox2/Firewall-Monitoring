@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.387] - 2026-10-22
+
+### Security — SMTP implicit TLS on 465 + refuse cleartext credentials
+
+- `sendMailWithDeadline` now performs implicit TLS on port 465 (SMTPS) — the
+  pre-fix code ran the plaintext EHLO/STARTTLS flow there, so an SMTPS server
+  was never reached over TLS.
+- When SMTP credentials are configured, the send is refused if the connection is
+  not encrypted (neither implicit TLS nor a successful STARTTLS upgrade) instead
+  of silently transmitting `SMTP_PASSWORD` in cleartext.
+
 ## [0.11.386] - 2026-10-22
 
 ### Security — Redact probe secrets on GET /sites/:id
