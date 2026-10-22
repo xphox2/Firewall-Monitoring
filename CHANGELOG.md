@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.377] - 2026-10-22
+
+### Tests — Recurring maintenance is verified end-to-end
+
+- Added a DB → policy-cache → resolver test: a daily window whose first occurrence ended a day
+  ago is seeded through the real database method, the cache is refreshed like the poller, and
+  `EffectiveAlertConfig` reports `InMaintenance`; deleting it and leaving only an out-of-occurrence
+  recurring window clears the suppression.
+- The effective-config payload test now asserts `in_maintenance` reaches the simulator.
+- Playwright: the simulator fixture runs in maintenance and asserts the banner; the maintenance
+  creation test now keeps a stateful list and asserts the new row shows "Weekly · Mon, Wed" after
+  the refetch (payload + display, not just the POST body).
+- No manual retest of the recurrence/simulator path is required; CI covers it.
+
 ## [0.11.376] - 2026-10-22
 
 ### Added — Browser E2E suite for the V2 console
