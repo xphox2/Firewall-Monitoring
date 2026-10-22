@@ -3,7 +3,8 @@ import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { Maximize2, Minus, Plus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { linkColour } from '@/lib/topology';
+import { useTheme } from '@/lib/theme';
+import { linkColour, linkState } from '@/lib/topology';
 
 cytoscape.use(fcose);
 
@@ -40,21 +41,60 @@ const LEGEND = [
   { label: 'Unknown', colour: '#94a3b8' },
 ];
 
+interface RingColours {
+  crit: string;
+  warn: string;
+  base: string;
+}
+
+const RING_FALLBACK: RingColours = { crit: '#f2555a', warn: '#e7b53c', base: '#3b4654' };
+
+function readRingColours(): RingColours {
+  try {
+    const style = getComputedStyle(document.documentElement);
+    const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+    return {
+      crit: read('--fwmon-sig-crit', RING_FALLBACK.crit),
+      warn: read('--fwmon-sig-warn', RING_FALLBACK.warn),
+      base: read('--fwmon-border-strong', RING_FALLBACK.base),
+    };
+  } catch {
+    return RING_FALLBACK;
+  }
+}
+
+function severityRing(
+  severity: string | undefined,
+  colours: RingColours = RING_FALLBACK,
+): { colour: string; width: number } {
+  const value = String(severity ?? '').toLowerCase();
+  if (value === 'critical') return { colour: colours.crit, width: 3 };
+  if (value === 'warning') return { colour: colours.warn, width: 3 };
+  return { colour: colours.base, width: 2 };
+}
+
 export function TopologyMap({
   sites,
   nodes,
   edges,
+  severityByDevice,
+  severitySignature,
   onSelectDevice,
 }: {
   sites: MapSite[];
   nodes: MapNode[];
   edges: MapEdge[];
+  /** Device id → alert severity; applied as node rings without rebuilding. */
+  severityByDevice?: Map<number, string>;
+  severitySignature?: string;
   onSelectDevice?: (deviceId: number) => void;
 }) {
+  const { theme } = useTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const [showSites, setShowSites] = useState(true);
   const [linkFilter, setLinkFilter] = useState<LinkFilter>('all');
+  const [groupTunnels, setGroupTunnels] = useState(true);
   const [selected, setSelected] = useState<MapNode | null>(null);
 
   const elements = useMemo<ElementDefinition[]>(() => {
@@ -63,8 +103,46 @@ export function TopologyMap({
     // tunnel peer must disappear when tunnel edges are hidden.
     const visibleEdges =
       linkFilter === 'all' ? edges : edges.filter((edge) => edge.kind === linkFilter);
+    // Bundle parallel tunnels between the same pair into one edge, like the
+    // classic map's tunnel bundles. Connections are never grouped.
+    const drawnEdges: MapEdge[] = [];
+    if (groupTunnels && linkFilter !== 'connection') {
+      type Bundle = MapEdge & { count: number; down: boolean; up: boolean };
+      const bundles = new Map<string, Bundle>();
+      for (const edge of visibleEdges) {
+        if (edge.kind !== 'tunnel') {
+          drawnEdges.push(edge);
+          continue;
+        }
+        const key = [edge.source, edge.target].sort().join('|');
+        const existing = bundles.get(key);
+        if (existing) {
+          existing.count += 1;
+          existing.label = `${existing.count} tunnels`;
+          const state = linkState(edge.status);
+          if (state === 'down') existing.down = true;
+          if (state === 'up') existing.up = true;
+          continue;
+        }
+        const state = linkState(edge.status);
+        bundles.set(key, {
+          ...edge,
+          count: 1,
+          down: state === 'down',
+          up: state === 'up',
+        });
+      }
+      drawnEdges.push(
+        ...Array.from(bundles.values()).map((bundle) => ({
+          ...bundle,
+          status: bundle.down ? 'down' : bundle.up ? 'up' : bundle.status,
+        })),
+      );
+    } else {
+      drawnEdges.push(...visibleEdges);
+    }
     const linked = new Set<string>();
-    for (const edge of visibleEdges) {
+    for (const edge of drawnEdges) {
       linked.add(edge.source);
       linked.add(edge.target);
     }
@@ -80,6 +158,7 @@ export function TopologyMap({
       // External tunnel peers only make sense while tunnel edges are visible.
       if (linkFilter !== 'all' && node.kind === 'external' && !linked.has(node.id)) continue;
       const parent = showSites && node.siteId ? `site-${node.siteId}` : undefined;
+      const ring = severityRing(undefined);
       els.push({
         data: {
           id: `dev-${node.id}`,
@@ -87,13 +166,15 @@ export function TopologyMap({
           kind: node.kind,
           status: node.status,
           colour: linkColour(node.status),
+          ring: ring.colour,
+          ringWidth: ring.width,
           ip: node.ip,
           deviceId: node.deviceId,
           parent,
         },
       });
     }
-    for (const edge of visibleEdges) {
+    for (const edge of drawnEdges) {
       els.push({
         data: {
           id: `edge-${edge.id}`,
@@ -106,7 +187,7 @@ export function TopologyMap({
       });
     }
     return els;
-  }, [sites, nodes, edges, showSites, linkFilter]);
+  }, [sites, nodes, edges, showSites, linkFilter, groupTunnels]);
 
   const nodeById = useMemo(
     () => new Map(nodes.map((node) => [node.id, node])),
@@ -142,8 +223,8 @@ export function TopologyMap({
             'background-color': 'data(colour)',
             width: 22,
             height: 22,
-            'border-width': 2,
-            'border-color': '#0b1220',
+            'border-width': 'data(ringWidth)',
+            'border-color': 'data(ring)',
             label: 'data(label)',
             'text-valign': 'bottom',
             'text-margin-y': 4,
@@ -200,7 +281,13 @@ export function TopologyMap({
         },
         {
           selector: 'node:selected',
-          style: { 'border-color': '#38bdf8', 'border-width': 3 },
+          style: {
+            // A halo, not a border override: the alert ring must stay visible
+            // while a node is selected.
+            'overlay-color': '#38bdf8',
+            'overlay-opacity': 0.25,
+            'overlay-padding': 3,
+          },
         },
       ],
       layout: {
@@ -236,6 +323,30 @@ export function TopologyMap({
       cyRef.current = null;
     };
   }, [elements, nodeById, onSelectDevice]);
+
+  // Alert rings are data updates, not elements: changing severity must not
+  // rebuild the graph (that would reset pan/zoom every poll).
+  useEffect(() => {
+    // Defer a frame: ThemeProvider applies data-theme in its own effect, so the
+    // CSS variables would otherwise still hold the previous theme's colours.
+    const frame = requestAnimationFrame(() => {
+      const cy = cyRef.current;
+      if (!cy) return;
+      const colours = readRingColours();
+      cy.nodes().forEach((node) => {
+        const data = node.data();
+        if (data.kind === 'site') return;
+        const id = Number(data.deviceId);
+        const ring = severityRing(
+          Number.isFinite(id) ? severityByDevice?.get(id) : undefined,
+          colours,
+        );
+        node.data('ring', ring.colour);
+        node.data('ringWidth', ring.width);
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [severityByDevice, severitySignature, elements, theme]);
 
   const zoom = (factor: number) => {
     const cy = cyRef.current;
@@ -278,6 +389,14 @@ export function TopologyMap({
               onChange={(e) => setShowSites(e.target.checked)}
             />
             Site groups
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
+            <input
+              type="checkbox"
+              checked={groupTunnels}
+              onChange={(e) => setGroupTunnels(e.target.checked)}
+            />
+            Bundle tunnels
           </label>
         </div>
 
@@ -350,6 +469,14 @@ export function TopologyMap({
           <span className="flex items-center gap-1 text-[10px] text-text-dim">
             <span className="inline-block h-0 w-4 border-t border-dashed border-text-faint" />
             tunnel
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-text-dim">
+            <span className="inline-block h-2 w-2 rounded-full border-2 border-sig-crit" />
+            critical alert
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-text-dim">
+            <span className="inline-block h-2 w-2 rounded-full border-2 border-sig-warn" />
+            warning alert
           </span>
         </div>
       </div>
