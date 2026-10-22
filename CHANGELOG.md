@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.371] - 2026-10-21
+
+### Fixed — V2 no longer breaks when a deploy replaces its lazy chunks
+
+- A tab opened before a deploy could hold the previous `v2.js` entry while a lazy
+  chunk (for example the topology map) came from the new build, producing
+  `The requested module '../v2.js' does not provide an export named 'a'`.
+- Vite now emits **content-hashed chunk filenames** (`chunks/topology-map.<hash>.js`),
+  so an entry and its chunks always belong to the same build. The entry keeps its
+  stable `v2.js` name behind the existing `no-cache` + ETag static handler.
+- If a dynamic import still fails (the previous build's chunk was deleted), the
+  console reloads itself once to pick up the new entry/chunks. A 30-second guard
+  prevents reload loops, and the ErrorBoundary remains available as a fallback.
+- `isStaleChunkError` is unit-tested against the export-name, dynamic-import and
+  ChunkLoadError messages.
+
 ## [0.11.370] - 2026-10-21
 
 ### Fixed — Topology map no longer resets on data refreshes
