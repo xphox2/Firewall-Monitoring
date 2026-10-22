@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.379] - 2026-10-22
+
+### Tests — Collector approval and threat-intel indicator coverage
+
+- **Collectors**: approving a pending probe POSTs the approve action; rejecting opens the reason
+  drawer and posts the trimmed reason (a reason is required).
+- **Threat intel**: adding a custom indicator posts the CIDR/category/manual-source/severity payload
+  and shows the success toast.
+- The Playwright suite is now 24 tests, all run by the CI **Admin UI V2 E2E** job.
+
 ## [0.11.378] - 2026-10-22
 
 ### Tests — Operator workflow coverage in the browser suite
