@@ -1,7 +1,12 @@
 #!/bin/bash
 # fwmon-reset-auth — break-glass account reset.
 #
-#   docker exec -it <container> fwmon-reset-auth --user <name> [--keep-2fa] [--keep-passkeys]
+#   docker exec -u root -it <container> fwmon-reset-auth --user <name> [--keep-2fa] [--keep-passkeys]
+#
+# Since the container now runs as the non-root `fwmon` user (Dockerfile USER
+# directive), a plain `docker exec` lands as fwmon; this wrapper needs root to
+# `su-exec fwmon` (the database files are fwmon-owned, so root is required only
+# to drop privilege, matching the daemons the entrypoint starts).
 #
 # Sets a new random temporary password (printed once), forces a password change
 # at the next login, clears TOTP 2FA + recovery codes and deletes all passkeys
@@ -18,7 +23,7 @@ PG_CRED_FILE="/config/pg-credentials"
 PGRUN="/run/postgresql"
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "fwmon-reset-auth: run as root (the default for docker exec)" >&2
+    echo "fwmon-reset-auth: run as root (use: docker exec -u root -it <container> fwmon-reset-auth --user <name>)" >&2
     exit 1
 fi
 if [ ! -r "$PG_CRED_FILE" ]; then
