@@ -10,7 +10,13 @@ services:
     # other than the Hub name (FIREWALL_MON_IMAGE=firewall-mon:latest) without
     # editing this file. Editing it in place is what produced the untracked
     # working-tree drift on a deployment host that blocked `git pull` — see v0.11.179.
-    image: ${FIREWALL_MON_IMAGE:-xphox/firewall-mon:latest}
+    #
+    # The default is pinned to an immutable @sha256 digest (supply-chain: a
+    # mutable `latest` tag could be re-pointed by a compromised Docker Hub
+    # account). To upgrade, bump the digest below to the build you want (or set
+    # FIREWALL_MON_IMAGE=xphox/firewall-mon:latest to opt back into tracking the
+    # moving tag).
+    image: ${FIREWALL_MON_IMAGE:-xphox/firewall-mon:latest@sha256:51c54f19562624496a8d8286b5c01401b08667ddbed1f4f9f2279c56d6da1e62}
     container_name: firewall-mon
     restart: unless-stopped
     # PostgreSQL runs inside this container with dynamic_shared_memory_type =
