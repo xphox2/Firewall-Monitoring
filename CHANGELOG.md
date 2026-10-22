@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.378] - 2026-10-22
+
+### Tests — Operator workflow coverage in the browser suite
+
+- **Alerts**: a severity filter must reach `/api/alerts` (not just local state), selecting an alert
+  and bulk-acknowledging must POST the selected ids and show the result toast.
+- **Flows**: the source-address filter (after the debounce) must reach `/api/flows?src_addr=…`, and
+  Export CSV must request the filtered 5,000-row set and download a correctly named file.
+- **System users**: disabling another account PUTs `{disabled:true}`; the current user's own Disable
+  button stays disabled.
+- The Playwright suite is now 21 tests, all run by the CI **Admin UI V2 E2E** job.
+
 ## [0.11.377] - 2026-10-22
 
 ### Tests — Recurring maintenance is verified end-to-end
