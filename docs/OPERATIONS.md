@@ -36,6 +36,33 @@ Pairs with [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md) (current limitations) and
 
 ---
 
+## Non-root container
+
+The image runs as the unprivileged `fwmon` user — PID 1 included — with embedded
+PostgreSQL also running as `fwmon` (there is no separate `postgres` OS account).
+Verify with:
+
+```sh
+docker run --rm <image> id   # → uid=…(fwmon) gid=…(fwmon)
+```
+
+What this changes for operators:
+
+- **`docker exec` lands as `fwmon`, not root.** Anything that needs root (the
+  break-glass `fwmon-reset-auth`, which drops back to `fwmon` itself) must use
+  `docker exec -u root`.
+- **SNMP traps on 162/udp still work:** Docker's default `NET_BIND_SERVICE`
+  capability lets a non-root process bind the privileged port.
+- **Upgrading an existing volume:** on the first boot after upgrading from a
+  pre-non-root image, the entrypoint re-owns `/data/pgdata` from the old
+  `postgres` OS user to `fwmon` automatically (via Docker's default
+  `CAP_CHOWN`). If you harden the container with `cap_drop: [ALL]`, that
+  automatic re-own stops working — chown the volume once as root first, to the
+  `fwmon` uid (`docker run --rm <image> id fwmon`), and make `/config` writable
+  by that uid.
+
+---
+
 ## Health & monitoring
 
 - **Liveness/readiness:** `GET /api/health` (also aliased at `GET /api/readyz`).
@@ -150,7 +177,7 @@ effect on an already-initialized install.
   It needs no web UI and no working login:
 
   ```sh
-  docker exec -it <container> fwmon-reset-auth --user <name>
+  docker exec -u root -it <container> fwmon-reset-auth --user <name>
   ```
 
   In one transaction it sets a new random **temporary password (printed
@@ -169,7 +196,10 @@ effect on an already-initialized install.
   database environment `entrypoint.sh` exports (`/config/pg-credentials`, the
   Postgres socket in `/run/postgresql`, `CONFIG_FILE=/config/config.env`) and
   runs `./fwmon-api reset-auth` as the `fwmon` user. A plain
-  `docker exec … ./fwmon-api reset-auth` would not have that environment.
+  `docker exec … ./fwmon-api reset-auth` would not have that environment. The
+  `-u root` is required because the container now runs as non-root `fwmon`
+  (see "Non-root container" below), and the wrapper drops back to `fwmon`
+  itself.
 
 - **The container is crash-looping (or will not stay up):** `docker exec`
   needs a running container, and the entrypoint tears the whole container down
@@ -180,12 +210,12 @@ effect on an already-initialized install.
 
   ```sh
   docker stop <container>
-  docker run --rm -it --network none --volumes-from <container> \
+  docker run --rm -it --network none --user root --volumes-from <container> \
     --entrypoint bash "$(docker inspect -f '{{.Config.Image}}' <container>)" -c '
-      mkdir -p /run/postgresql && chown postgres:postgres /run/postgresql &&
-      su-exec postgres pg_ctl -D /data/pgdata -l /data/pgdata/postgresql.log -w start &&
+      mkdir -p /run/postgresql && chown fwmon:fwmon /run/postgresql &&
+      su-exec fwmon pg_ctl -D /data/pgdata -l /data/pgdata/postgresql.log -w start &&
       fwmon-reset-auth --user <name>; rc=$?
-      su-exec postgres pg_ctl -D /data/pgdata -m fast stop; exit $rc'
+      su-exec fwmon pg_ctl -D /data/pgdata -m fast stop; exit $rc'
   docker start <container>
   ```
 
@@ -203,7 +233,7 @@ effect on an already-initialized install.
 If a user loses both their authenticator and recovery codes, any **admin** can
 clear their 2FA from Settings → Users → *Reset 2FA*. If the **last admin** is
 the one locked out, use the break-glass reset above
-(`docker exec -it <container> fwmon-reset-auth --user <name>`): it clears 2FA
+(`docker exec -u root -it <container> fwmon-reset-auth --user <name>`): it clears 2FA
 and issues a temporary password; the user then logs in, sets a new password
 and can re-enroll.
 
@@ -292,7 +322,7 @@ throughout.
 **Break-glass.** Passkeys never replace the password, so the usual recovery
 applies: an admin uses Settings → Users → *Reset password* / *Reset 2FA* /
 *Remove passkeys*, and when nobody can sign in,
-`docker exec -it <container> fwmon-reset-auth --user <name>` (see "Admin
+`docker exec -u root -it <container> fwmon-reset-auth --user <name>` (see "Admin
 password reset") resets the password, clears 2FA and deletes all passkeys of
 that account.
 
@@ -319,7 +349,7 @@ that account.
 
 **Back up (all four):**
 1. **Database** — `pg_dump`:
-   `docker exec <c> su-exec postgres pg_dump -h /run/postgresql firewall_mon | gzip > fwmon-$(date +%F).sql.gz`
+   `docker exec <c> pg_dump -h /run/postgresql -U fwmon firewall_mon | gzip > fwmon-$(date +%F).sql.gz`
 2. **Secrets** — `/data/.jwt-secret` and `/data/.admin-password` (0600).
    Without `.jwt-secret`, a DB restore cannot decrypt any stored secret.
 3. **Config** — `/config/config.env`.

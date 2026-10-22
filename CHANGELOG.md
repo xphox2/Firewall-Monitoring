@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.381] - 2026-10-22
+
+### Security — Run the container as a non-root user
+
+- The image now runs as the unprivileged `fwmon` user (PID 1 included); embedded
+  PostgreSQL also runs as `fwmon` rather than a separate `postgres` OS account,
+  so the entrypoint no longer needs `su-exec`/root at runtime. The superuser
+  **role** stays named `postgres` (`initdb -U postgres`) so `psql -U postgres`
+  and the admin docs keep working.
+- SNMP traps on 162/udp still bind because Docker grants `NET_BIND_SERVICE` by
+  default; the runtime re-own of bind-mounted `/data` and `/config` relies on
+  Docker's default `CAP_CHOWN` (see docs/OPERATIONS.md "Non-root container").
+- The break-glass `fwmon-reset-auth` now requires `docker exec -u root`.
+- Added a guardrail test pinning the `USER fwmon` directive and the absence of
+  `su-exec postgres` in the entrypoint.
+
 ## [0.11.380] - 2026-10-22
 
 ### Security — Bound the FortiGate config parser

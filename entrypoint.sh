@@ -48,7 +48,7 @@ if [ ! -f "$PG_CRED_FILE" ]; then
 # AUDIT-093: auto-generated on first init. Do not edit by hand.
 # Delete this file to force regeneration on next boot (the existing
 # Postgres user keeps the OLD password until you also run:
-#   su-exec postgres psql -c "ALTER USER fwmon WITH PASSWORD '\$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)';"
+#   psql -U postgres -h /run/postgresql -c "ALTER USER fwmon WITH PASSWORD '\$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)';"
 # under the entrypoint before deleting this file).
 PG_USER=$PG_USER
 PG_PASSWORD=$local_random
@@ -63,16 +63,23 @@ export PG_USER PG_PASSWORD
 # ---- PostgreSQL Setup ----
 echo "Initializing PostgreSQL..."
 
+# The container runs single-user as `fwmon` (Dockerfile USER directive), so
+# PostgreSQL itself runs as `fwmon` too — there is no separate `postgres` OS
+# account to su-exec into. /run/postgresql is pre-created and fwmon-owned in the
+# Dockerfile; this is a defensive re-assert for a tmpfs or freshly-mounted /run.
 mkdir -p "$PGRUN"
-chown postgres:postgres "$PGRUN"
+chown fwmon:fwmon "$PGRUN" 2>/dev/null || true
 
 # Initialize PG data directory if empty
 if [ ! -f "$PGDATA/PG_VERSION" ]; then
     echo "Creating new PostgreSQL database cluster..."
     mkdir -p "$PGDATA"
-    chown postgres:postgres "$PGDATA"
+    chown fwmon:fwmon "$PGDATA"
     chmod 700 "$PGDATA"
-    su-exec postgres initdb -D "$PGDATA" --auth=trust --no-locale --encoding=UTF8 > /dev/null
+    # -U postgres keeps the superuser ROLE named "postgres" (matching the
+    # pre-non-root image and every docs/script reference to `-U postgres`);
+    # without it initdb would name the superuser after the OS user (fwmon).
+    initdb -D "$PGDATA" --auth=trust --no-locale --encoding=UTF8 -U postgres > /dev/null
 
     # Listen only on unix socket (localhost), no TCP needed
     sed -i "s|#listen_addresses = 'localhost'|listen_addresses = ''|" "$PGDATA/postgresql.conf"
@@ -104,22 +111,27 @@ log_min_messages = warning
 PGCONF
 else
     echo "Existing PostgreSQL data found."
-    chown -R postgres:postgres "$PGDATA"
+    # Migrate any cluster still owned by the OLD `postgres` OS user (from the
+    # pre-non-root image) to fwmon. This needs CAP_CHOWN, which Docker grants by
+    # default; if a hardened compose drops it (cap_drop: [ALL]), chown the volume
+    # once as root instead (see docs/OPERATIONS.md "Non-root container").
+    chown -R fwmon:fwmon "$PGDATA"
 fi
 
 # Start PostgreSQL
 echo "Starting PostgreSQL..."
-su-exec postgres pg_ctl -D "$PGDATA" -l "$PGDATA/postgresql.log" -w start > /dev/null
+pg_ctl -D "$PGDATA" -l "$PGDATA/postgresql.log" -w start > /dev/null
 
-# Create database and user if they don't exist
-su-exec postgres psql -h "$PGRUN" -c "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" | grep -q 1 || \
-    su-exec postgres psql -h "$PGRUN" -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
+# Create database and user if they don't exist. The admin psql calls connect as
+# the "postgres" superuser ROLE (initdb -U postgres above), not an OS user.
+psql -U postgres -h "$PGRUN" -c "SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'" | grep -q 1 || \
+    psql -U postgres -h "$PGRUN" -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
 # AUDIT-093: always ALTER the password to the current /config/pg-credentials
 # value. This is a no-op on steady-state (the password already matches) and
 # the migration path for upgrades from a pre-AUDIT-093 image (the user
 # already existed with the hardcoded 'fwmon' password; ALTER swaps it).
 # Idempotent and safe under trust-auth local-socket access.
-su-exec postgres psql -h "$PGRUN" -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
+psql -U postgres -h "$PGRUN" -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PASSWORD';" > /dev/null
 # The platform health probe reports the DISK VOLUME HOLDING THE DATABASE, which
 # it locates by asking Postgres for its own data_directory. That is a
 # superuser-only GUC, so without this grant the probe errors on every call, the
@@ -127,9 +139,9 @@ su-exec postgres psql -h "$PGRUN" -c "ALTER USER $PG_USER WITH PASSWORD '$PG_PAS
 # gains a permission error every 10 seconds. Silently losing that signal is what
 # let a full data volume go unnoticed until Postgres crash-looped.
 # pg_read_all_settings is read-only and grants no data access. Idempotent.
-su-exec postgres psql -h "$PGRUN" -c "GRANT pg_read_all_settings TO $PG_USER;" > /dev/null
-su-exec postgres psql -h "$PGRUN" -tc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | grep -q 1 || \
-    su-exec postgres psql -h "$PGRUN" -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null
+psql -U postgres -h "$PGRUN" -c "GRANT pg_read_all_settings TO $PG_USER;" > /dev/null
+psql -U postgres -h "$PGRUN" -tc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" | grep -q 1 || \
+    psql -U postgres -h "$PGRUN" -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" > /dev/null
 
 echo "PostgreSQL ready."
 
@@ -178,12 +190,14 @@ EOF
     echo "Config created at /config/config.env (mode 0600)"
 fi
 
-# Create data directories and fix ownership (runs as root)
+# Create data directories and fix ownership (runs as fwmon; the chown relies on
+# Docker's default CAP_CHOWN to fix up a host bind mount whose directory is
+# owned by a different uid — see the note in the Dockerfile USER block).
 mkdir -p /data /config
 # The /data directory inode itself must be owned/writable by fwmon so the API
 # can create .admin-password and .jwt-secret on first run. On a bind mount the
 # host directory's ownership shadows the image-layer chown, so re-apply it here
-# at runtime. Non-recursive on /data: /data/pgdata must stay postgres-owned
+# at runtime. Non-recursive on /data: /data/pgdata must stay fwmon-owned
 # (chowned above), so we only fix the top-level dir plus the app's own files.
 chown fwmon:fwmon /data
 chown -R fwmon:fwmon /data/firewall-mon.db* /config 2>/dev/null || true
@@ -193,17 +207,17 @@ export CONFIG_FILE=/config/config.env
 
 echo "Starting Firewall Monitor services..."
 
-# Start all services as fwmon user
+# Start all services (the entrypoint already runs as fwmon, so no su-exec).
 echo "Starting API server..."
-su-exec fwmon ./fwmon-api &
+./fwmon-api &
 API_PID=$!
 
 echo "Starting SNMP poller..."
-su-exec fwmon ./fwmon-poller &
+./fwmon-poller &
 POLLER_PID=$!
 
 echo "Starting trap receiver..."
-su-exec fwmon ./fwmon-trap &
+./fwmon-trap &
 TRAP_PID=$!
 
 echo "All services started!"
@@ -221,7 +235,7 @@ teardown() {
     kill $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
     wait $API_PID $POLLER_PID $TRAP_PID 2>/dev/null || true
     echo "Stopping PostgreSQL..."
-    su-exec postgres pg_ctl -D "$PGDATA" -m fast stop > /dev/null 2>&1 || true
+    pg_ctl -D "$PGDATA" -m fast stop > /dev/null 2>&1 || true
 }
 
 # Graceful shutdown on SIGINT/SIGTERM (e.g. `docker stop`) — clean exit 0.

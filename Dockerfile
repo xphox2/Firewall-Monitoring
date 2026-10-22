@@ -37,7 +37,7 @@ RUN apk add --no-cache ca-certificates bash wget su-exec postgresql16 postgresql
 
 RUN addgroup -S fwmon && adduser -S fwmon -G fwmon
 
-RUN mkdir -p /app /data /data/pgdata /config && chown -R fwmon:fwmon /data /config
+RUN mkdir -p /app /data /data/pgdata /config /run/postgresql && chown -R fwmon:fwmon /data /config /run/postgresql
 
 WORKDIR /app
 
@@ -128,5 +128,15 @@ LABEL org.opencontainers.image.title="Firewall Mon" \
       org.opencontainers.image.vendor="Firewall-Mon Contributors" \
       org.opencontainers.image.url="https://github.com/xphox2/Firewall-Monitoring" \
       maintainer="Firewall-Mon Contributors"
+
+# Run the container as the unprivileged fwmon user, never root (PID 1). The
+# entrypoint runs embedded PostgreSQL as fwmon too (no separate postgres OS
+# account), so it needs no su-exec / root at runtime. The only root-only thing
+# left is binding the SNMP trap port (162/udp < 1024), which Docker's default
+# NET_BIND_SERVICE capability permits even for a non-root user. The entrypoint's
+# runtime `chown fwmon:fwmon` of bind-mounted /data and /config relies on
+# Docker's default CAP_CHOWN; a compose that drops that capability must instead
+# chown those volumes once as root (see docs/OPERATIONS.md "Non-root container").
+USER fwmon
 
 ENTRYPOINT ["./entrypoint.sh"]
