@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.388] - 2026-10-22
+
+### Security — Never send IRC credentials over a plaintext connection
+
+- The IRC bot now refuses to transmit credentials when `UseTLS=false`: the
+  server PASS, SASL login/password, NickServ IDENTIFY and ChanServ identify/OP
+  are all withheld (with a log line) instead of being sent in cleartext. The bot
+  still connects; it just doesn't authenticate.
+
 ## [0.11.387] - 2026-10-22
 
 ### Security — SMTP implicit TLS on 465 + refuse cleartext credentials

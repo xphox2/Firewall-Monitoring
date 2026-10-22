@@ -484,12 +484,19 @@ func (b *Bot) Start() {
 			ServerName: server.ServerHost,
 		}
 	}
-	conn.Password = server.ServerPassword
-
-	if server.SASLEnabled {
-		conn.UseSASL = true
-		conn.SASLLogin = server.SASLUsername
-		conn.SASLPassword = server.SASLPassword
+	// Never transmit credentials over a plaintext connection: a server PASS,
+	// SASL credentials or a NickServ/ChanServ password sent without TLS is
+	// readable by anyone on the path. When UseTLS is false we refuse to attach
+	// them (the bot still connects; it just doesn't authenticate).
+	if server.UseTLS {
+		conn.Password = server.ServerPassword
+		if server.SASLEnabled {
+			conn.UseSASL = true
+			conn.SASLLogin = server.SASLUsername
+			conn.SASLPassword = server.SASLPassword
+		}
+	} else if server.ServerPassword != "" || (server.SASLEnabled && server.SASLPassword != "") {
+		log.Printf("IRC: refusing to send server/SASL credentials on non-TLS server %q (id %d); enable UseTLS to authenticate", server.ServerHost, server.ID)
 	}
 
 	b.Conn = conn
@@ -726,8 +733,11 @@ func (b *Bot) onConnected() {
 	log.Printf("IRC: Connected to %s as %s", b.Server.ServerHost, conn.GetNick())
 
 	if b.Server.NickServIdentify && b.Server.NickServPassword != "" {
-		// Identify failure must not block the joins below.
-		if err := safePrivmsg(conn, "NickServ", "IDENTIFY "+b.Server.NickServPassword); err != nil {
+		if !b.Server.UseTLS {
+			// Refuse to send the NickServ password in cleartext (H-4).
+			log.Printf("IRC: refusing NickServ IDENTIFY on non-TLS server %s", b.Server.ServerHost)
+		} else if err := safePrivmsg(conn, "NickServ", "IDENTIFY "+b.Server.NickServPassword); err != nil {
+			// Identify failure must not block the joins below.
 			log.Printf("IRC: NickServ identify send failed: %v", err)
 		}
 	}
@@ -966,16 +976,21 @@ func (b *Bot) onJoin(e *irc.Event) {
 			conn := b.Conn
 			b.mu.RUnlock()
 			if conn != nil {
-				identifyFailed := false
-				if ch.ChanServName != "" && ch.ChanServPass != "" {
-					if err := safePrivmsg(conn, ch.ChanServName, "IDENTIFY "+ch.ChanServPass); err != nil {
-						log.Printf("IRC: ChanServ identify for %s failed: %v", channel, err)
-						identifyFailed = true
+				// H-4: never send ChanServ credentials over a plaintext link.
+				if !b.Server.UseTLS && ((ch.ChanServName != "" && ch.ChanServPass != "") || ch.ChanOperPass != "") {
+					log.Printf("IRC: refusing ChanServ identify/OP on non-TLS server %s for channel %s", b.Server.ServerHost, channel)
+				} else {
+					identifyFailed := false
+					if ch.ChanServName != "" && ch.ChanServPass != "" {
+						if err := safePrivmsg(conn, ch.ChanServName, "IDENTIFY "+ch.ChanServPass); err != nil {
+							log.Printf("IRC: ChanServ identify for %s failed: %v", channel, err)
+							identifyFailed = true
+						}
 					}
-				}
-				if ch.ChanOperPass != "" && !identifyFailed {
-					if err := safePrivmsg(conn, ch.ChanServName, "OP "+channel+" "+ch.ChanOperPass); err != nil {
-						log.Printf("IRC: ChanServ OP for %s failed: %v", channel, err)
+					if ch.ChanOperPass != "" && !identifyFailed {
+						if err := safePrivmsg(conn, ch.ChanServName, "OP "+channel+" "+ch.ChanOperPass); err != nil {
+							log.Printf("IRC: ChanServ OP for %s failed: %v", channel, err)
+						}
 					}
 				}
 			}
