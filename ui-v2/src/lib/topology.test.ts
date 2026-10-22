@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bundleEdges, linkColour, linkState, type BundleableEdge } from './topology';
+import { bundleEdges, linkColour, linkState, normalizePositions, type BundleableEdge } from './topology';
 
 describe('linkState', () => {
   it('classifies healthy link states', () => {
@@ -125,5 +125,25 @@ describe('bundleEdges', () => {
     const result = bundleEdges(input, false);
     expect(result).toHaveLength(2);
     expect(result.every((item) => !item.bundle && !item.sublane)).toBe(true);
+  });
+});
+
+describe('normalizePositions', () => {
+  it('keeps finite x/y points and drops everything else', () => {
+    expect(
+      normalizePositions({
+        'dev-1': { x: 12.5, y: -4 },
+        'dev-2': { x: '12', y: 4 },
+        'dev-3': { x: Number.NaN, y: 4 },
+        'dev-4': null,
+        'dev-5': [10, 20],
+      }),
+    ).toEqual({ 'dev-1': { x: 12.5, y: -4 } });
+  });
+
+  it('returns an empty map for malformed payloads', () => {
+    for (const value of [null, undefined, 'nope', 42, []]) {
+      expect(normalizePositions(value)).toEqual({});
+    }
   });
 });

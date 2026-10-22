@@ -1,6 +1,34 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.370] - 2026-10-21
+
+### Fixed — Topology map no longer resets on data refreshes
+
+- The map's Cytoscape instance is now created **once** and reconciled in place. A 30-second poll
+  updates element data only; it no longer destroys the graph, re-runs fcose, or jumps pan/zoom.
+  (The connections response carries `last_check`, so every poll used to look like a full change.)
+- The automatic layout runs once per fresh graph and fits once. Devices that appear later are
+  placed next to their neighbours without moving anything the operator arranged.
+- Site-group toggles reparent nodes explicitly and detach children before removing a compound,
+  so positions survive and children are never removed with their site.
+
+### Added — Save and restore map node positions
+
+- Nodes can be dragged to arrange the map. **Save layout** persists the positions in the browser
+  (`localStorage`) and they are restored on the next visit; **Reset layout** (confirmed) discards
+  them and restores the automatic fcose layout.
+- Unsaved moves survive data polls for the session; the Save button shows an unsaved-change dot
+  until the positions are stored.
+- Position payloads are validated before use; saving merges with stored entries so a node hidden by
+  the current link filter does not lose its saved position.
+
+### Security — Go toolchain 1.26.10
+
+- Bump the pinned Go toolchain from 1.26.9 to **1.26.10** for `GO-2026-6809`
+  (`crypto/x509`: distrust compromised intermediate certificates). The Docker builder already
+  tracks the latest `golang:1.26-alpine` patch.
+
 ## [0.11.368] - 2026-10-21
 
 ### Added — Click-to-expand bundles in the V2 topology map

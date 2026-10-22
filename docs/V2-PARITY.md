@@ -134,6 +134,8 @@ V2:
   order).
 - **v0.11.368** — Click-to-expand link/tunnel bundles with member sublanes and connection
   drill-through. No functional parity gaps remain.
+- **v0.11.370** — Topology layout persistence: the map reconciles in place (polls never reset the
+  viewport), nodes are draggable, and Save/Reset layout keep or discard positions per browser.
 
 ## Remaining gaps
 

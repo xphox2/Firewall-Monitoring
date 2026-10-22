@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
+import cytoscape, {
+  type Core,
+  type EdgeSingular,
+  type ElementDefinition,
+  type NodeSingular,
+} from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { Maximize2, Minus, Plus, RefreshCw } from 'lucide-react';
+import { Maximize2, Minus, Plus, RotateCcw, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
-import { bundleEdges, linkColour } from '@/lib/topology';
+import { bundleEdges, linkColour, normalizePositions, type MapPosition } from '@/lib/topology';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 cytoscape.use(fcose);
 
@@ -36,6 +42,19 @@ export interface MapSite {
 }
 
 type LinkFilter = 'all' | 'connection' | 'tunnel';
+
+/** Node positions are a per-browser preference, not server state. */
+const LAYOUT_STORAGE = 'fwmon.v2.topology.positions.v1';
+
+const FCOSE_LAYOUT = {
+  name: 'fcose',
+  animate: false,
+  quality: 'default',
+  nodeSeparation: 60,
+  idealEdgeLength: 90,
+  nodeRepulsion: 6000,
+  padding: 24,
+};
 
 const LEGEND = [
   { label: 'Up / online', colour: '#4ade80' },
@@ -75,6 +94,198 @@ function severityRing(
   return { colour: colours.base, width: 2 };
 }
 
+function loadSavedPositions(): Record<string, MapPosition> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE);
+    if (!raw) return {};
+    return normalizePositions(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function snapshotPositions(cy: Core): Record<string, MapPosition> {
+  const out: Record<string, MapPosition> = {};
+  cy.nodes().forEach((node) => {
+    if (node.data('kind') === 'site') return;
+    const { x, y } = node.position();
+    out[node.id()] = { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 };
+  });
+  return out;
+}
+
+function bundleMemberIds(element: EdgeSingular): string[] {
+  return String(element.data('members') ?? '')
+    .split(',')
+    .filter(Boolean);
+}
+
+/** Add/remove only the structural classes; keep runtime `shown`/`expanded`. */
+function syncStructuralClasses(
+  element: NodeSingular | EdgeSingular,
+  classes?: string | string[],
+): void {
+  const tokens = Array.isArray(classes) ? classes : String(classes ?? '').split(/\s+/);
+  const next = new Set(tokens.filter(Boolean));
+  for (const cls of ['bundle', 'sublane']) {
+    if (next.has(cls)) {
+      element.addClass(cls);
+      continue;
+    }
+    if (cls === 'sublane') element.removeClass('shown');
+    if (cls === 'bundle') element.removeClass('expanded');
+    element.removeClass(cls);
+  }
+}
+
+function placeNearNeighbours(node: NodeSingular): void {
+  const relatives = node.neighborhood().nodes();
+  if (relatives.nonempty()) {
+    let x = 0;
+    let y = 0;
+    let count = 0;
+    relatives.forEach((relative) => {
+      const position = relative.position();
+      x += position.x;
+      y += position.y;
+      count += 1;
+    });
+    node.position({ x: x / count + 40, y: y / count + 40 });
+    return;
+  }
+  node.position({ x: 240 + Math.random() * 120, y: 180 + Math.random() * 120 });
+}
+
+export interface SyncState {
+  saved: Record<string, MapPosition>;
+  session: Record<string, MapPosition>;
+  expandedKeys: Set<string>;
+  laidOut: boolean;
+}
+
+/**
+ * Reconcile the graph in place. Cytoscape is created once; data polls only
+ * update element data and membership, so node positions and the viewport are
+ * never reset by a refresh. The layout runs exactly once, unless the caller
+ * deliberately runs it again (Reset layout).
+ */
+export function syncElements(
+  cy: Core,
+  definitions: ElementDefinition[],
+  state: SyncState,
+): boolean {
+  const startedEmpty = cy.nodes().length === 0;
+  const desired = new Map<string, ElementDefinition>();
+  for (const definition of definitions) desired.set(String(definition.data.id), definition);
+
+  // Edges first, then detach children from stale compounds (removing a parent
+  // would take its children with it), then remove the stale nodes.
+  cy.edges()
+    .filter((edge) => !desired.has(edge.id()))
+    .remove();
+  const staleNodes: NodeSingular[] = [];
+  cy.nodes().forEach((node) => {
+    if (!desired.has(node.id())) staleNodes.push(node);
+  });
+  // Detach children before removing a compound parent: removing the parent
+  // would otherwise take its children with it.
+  for (const parent of staleNodes.filter((node) => node.isParent())) {
+    parent.children().move({ parent: null });
+  }
+  for (const node of staleNodes) node.remove();
+
+  const newNodes: string[] = [];
+  for (const definition of definitions) {
+    const id = String(definition.data.id);
+    const existing = cy.getElementById(id) as NodeSingular | EdgeSingular;
+    if (existing.nonempty()) {
+      if (existing.isNode()) {
+        // Preserve the live alert ring (owned by its own effect) and reparent
+        // explicitly: data('parent') alone does not update compound bounds.
+        const { ring: _ring, ringWidth: _ringWidth, parent, ...rest } = definition.data;
+        existing.data(rest as never);
+        const parentCollection = existing.parent();
+        const currentParent = parentCollection.nonempty() ? parentCollection.first().id() : null;
+        const nextParent = typeof parent === 'string' && parent ? parent : null;
+        if (currentParent !== nextParent) existing.move({ parent: nextParent });
+      } else {
+        existing.data(definition.data);
+        // source/target are immutable data keys: move the edge explicitly when
+        // a connection's endpoints were re-assigned between polls.
+        const edgeData = definition.data as { source?: string; target?: string };
+        const source = String(edgeData.source ?? '');
+        const target = String(edgeData.target ?? '');
+        if (
+          source &&
+          target &&
+          (existing.source().id() !== source || existing.target().id() !== target)
+        ) {
+          existing.move({ source, target });
+        }
+      }
+      syncStructuralClasses(existing, definition.classes);
+      continue;
+    }
+    const added = cy.add(definition);
+    if (added.isNode()) newNodes.push(id);
+  }
+
+  for (const id of newNodes) {
+    const node = cy.getElementById(id);
+    if (!node.nonempty() || node.data('kind') === 'site') continue;
+    const saved = state.session[id] ?? state.saved[id];
+    if (saved) {
+      node.position(saved);
+      continue;
+    }
+    // A fresh graph is laid out below; later arrivals are placed next to the
+    // devices they connect to rather than moving everything else.
+    if (state.laidOut) placeNearNeighbours(node);
+  }
+
+  // A remount (StrictMode, changing routes) starts a new, empty graph and must
+  // run the initial layout again even though the old instance had laid out.
+  let laidOut = state.laidOut && !startedEmpty;
+  if (!laidOut) {
+    const placeable = cy.nodes().filter((node) => node.data('kind') !== 'site');
+    if (placeable.length > 0) {
+      let positioned = 0;
+      placeable.forEach((node) => {
+        const saved = state.saved[node.id()] ?? state.session[node.id()];
+        if (!saved) return;
+        node.position(saved);
+        positioned += 1;
+      });
+      if (positioned === 0) {
+        cy.layout(FCOSE_LAYOUT as never).run();
+      } else {
+        // A saved layout missing some (new) nodes: lay out only those, so the
+        // saved positions stay exactly where the operator put them.
+        const missing = placeable.filter(
+          (node) => !state.saved[node.id()] && !state.session[node.id()],
+        );
+        if (missing.nonempty()) {
+          cy.layout({ ...FCOSE_LAYOUT, eles: missing, fit: false } as never).run();
+        }
+      }
+      cy.fit(undefined, 40);
+      laidOut = true;
+    }
+  }
+
+  // Re-apply expanded bundles after every reconcile (filter toggles rebuild the
+  // membership, but the operator's expansion intent survives).
+  cy.edges('.bundle').forEach((bundle) => {
+    const key = String(bundle.data('bundleKey') ?? '');
+    if (!state.expandedKeys.has(key)) return;
+    bundle.addClass('expanded');
+    for (const id of bundleMemberIds(bundle)) cy.getElementById(id).addClass('shown');
+  });
+
+  return laidOut;
+}
+
 export function TopologyMap({
   sites,
   nodes,
@@ -96,12 +307,21 @@ export function TopologyMap({
   const { theme } = useTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  // Survives element rebuilds (filter/toggle) so an expanded bundle stays open.
+  // useState's function initializer reads localStorage once, not every render.
+  const [initialSavedPositions] = useState(loadSavedPositions);
+  const savedPositionsRef = useRef<Record<string, MapPosition>>(initialSavedPositions);
+  // Positions moved in this session, saved or not: a data poll must never
+  // snap a node back before the operator has pressed Save.
+  const sessionPositionsRef = useRef<Record<string, MapPosition>>({});
+  const laidOutRef = useRef(false);
+  // Survives element reconciles so an expanded bundle stays open.
   const expandedRef = useRef<Set<string>>(new Set());
   const [showSites, setShowSites] = useState(true);
   const [linkFilter, setLinkFilter] = useState<LinkFilter>('all');
   const [groupTunnels, setGroupTunnels] = useState(true);
   const [selected, setSelected] = useState<MapNode | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
 
   const elements = useMemo<ElementDefinition[]>(() => {
     const els: ElementDefinition[] = [];
@@ -122,6 +342,7 @@ export function TopologyMap({
         if (!nodes.some((node) => node.siteId === site.id)) continue;
         els.push({
           data: { id: `site-${site.id}`, label: site.name, kind: 'site' },
+          grabbable: false,
         });
       }
     }
@@ -164,17 +385,25 @@ export function TopologyMap({
     return els;
   }, [sites, nodes, edges, showSites, linkFilter, groupTunnels]);
 
-  const nodeById = useMemo(
-    () => new Map(nodes.map((node) => [node.id, node])),
-    [nodes],
-  );
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  // The graph lives for the component's lifetime, so its event handlers read
+  // current props through refs instead of being torn down on every change.
+  const nodeByIdRef = useRef(nodeById);
+  const handlersRef = useRef({ onSelectDevice, onSelectConnection });
+  useEffect(() => {
+    nodeByIdRef.current = nodeById;
+  }, [nodeById]);
+  useEffect(() => {
+    handlersRef.current = { onSelectDevice, onSelectConnection };
+  }, [onSelectDevice, onSelectConnection]);
 
+  // Create the graph exactly once. Elements are reconciled by the next effect.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const cy = cytoscape({
       container: host,
-      elements,
+      elements: [],
       style: [
         {
           selector: 'node[kind="site"]',
@@ -291,15 +520,7 @@ export function TopologyMap({
           },
         },
       ],
-      layout: {
-        name: 'fcose',
-        animate: false,
-        quality: 'default',
-        nodeSeparation: 60,
-        idealEdgeLength: 90,
-        nodeRepulsion: 6000,
-        padding: 24,
-      } as never,
+      layout: { name: 'preset' } as never,
       wheelSensitivity: 0.2,
       minZoom: 0.15,
       maxZoom: 3,
@@ -312,11 +533,7 @@ export function TopologyMap({
     const collapseBundles = () => {
       cy.edges('.bundle.expanded').forEach((bundle) => {
         bundle.removeClass('expanded');
-        for (const id of String(bundle.data('members') ?? '')
-          .split(',')
-          .filter(Boolean)) {
-          cy.getElementById(id).removeClass('shown');
-        }
+        for (const id of bundleMemberIds(bundle)) cy.getElementById(id).removeClass('shown');
       });
       expandedRef.current.clear();
       if (container) container.style.cursor = 'default';
@@ -325,10 +542,10 @@ export function TopologyMap({
     cy.on('tap', 'node', (event) => {
       const data = event.target.data();
       if (data.kind === 'site') return;
-      const node = nodeById.get(String(data.id).replace(/^dev-/, ''));
+      const node = nodeByIdRef.current.get(String(data.id).replace(/^dev-/, ''));
       if (node) {
         setSelected(node);
-        if (node.deviceId) onSelectDevice?.(node.deviceId);
+        if (node.deviceId) handlersRef.current.onSelectDevice?.(node.deviceId);
       }
     });
     cy.on('tap', 'edge', (event) => {
@@ -348,7 +565,7 @@ export function TopologyMap({
       }
       const connectionId = Number(data.connectionId);
       if (Number.isFinite(connectionId) && connectionId > 0) {
-        onSelectConnection?.(connectionId);
+        handlersRef.current.onSelectConnection?.(connectionId);
       }
     });
     cy.on('tap', (event) => {
@@ -370,6 +587,16 @@ export function TopologyMap({
       if (container) container.style.cursor = 'default';
     });
 
+    // A moved node is the only "unsaved layout" signal: data refreshes and
+    // filter toggles do not count.
+    cy.on('dragfree', 'node', (event) => {
+      const node = event.target as NodeSingular;
+      if (node.data('kind') === 'site') return;
+      const { x, y } = node.position();
+      sessionPositionsRef.current[node.id()] = { x, y };
+      setDirty(true);
+    });
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return;
       // Don't collapse while the user is dismissing/typing in a form control
@@ -385,25 +612,25 @@ export function TopologyMap({
     };
     document.addEventListener('keydown', onKeyDown);
 
-    // Re-apply expansions after a rebuild; class-based, so no re-layout.
-    cy.edges('.bundle').forEach((bundle) => {
-      const key = String(bundle.data('bundleKey') ?? '');
-      if (!expandedRef.current.has(key)) return;
-      bundle.addClass('expanded');
-      for (const id of String(bundle.data('members') ?? '')
-        .split(',')
-        .filter(Boolean)) {
-        cy.getElementById(id).addClass('shown');
-      }
-    });
-
     cyRef.current = cy;
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       cy.destroy();
       cyRef.current = null;
     };
-  }, [elements, nodeById, onSelectDevice, onSelectConnection]);
+  }, []);
+
+  // Data changes reconcile in place — no destroy, no re-layout, no viewport jump.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    laidOutRef.current = syncElements(cy, elements, {
+      saved: savedPositionsRef.current,
+      session: sessionPositionsRef.current,
+      expandedKeys: expandedRef.current,
+      laidOut: laidOutRef.current,
+    });
+  }, [elements]);
 
   // Alert rings are data updates, not elements: changing severity must not
   // rebuild the graph (that would reset pan/zoom every poll).
@@ -433,6 +660,40 @@ export function TopologyMap({
     const cy = cyRef.current;
     if (!cy) return;
     cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: 200, y: 200 } });
+  };
+
+  const saveLayout = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    // Merge with what is stored: a node hidden by the current link filter must
+    // not lose its saved position because it is not in the graph right now.
+    const positions = { ...savedPositionsRef.current, ...snapshotPositions(cy) };
+    savedPositionsRef.current = positions;
+    sessionPositionsRef.current = { ...sessionPositionsRef.current, ...snapshotPositions(cy) };
+    try {
+      window.localStorage.setItem(LAYOUT_STORAGE, JSON.stringify(positions));
+    } catch {
+      // Storage can be unavailable (private mode/quota); the in-session
+      // positions still hold until the page is reloaded.
+    }
+    setDirty(false);
+  };
+
+  const resetLayout = () => {
+    savedPositionsRef.current = {};
+    sessionPositionsRef.current = {};
+    try {
+      window.localStorage.removeItem(LAYOUT_STORAGE);
+    } catch {
+      // Nothing persisted: reset is already the desired state.
+    }
+    setDirty(false);
+    setResetOpen(false);
+    const cy = cyRef.current;
+    if (!cy) return;
+    laidOutRef.current = true;
+    cy.layout(FCOSE_LAYOUT as never).run();
+    cy.fit(undefined, 40);
   };
 
   return (
@@ -482,6 +743,32 @@ export function TopologyMap({
             />
             Bundle links
           </label>
+          <span className="mx-1 hidden h-4 w-px bg-border sm:inline-block" />
+          <button
+            type="button"
+            onClick={saveLayout}
+            disabled={!dirty}
+            title="Store the current node positions in this browser"
+            className={cn(
+              'inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold uppercase transition-colors',
+              dirty
+                ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                : 'border-border bg-bg-panel text-text-faint',
+            )}
+          >
+            <Save className="h-3 w-3" />
+            Save layout
+            {dirty && <span className="h-1.5 w-1.5 rounded-full bg-accent" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setResetOpen(true)}
+            title="Discard saved positions and restore the automatic layout"
+            className="inline-flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[10px] font-semibold uppercase text-text-dim transition-colors hover:text-text"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset layout
+          </button>
         </div>
 
         <div className="flex items-center gap-1">
@@ -509,35 +796,15 @@ export function TopologyMap({
           >
             <Maximize2 className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            aria-label="Re-run layout"
-            onClick={() =>
-              cyRef.current
-                ?.layout({
-                  name: 'fcose',
-                  animate: false,
-                  nodeSeparation: 60,
-                  idealEdgeLength: 90,
-                  nodeRepulsion: 6000,
-                  padding: 24,
-                } as never)
-                .run()
-            }
-            className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
         </div>
       </div>
 
       <div className="relative">
-        {nodes.length === 0 ? (
-          <div className="flex h-[480px] items-center justify-center text-xs text-text-dim">
+        <div ref={hostRef} className="h-[520px] w-full" />
+        {nodes.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-text-dim">
             No devices to draw yet.
           </div>
-        ) : (
-          <div ref={hostRef} className="h-[520px] w-full" />
         )}
 
         <div className="pointer-events-none absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-card/90 px-2 py-1.5">
@@ -563,7 +830,7 @@ export function TopologyMap({
             warning alert
           </span>
           <span className="text-[10px] italic text-text-faint">
-            click a bundle to expand · background or Esc to collapse
+            drag nodes to arrange · click a bundle to expand
           </span>
         </div>
       </div>
@@ -572,7 +839,14 @@ export function TopologyMap({
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
           <div className="flex flex-wrap items-center gap-2 text-[11px]">
             <span className="font-semibold text-text">{selected.label}</span>
-            <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase', selected.kind === 'external' ? 'bg-bg-panel text-text-faint' : 'bg-accent/15 text-accent')}>
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                selected.kind === 'external'
+                  ? 'bg-bg-panel text-text-faint'
+                  : 'bg-accent/15 text-accent',
+              )}
+            >
               {selected.kind}
             </span>
             {selected.siteName && <span className="text-text-dim">{selected.siteName}</span>}
@@ -581,6 +855,16 @@ export function TopologyMap({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        title="Reset the map layout?"
+        description="This discards the positions saved in this browser and restores the automatic layout. Nodes you moved in this session will also be moved back."
+        confirmLabel="Reset layout"
+        destructive
+        onConfirm={resetLayout}
+      />
     </div>
   );
 }

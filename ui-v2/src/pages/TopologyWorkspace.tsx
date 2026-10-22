@@ -372,9 +372,11 @@ function NetworkMapSubTab({
       )}
 
       <p className="text-[11px] text-text-faint">
-        Links come from declared inter-device connections and live IPSec tunnels. Parallel links and
-        tunnels collapse into bundles — click one to expand its members; click a link to open its
-        detail, where the Link Evidence tab lists the member ports and VLANs.
+        Links come from declared inter-device connections and live IPSec tunnels. Drag nodes to
+        arrange the map, then use Save layout to keep those positions in this browser (Reset restores
+        the automatic layout). Parallel links and tunnels collapse into bundles — click one to expand
+        its members; click a link to open its detail, where the Link Evidence tab lists the member
+        ports and VLANs.
       </p>
     </div>
   );
