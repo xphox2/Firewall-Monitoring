@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useState, useMemo } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -68,6 +68,8 @@ interface ConnectionRecord {
   status: string;
   bandwidth_mbps?: number;
   latency_ms?: number;
+  source_if_name?: string;
+  dest_if_name?: string;
 }
 
 interface IPSecTunnelIntent {
@@ -90,6 +92,14 @@ export function TopologyWorkspace() {
   const setTab = (tab: TopologyTab) => {
     setSearchParams({ tab }, { replace: true });
   };
+
+  // Stable identity: the map's Cytoscape init effect depends on this callback
+  // and must not tear down the graph when the page re-renders.
+  const openConnection = useCallback(
+    (connectionId: number) =>
+      setSearchParams({ tab: 'connections', conn: String(connectionId) }, { replace: true }),
+    [setSearchParams],
+  );
 
   return (
     <div className="space-y-5">
@@ -150,7 +160,7 @@ export function TopologyWorkspace() {
         </div>
       </div>
 
-      {activeTab === 'map' && <NetworkMapSubTab />}
+      {activeTab === 'map' && <NetworkMapSubTab onOpenConnection={openConnection} />}
       {activeTab === 'connections' && <ConnectionsSubTab />}
       {activeTab === 'ipsec' && <IpsecTunnelsSubTab />}
     </div>
@@ -160,7 +170,11 @@ export function TopologyWorkspace() {
 // ============================================================================
 // SUB-TAB 1: NETWORK MAP
 // ============================================================================
-function NetworkMapSubTab() {
+function NetworkMapSubTab({
+  onOpenConnection,
+}: {
+  onOpenConnection?: (connectionId: number) => void;
+}) {
   const navigate = useNavigate();
   const { data: mapData, isLoading } = useQuery({
     queryKey: ['vpn-map-data'],
@@ -251,13 +265,17 @@ function NetworkMapSubTab() {
       const source = String(connection.source_device_id);
       const target = String(connection.dest_device_id);
       if (!deviceById.has(source) || !deviceById.has(target)) continue;
+      const ports = [connection.source_if_name, connection.dest_if_name]
+        .filter(Boolean)
+        .join(' ↔ ');
       links.push({
         id: `conn-${connection.id}`,
         source,
         target,
         kind: 'connection',
-        label: connection.connection_type,
+        label: ports ? `${connection.connection_type} · ${ports}` : connection.connection_type,
         status: connection.status,
+        connectionId: connection.id,
       });
     }
 
@@ -348,13 +366,15 @@ function NetworkMapSubTab() {
             severityByDevice={severityByDevice}
             severitySignature={severitySignature}
             onSelectDevice={openDevice}
+            onSelectConnection={onOpenConnection}
           />
         </Suspense>
       )}
 
       <p className="text-[11px] text-text-faint">
-        Links come from declared inter-device connections and live IPSec tunnels. LLDP/CDP edge
-        evidence, expandable tunnel bundles and VLAN sublanes remain in the classic map.
+        Links come from declared inter-device connections and live IPSec tunnels. Parallel links and
+        tunnels collapse into bundles — click one to expand its members; click a link to open its
+        detail, where the Link Evidence tab lists the member ports and VLANs.
       </p>
     </div>
   );
@@ -366,6 +386,7 @@ function NetworkMapSubTab() {
 function ConnectionsSubTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: connList, isLoading } = useQuery({
     queryKey: ['device-connections'],
@@ -375,6 +396,16 @@ function ConnectionsSubTab() {
   const connections = connList ?? [];
 
   const [selectedConn, setSelectedConn] = useState<ConnectionRecord | null>(null);
+
+  // Arriving from the map's edge click: open that connection, then drop the
+  // one-shot query param so closing the drawer doesn't reopen it.
+  const requestedConn = Number(searchParams.get('conn') ?? '');
+  useEffect(() => {
+    if (!requestedConn || !connList) return;
+    const match = connList.find((conn) => conn.id === requestedConn);
+    if (match) setSelectedConn(match);
+    setSearchParams({ tab: 'connections' }, { replace: true });
+  }, [requestedConn, connList, setSearchParams]);
   const [detailTab, setDetailTab] = useState<'overview' | 'source' | 'dest' | 'evidence' | 'traffic'>('overview');
 
   const { data: connDetail, isError: connDetailError } = useQuery({

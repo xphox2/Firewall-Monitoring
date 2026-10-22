@@ -5,11 +5,11 @@ feature-complete. This page is the single source of truth for what is missing,
 so an operator (or a reviewer) never has to guess whether a thin screen is a bug
 or an unbuilt feature.
 
-**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.355.
+**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.368.
 The baseline table is kept for history; the current-state table and the remaining
 gaps list below are the actionable view.
 
-## Current state (v0.11.355)
+## Current state (v0.11.368)
 
 | Area | State | Remaining |
 |---|---|---|
@@ -18,7 +18,7 @@ gaps list below are the actionable view.
 | Flows | At parity: filters, throughput chart, byte-ranked distributions, degraded-window disclosure, conversation drill-down, sample inspector, CSV export | — |
 | Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
 | Threat Intel | At parity: lookup verdict, feed switch/status, indicator search/add/delete, storm tuning | — |
-| Topology / Connections / IPSec | Interactive Cytoscape map with alert rings and tunnel bundling + five-tab connection detail + structured IPSec preview | VLAN sublanes inside the graph |
+| Topology / Connections / IPSec | Interactive Cytoscape map with alert rings and click-to-expand link/tunnel bundles + five-tab connection detail + structured IPSec preview | — |
 | Devices | At parity: charts, traffic, config diff/split with paired modifications, revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | — |
 | Collectors / Sites | At parity: probe approve/reject/commands/registration, site CRUD with region/country/timezone/parent hierarchy | — |
 | Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
@@ -131,15 +131,21 @@ V2:
 - **v0.11.366** — Topology alert rings (alerts-only) and tunnel bundling. The topology backlog is
   now VLAN sublanes only.
 - **v0.11.367** — Effective coverage view (resolved profile chain, per-type decided-by, rules in
-  order). The only remaining difference is VLAN sublanes in the graph.
+  order).
+- **v0.11.368** — Click-to-expand link/tunnel bundles with member sublanes and connection
+  drill-through. No functional parity gaps remain.
 
 ## Remaining gaps
 
-1. **Topology graph depth.** The interactive map covers sites, connections,
-   IPSec tunnels, filters, zoom/fit, device drill-through, alert rings and
-   tunnel bundling; LLDP/FDB/ARP evidence is in the connection detail. Still
-   classic-only: VLAN sublanes drawn inside the graph. This is the only
-   documented parity difference left.
+None. The interactive map covers sites, connections, IPSec tunnels, filters,
+zoom/fit, device drill-through, alert rings, and click-to-expand link/tunnel
+bundles; expanded members carry type + port labels, LLDP/FDB/ARP and VLAN
+evidence is in the connection detail, and clicking a link opens that drawer.
+Single-member pairs are drawn directly instead of as a one-item bundle (a
+deliberate improvement: the only member is visible without a click).
+
+The maintenance "recurrence" control is unexposed in both consoles, so it is
+not a V2 parity gap.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
@@ -150,5 +156,5 @@ JSON remains available behind a disclosure).
 
 No `ClassicFallback` notices and no inline classic-only sub-gap notes remain.
 The shell still carries a `PREVIEW` pill and a dismissible notice, and the
-classic sidebar links to `/admin/v2` with a `Preview` badge. The remaining
-backlog is listed above.
+classic sidebar links to `/admin/v2` with a `Preview` badge. V2 is at feature
+parity with the classic console.
