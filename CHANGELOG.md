@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.380] - 2026-10-22
+
+### Security — Bound the FortiGate config parser
+
+- The FortiGate config parser now enforces a maximum nesting depth (64) and object count
+  (20,000), mirroring the OPNsense parser, so a crafted or pathological backup cannot grow the
+  parse stack without bound or exhaust memory (DoS guard).
+
 ## [0.11.379] - 2026-10-22
 
 ### Tests — Collector approval and threat-intel indicator coverage
