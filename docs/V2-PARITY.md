@@ -5,11 +5,11 @@ feature-complete. This page is the single source of truth for what is missing,
 so an operator (or a reviewer) never has to guess whether a thin screen is a bug
 or an unbuilt feature.
 
-**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.372.
+**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.373.
 The baseline table is kept for history; the current-state table and the remaining
 gaps list below are the actionable view.
 
-## Current state (v0.11.372)
+## Current state (v0.11.373)
 
 | Area | State | Remaining |
 |---|---|---|
@@ -139,6 +139,8 @@ V2:
 - **v0.11.371** — Ops hardening: V2 chunks are content-hashed and a tab holding a previous build
   reloads once instead of failing on a stale module export.
 - **v0.11.372** — The preview notice now states feature parity instead of listing classic-only pages.
+- **v0.11.373** — Structured effective alert-policy simulator (status, thresholds, mode, cooldown,
+  severity, channels, escalation, provenance); raw JSON only behind a disclosure.
 
 ## Remaining gaps
 
@@ -152,10 +154,10 @@ deliberate improvement: the only member is visible without a click).
 The maintenance "recurrence" control is unexposed in both consoles, so it is
 not a V2 parity gap.
 
-Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
-effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
-connection detail, IPSec preview and the event-rule tester are structured (raw
-JSON remains available behind a disclosure).
+The only remaining raw-JSON surface is device capabilities (inside a
+disclosure). Event, security-event, syslog, trap, flow-sample, connection
+detail, IPSec preview, the event-rule tester and the effective-policy
+simulator are structured (raw JSON remains available behind a disclosure).
 
 ## Where V2 points at V1
 

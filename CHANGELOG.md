@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.373] - 2026-10-22
+
+### Changed — Structured effective alert-policy simulator
+
+- The alerting page's effective-policy simulator no longer dumps raw JSON. It shows the
+  status banner (active / disabled with the toggle layer / maintenance / suppressed by a named
+  event rule), then threshold and recovery values, static-vs-zscore firing mode, cooldown with
+  provenance, severity, notification policy, storm-digest threshold, escalation and the scope switch.
+- Enabled notification channels render as chips (email, Slack, Discord, webhook, PagerDuty,
+  Opsgenie, Teams). The API exposes channel **names** only — webhook URLs and recipients are
+  credentials and are never serialised in this response; a handler test pins that.
+- Each threshold/cooldown carries the layer that decided it (Global, Policy, Site, Device, or the
+  matching event rule), matching the firing path.
+- The raw response remains available behind a collapsed disclosure for debugging.
+- Docs: the simulator is no longer listed as a raw-JSON stub.
+
 ## [0.11.372] - 2026-10-22
 
 ### Changed — Preview notice reflects parity
