@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.384] - 2026-10-22
+
+### CI — Stop running the slow suite twice (PR + merge)
+
+- The expensive jobs — the 10-shard race suite, the Postgres integration lane,
+  and the Playwright E2E — now run on `pull_request` only. A merge to master
+  re-runs just the fast jobs (build/vet/static analysis/vuln/freshness), which
+  is the "green master" signal the Docker publish workflow keys off, instead of
+  re-running the whole suite on the already-green merge.
+- The Playwright E2E is also path-gated: backend-only PRs (no `ui-v2/**` change)
+  skip the ~10-minute browser job entirely.
+- All of this remains reproducible locally via `make ci-local` (and
+  `make ui-v2` for the console).
+
 ## [0.11.383] - 2026-10-22
 
 ### Security — Pin Docker images to immutable digests
