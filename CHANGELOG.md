@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.367] - 2026-10-21
+
+### Added — Effective coverage view in the V2 alerting page
+
+- The Event Profiles header gains **Effective coverage**: pick a device or site and see the resolved
+  profile chain, every alert type's On/Off state with the layer that decided it (or "nothing
+  overrides it"), and the applicable rules in evaluation order (layer, priority, source, action,
+  type, expiry).
+- The payload comes from `GET /api/event-config/effective`, computed by the same locked resolver
+  the firing path uses, so the view cannot disagree with what actually fires. Retired devices are
+  excluded from the picker.
+- Docs: the profile-scoped effective-view gap is closed. The only remaining documented difference
+  is VLAN sublanes drawn inside the topology graph.
+
 ## [0.11.366] - 2026-10-21
 
 ### Added — Topology alert overlays and tunnel bundling
