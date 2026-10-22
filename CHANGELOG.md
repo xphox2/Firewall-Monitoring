@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.374] - 2026-10-22
+
+### Changed — Structured device capability matrix
+
+- The device Security tab no longer dumps the capability payload as JSON. It now shows a
+  summary (supported / degraded / inactive / unsupported), a feature table with each verdict and
+  the deciding fields, and a per-field table with state, source, completeness, observation count
+  and last-seen time. Notes such as config-dependent caveats sit under the field name.
+- The static vendor profile is labelled when it was built from documentation rather than verified
+  hardware.
+- Raw JSON stays behind a collapsed disclosure for debugging.
+- Docs: no raw-JSON dumps remain in V2; raw payloads are disclosures only.
+
 ## [0.11.373] - 2026-10-22
 
 ### Changed — Structured effective alert-policy simulator

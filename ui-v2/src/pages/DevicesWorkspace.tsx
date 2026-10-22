@@ -24,6 +24,8 @@ import {
 import { apiFetch } from '@/lib/api';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { DeviceCapabilitiesPanel } from '@/components/devices/capability-matrix';
+import type { DeviceCapabilities } from '@/lib/device-capabilities';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -839,9 +841,9 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   const selectedFrom = configRevs.find((r) => r.id === diffFrom) ?? null;
   const selectedTo = configRevs.find((r) => r.id === diffTo) ?? null;
 
-  const { data: capabilities } = useQuery({
+  const { data: capabilities, isLoading: capabilitiesLoading } = useQuery({
     queryKey: ['device-capabilities', deviceId],
-    queryFn: () => apiFetch<Record<string, any>>(`/admin/api/devices/${deviceId}/capabilities`),
+    queryFn: () => apiFetch<DeviceCapabilities>(`/admin/api/devices/${deviceId}/capabilities`),
     enabled: activeTab === 'security',
   });
 
@@ -1353,14 +1355,20 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                   This device does not report security inspection counters or licences.
                 </div>
               )}
-              <details className="rounded-xl border border-border bg-bg-card p-4">
-                <summary className="cursor-pointer text-sm font-semibold text-text">
-                  Vendor telemetry capability matrix (24h observed)
-                </summary>
-                <pre className="mt-3 rounded-lg border border-border bg-bg-panel p-3 font-mono text-xs text-text overflow-x-auto">
-                  {JSON.stringify(capabilities ?? { status: 'Loaded' }, null, 2)}
-                </pre>
-              </details>
+              <div className="rounded-xl border border-border bg-bg-card p-4">
+                <h2 className="text-sm font-semibold text-text">
+                  Vendor telemetry capability matrix
+                </h2>
+                <p className="mt-0.5 text-[11px] text-text-faint">
+                  Static vendor profile joined with the fields this device was observed sending.
+                </p>
+                <div className="mt-3">
+                  <DeviceCapabilitiesPanel
+                    capabilities={capabilities}
+                    isLoading={capabilitiesLoading}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
