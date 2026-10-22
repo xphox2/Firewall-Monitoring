@@ -329,28 +329,53 @@ func (h *Handler) GetEffectiveAlertConfig(c *gin.Context) {
 
 	resolved, prov := h.alertManager.EffectiveAlertConfig(deviceID, siteID, alertType, metric)
 
-	c.JSON(http.StatusOK, response.Success(gin.H{
+	c.JSON(http.StatusOK, response.Success(effectiveAlertConfigPayload(alertType, resolved, prov)))
+}
+
+// effectiveAlertConfigPayload is the read-only simulator's shape. Channel
+// NAMES only: webhook URLs and recipients are credentials and stay out of this
+// response (and are masked everywhere else in the API).
+func effectiveAlertConfigPayload(
+	alertType models.AlertType,
+	resolved alerts.ResolvedAlertConfig,
+	prov alerts.ConfigProvenance,
+) gin.H {
+	return gin.H{
 		"alert_type": alertType,
 		"effective": gin.H{
-			"threshold":        resolved.Threshold,
-			"clear_threshold":  resolved.ClearThreshold,
-			"mode":             resolved.Mode,
-			"zscore_k":         resolved.ZScoreK,
-			"cooldown_minutes": resolved.CooldownMinutes,
-			"severity":         resolved.Severity,
-			"alert_enabled":    resolved.AlertEnabled,
-			"storm_sources":    resolved.StormSources,
-			"in_maintenance":   resolved.InMaintenance,
+			"threshold":          resolved.Threshold,
+			"clear_threshold":    resolved.ClearThreshold,
+			"mode":               resolved.Mode,
+			"zscore_k":           resolved.ZScoreK,
+			"cooldown_minutes":   resolved.CooldownMinutes,
+			"severity":           resolved.Severity,
+			"alert_enabled":      resolved.AlertEnabled,
+			"storm_sources":      resolved.StormSources,
+			"in_maintenance":     resolved.InMaintenance,
+			"policy_id":          resolved.PolicyID,
+			"rule_matched":       resolved.RuleMatched,
+			"rule_severity":      resolved.RuleSeverity,
+			"notify_email":       resolved.NotifyEmail,
+			"notify_slack":       resolved.NotifySlack,
+			"notify_discord":     resolved.NotifyDiscord,
+			"notify_webhook":     resolved.NotifyWebhook,
+			"notify_pagerduty":   resolved.NotifyPagerDuty,
+			"notify_opsgenie":    resolved.NotifyOpsgenie,
+			"notify_teams":       resolved.NotifyTeams,
+			"escalation_enabled": resolved.EscalationEnabled,
+			"escalation_minutes": resolved.EscalationMinutes,
+			"escalation_repeat":  resolved.EscalationRepeat,
 		},
 		"provenance": gin.H{
 			"threshold":          prov.Threshold,
 			"cooldown":           prov.Cooldown,
 			"suppressed_by_rule": prov.SuppressedByRule,
 			"alerts_disabled":    prov.AlertsDisabled,
+			"toggle_layer":       prov.ToggleLayer,
 			"rule_id":            prov.RuleID,
 			"rule_name":          prov.RuleName,
 		},
-	}))
+	}
 }
 
 // alertOverrideRow is one customized-threshold entry for the Alerting hub's

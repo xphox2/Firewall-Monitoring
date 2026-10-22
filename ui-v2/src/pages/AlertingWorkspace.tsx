@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -16,6 +16,13 @@ import {
 } from 'lucide-react';
 import { apiFetch, ApiError, type MeResponse } from '@/lib/api';
 import { buildAlertPolicyBody, type AlertPolicy } from '@/lib/alert-policy';
+import {
+  describeEffectiveState,
+  enabledChannels,
+  formatAlertThreshold,
+  provenanceLabel,
+  type EffectiveAlertConfig,
+} from '@/lib/effective-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -353,6 +360,28 @@ const GLOBAL_THRESHOLD_META: Array<{
   { key: 'retention_held_alert_hours', label: 'Retention Gate Held Alert', unit: 'hours', category: 'alerts', group: 'Raw Archive Health Alerts' },
   { key: 'archive_unsettled_alert_hours', label: 'Unsettled Chunk Alert', unit: 'hours', category: 'alerts', group: 'Raw Archive Health Alerts' },
 ];
+
+function PolicySimCell({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-bg-panel/40 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-text-faint">
+        {label}
+      </div>
+      <div className={cn('mt-1 text-sm font-semibold', tone ?? 'text-text')}>{value}</div>
+      {hint && <div className="mt-0.5 text-[10px] leading-relaxed text-text-faint">{hint}</div>}
+    </div>
+  );
+}
 
 export function AlertingWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -733,14 +762,40 @@ export function AlertingWorkspace() {
   const [simDeviceId, setSimDeviceId] = useState<string>('');
   // GetEffectiveAlertConfig REQUIRES alert_type and 400s without it.
   const [simAlertType, setSimAlertType] = useState('CPU_HIGH');
-  const { data: effectiveConfig } = useQuery({
+  const {
+    data: effectiveConfig,
+    isLoading: simLoading,
+    isError: simError,
+  } = useQuery({
     queryKey: ['effective-alert-config', simDeviceId, simAlertType],
     queryFn: () =>
-      apiFetch<Record<string, any>>(
+      apiFetch<EffectiveAlertConfig>(
         `/admin/api/alert-config/effective?device_id=${encodeURIComponent(simDeviceId)}&alert_type=${encodeURIComponent(simAlertType)}`,
       ),
     enabled: activeTab === 'effective' && !!simDeviceId,
   });
+  const simEffective = effectiveConfig?.effective;
+  const simProvenance = effectiveConfig?.provenance;
+  const simState = describeEffectiveState(simEffective, simProvenance);
+  const simChannels = enabledChannels(simEffective);
+  const simZScore = String(simEffective?.mode ?? 'static').toLowerCase() === 'zscore';
+  const simThreshold = formatAlertThreshold(simAlertType, simEffective?.threshold);
+  const simClear =
+    (simEffective?.clear_threshold ?? 0) > 0
+      ? formatAlertThreshold(simAlertType, simEffective?.clear_threshold)
+      : '';
+  const simSeverity = String(simEffective?.severity ?? 'info').toLowerCase();
+  const simSeverityTone =
+    simSeverity === 'critical'
+      ? 'text-sig-crit'
+      : simSeverity === 'warning'
+        ? 'text-sig-warn'
+        : 'text-text';
+  const simThresholdHint = `from ${provenanceLabel(simProvenance?.threshold)}${
+    simProvenance?.threshold === 'rule' && simProvenance?.rule_name
+      ? ` (${simProvenance.rule_name})`
+      : ''
+  }`;
 
   const isAdmin = me?.role === 'admin';
 
@@ -1737,10 +1792,10 @@ export function AlertingWorkspace() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border pb-3">
             <div>
               <h2 className="font-display text-sm font-bold text-text">
-                Effective Alert Policy Simulator (Global → Profile → Site → Device)
+                Effective Alert Policy Simulator (Global → Policy → Site → Device)
               </h2>
               <p className="text-xs text-text-faint mt-0.5">
-                Select any monitored firewall to inspect the exact thresholds and notification channels that apply to it at runtime.
+                Select any monitored firewall to inspect the thresholds, firing model and notification channels that apply at runtime.
               </p>
             </div>
             <select
@@ -1771,12 +1826,136 @@ export function AlertingWorkspace() {
 
           {!simDeviceId ? (
             <div className="p-6 text-center text-xs text-text-faint">
-              Choose a firewall above to compute its resolved alerting & event rule chain.
+              Choose a firewall above to compute its resolved alert policy.
             </div>
+          ) : simLoading ? (
+            <p className="p-6 text-center text-xs text-text-dim">Resolving the effective policy…</p>
+          ) : simError ? (
+            <p className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+              Could not resolve this policy. The alert engine may still be starting; try again in a
+              moment.
+            </p>
           ) : (
-            <pre className="rounded-md border border-border bg-bg-panel p-4 font-mono text-xs text-text overflow-x-auto">
-              {JSON.stringify(effectiveConfig || {}, null, 2)}
-            </pre>
+            <div className="space-y-4">
+              <div
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-xs',
+                  simState.tone === 'ok'
+                    ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok'
+                    : simState.tone === 'warn'
+                      ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn'
+                      : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit',
+                )}
+              >
+                <span className="font-semibold">{simState.label}.</span>{' '}
+                <span className="text-text-dim">{simState.detail}</span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <PolicySimCell
+                  label="Firing threshold"
+                  value={simZScore ? `≥ ${simThreshold}` : simThreshold}
+                  hint={
+                    simZScore
+                      ? `baseline + ${simEffective?.zscore_k ?? '?'}·σ; ${simThreshold} is the floor`
+                      : simThresholdHint
+                  }
+                  tone={simZScore ? 'text-accent' : 'text-text'}
+                />
+                <PolicySimCell
+                  label="Recovery"
+                  value={simClear || 'At threshold'}
+                  hint={
+                    simClear
+                      ? `Clears below ${simClear} (hysteresis)`
+                      : 'No separate clear threshold set'
+                  }
+                />
+                <PolicySimCell
+                  label="Cooldown"
+                  value={`${simEffective?.cooldown_minutes ?? 0} min`}
+                  hint={`from ${provenanceLabel(simProvenance?.cooldown)}`}
+                />
+                <PolicySimCell
+                  label="Severity"
+                  value={<span className="uppercase">{simSeverity}</span>}
+                  hint={
+                    simEffective?.rule_matched
+                      ? 'set by the matching event rule'
+                      : 'resolved from the policy chain'
+                  }
+                  tone={simSeverityTone}
+                />
+                <PolicySimCell
+                  label="Notification policy"
+                  value={
+                    simEffective?.policy_id ? `Policy #${simEffective.policy_id}` : 'Default chain'
+                  }
+                  hint="no webhook URLs or recipients are shown here"
+                />
+                <PolicySimCell
+                  label="Storm digest"
+                  value={
+                    (simEffective?.storm_sources ?? 0) > 0
+                      ? `${simEffective?.storm_sources} distinct sources`
+                      : 'Off'
+                  }
+                  hint="cross-source digest threshold"
+                />
+                <PolicySimCell
+                  label="Escalation"
+                  value={
+                    simEffective?.escalation_enabled
+                      ? `after ${simEffective.escalation_minutes ?? 0} min`
+                      : 'Not enabled'
+                  }
+                  hint={
+                    simEffective?.escalation_enabled
+                      ? `repeats every ${simEffective.escalation_repeat ?? 0} min`
+                      : 'no repeat escalation'
+                  }
+                />
+                <PolicySimCell
+                  label="Enabled"
+                  value={simEffective?.alert_enabled === false ? 'Off' : 'On'}
+                  hint={simEffective?.in_maintenance ? 'maintenance window active' : 'scope switch'}
+                  tone={
+                    simEffective?.alert_enabled === false ? 'text-sig-crit' : 'text-sig-ok'
+                  }
+                />
+              </div>
+
+              <div className="rounded-lg border border-border bg-bg-card p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-text-faint">
+                  Notification channels
+                </div>
+                {simChannels.length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {simChannels.map((channel) => (
+                      <span
+                        key={channel}
+                        className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent"
+                      >
+                        {channel}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-text-faint">
+                    No channels enabled — the alert is recorded but not delivered.
+                  </p>
+                )}
+              </div>
+
+              <details className="rounded-lg border border-border bg-bg-card p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-text">
+                  Raw response
+                </summary>
+                <pre className="mt-2 max-h-72 overflow-auto rounded border border-border bg-bg-panel p-2 font-mono text-[10px] text-text-dim">
+                  {JSON.stringify(effectiveConfig ?? {}, null, 2)}
+                </pre>
+              </details>
+            </div>
           )}
         </section>
       )}
