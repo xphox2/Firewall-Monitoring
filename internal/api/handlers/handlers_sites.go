@@ -47,6 +47,12 @@ func (h *Handler) GetSite(c *gin.Context) {
 		return
 	}
 
+	// GetSite preloads Site.Probes; redact their sensitive fields (registration
+	// key hash, TLS cert/key paths + material) before returning. This route is
+	// reachable by the viewer role, so the redaction must happen here, not only
+	// in an admin-only caller.
+	httputil.RedactProbes(site.Probes)
+
 	var children []models.Site
 	if err := db.Gorm().Where("parent_site_id = ?", id).Find(&children).Error; err != nil {
 		log.Printf("Site %d: failed to get children: %v", id, err)

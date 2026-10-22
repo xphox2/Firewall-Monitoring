@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.386] - 2026-10-22
+
+### Security — Redact probe secrets on GET /sites/:id
+
+- `GetSite` preloads `Site.Probes` (registration-key hash, TLS cert/key paths +
+  material) and the route is reachable by the viewer role, but it returned them
+  unredacted. It now calls `httputil.RedactProbes(site.Probes)` before
+  responding. Added a guardrail test pinning the redaction.
+
 ## [0.11.385] - 2026-10-22
 
 ### Security — Sanitize IRC outbound lines (CRLF injection)
