@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.385] - 2026-10-22
+
+### Security — Sanitize IRC outbound lines (CRLF injection)
+
+- Every outbound IRC message now passes through a `sanitizeIRC` guard that strips
+  CR, LF and NUL, applied at the `safePrivmsg`/`safeNotice`/`safeJoin`/`safeNick`
+  chokepoint. `go-ircevent` performs no sanitization, so a device name, channel
+  name or message carrying a line break previously let a crafted string inject
+  raw IRC commands (QUIT/NICK/PRIVMSG NickServ) into the bot's outbound stream.
+
 ## [0.11.384] - 2026-10-22
 
 ### CI — Stop running the slow suite twice (PR + merge)

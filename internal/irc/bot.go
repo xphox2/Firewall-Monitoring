@@ -1516,11 +1516,30 @@ func sendWithTimeout(desc string, send func()) error {
 	}
 }
 
+// sanitizeIRC strips the control bytes that terminate or start an IRC protocol
+// line — CR (\r), LF (\n) and NUL (0). go-ircevent performs NO sanitization, so
+// a device name, channel name or message carrying any of these would otherwise
+// inject raw IRC commands (QUIT, NICK, PRIVMSG NickServ …) into the bot's
+// outbound stream. Every safe* wrapper below funnels its arguments through this
+// before anything reaches the wire.
+func sanitizeIRC(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\r' || r == '\n' || r == 0 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func safePrivmsg(conn *irc.Connection, target, message string) error {
+	target = sanitizeIRC(target)
+	message = sanitizeIRC(message)
 	return sendVia(conn, "PRIVMSG to "+target, func() { conn.Privmsg(target, message) })
 }
 
 func safeNotice(conn *irc.Connection, target, message string) error {
+	target = sanitizeIRC(target)
+	message = sanitizeIRC(message)
 	return sendVia(conn, "NOTICE to "+target, func() { conn.Notice(target, message) })
 }
 
@@ -1528,10 +1547,13 @@ func safeNotice(conn *irc.Connection, target, message string) error {
 // a channel key, which must never reach logs — and deriving the name from the
 // spec would log the key itself on a whitespace-only channel name.
 func safeJoin(conn *irc.Connection, channelSpec, logName string) error {
+	channelSpec = sanitizeIRC(channelSpec)
+	logName = sanitizeIRC(logName)
 	return sendVia(conn, "JOIN "+logName, func() { conn.Join(channelSpec) })
 }
 
 func safeNick(conn *irc.Connection, nick string) error {
+	nick = sanitizeIRC(nick)
 	return sendVia(conn, "NICK "+nick, func() { conn.Nick(nick) })
 }
 
