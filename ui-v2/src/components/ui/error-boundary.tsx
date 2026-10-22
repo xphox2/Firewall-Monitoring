@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { reloadForStaleChunk } from '@/lib/stale-chunk';
 
 interface Props {
   children: ReactNode;
@@ -27,6 +28,10 @@ export class ErrorBoundary extends Component<Props, State> {
     // Console only: the CSP and audit trail already capture server failures,
     // and shipping stacks to a third party is not acceptable for this app.
     console.error('Admin UI V2 render error', error, info.componentStack);
+    // A deploy can leave this tab holding the previous entry while its lazy
+    // chunks have been replaced. Reload once to pick up the new build rather
+    // than showing a module-export error the operator cannot act on.
+    reloadForStaleChunk(error);
   }
 
   render() {

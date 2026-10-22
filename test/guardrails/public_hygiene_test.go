@@ -79,6 +79,11 @@ var (
 	hygieneSkipExt = regexp.MustCompile(`\.(mmdb|woff2|png|jpe?g|gif|ico)$`)
 )
 
+// v2VendorChunk matches the generated vendored bundles, whose filenames carry
+// a content hash (vendor.<hash>.js). First-party chunks such as
+// topology-map.<hash>.js are still scanned.
+var v2VendorChunk = regexp.MustCompile(`^cmd/api/static/v2/chunks/(vendor|query|icons)\.[A-Za-z0-9_-]+\.js$`)
+
 // hygieneSkip lists generated or vendored files by exact path. First-party
 // files next to them (diagram-cytoscape.js, for example) are still scanned.
 var hygieneSkip = map[string]bool{
@@ -87,9 +92,6 @@ var hygieneSkip = map[string]bool{
 	"cmd/api/static/css/tailwind.css":              true, // generated
 	"cmd/api/static/v2/v2.css":                     true, // generated
 	"cmd/api/static/v2/v2.js":                      true, // generated
-	"cmd/api/static/v2/chunks/vendor.js":           true, // vendored bundle
-	"cmd/api/static/v2/chunks/query.js":            true, // vendored bundle
-	"cmd/api/static/v2/chunks/icons.js":            true, // vendored bundle
 	"cmd/api/static/css/gridstack.min.css":         true,
 	"cmd/api/static/css/uPlot.min.css":             true,
 	"cmd/api/static/js/chart.umd.min.js":           true,
@@ -125,7 +127,7 @@ func hygieneRepoFiles(t *testing.T) (string, []string) {
 	}
 	var files []string
 	for _, f := range strings.Split(string(out), "\x00") {
-		if f != "" && !hygieneSkipExt.MatchString(f) && !hygieneSkip[f] {
+		if f != "" && !hygieneSkipExt.MatchString(f) && !hygieneSkip[f] && !v2VendorChunk.MatchString(f) {
 			files = append(files, f)
 		}
 	}

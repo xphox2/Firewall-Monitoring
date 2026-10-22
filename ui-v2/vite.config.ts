@@ -40,7 +40,7 @@ export default defineConfig(({ command }) => ({
       input: path.resolve(__dirname, 'src/main.tsx'),
       output: {
         entryFileNames: 'v2.js',
-        chunkFileNames: 'chunks/[name].js',
+        chunkFileNames: 'chunks/[name].[hash].js',
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router'],
           query: ['@tanstack/react-query', '@tanstack/react-table'],
@@ -50,7 +50,7 @@ export default defineConfig(({ command }) => ({
           if (assetInfo.names && assetInfo.names.some((n) => n.endsWith('.css'))) {
             return 'v2.css';
           }
-          return 'assets/[name][extname]';
+          return 'assets/[name].[hash][extname]';
         },
       },
     },
