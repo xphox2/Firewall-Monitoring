@@ -368,14 +368,13 @@ export function AppShell() {
             >
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sig-warn" aria-hidden="true" />
               <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-text-dim">
-                <strong className="text-text">Preview build.</strong> Core pages are functional, but
-                advanced views are still only in the classic console: the interactive topology map,
-                device charts and config diff, the event-rule builder, alert analytics, 2FA/passkey
-                enrollment, IRC channel management and archive health. Use{' '}
+                <strong className="text-text">Preview build.</strong> This console is now at feature
+                parity with the classic one. Classic remains the default while the preview is
+                evaluated — if anything looks off, switch to{' '}
                 <a href={v1EquivalentUrl} className="font-medium text-accent hover:underline">
                   Classic V1
-                </a>{' '}
-                for those.
+                </a>
+                .
               </p>
               <a
                 href={v1EquivalentUrl}

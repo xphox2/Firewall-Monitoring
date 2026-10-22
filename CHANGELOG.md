@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.372] - 2026-10-22
+
+### Changed — Preview notice reflects parity
+
+- The V2 preview notice no longer lists topology, charts, config diff, the event-rule builder,
+  alert analytics, 2FA/passkeys, IRC or archive as classic-only; it now states that V2 is at
+  feature parity and classic remains the default while the preview is evaluated.
+- The classic sidebar's V2 tooltip says the same.
+- Docs: current-state header and release log refreshed.
+
 ## [0.11.371] - 2026-10-21
 
 ### Fixed — V2 no longer breaks when a deploy replaces its lazy chunks
