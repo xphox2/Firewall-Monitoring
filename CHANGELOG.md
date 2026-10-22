@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.389] - 2026-10-22
+
+### Security — Harden the SNMP trap receiver against forgery
+
+- The trap receiver now refuses to start with an `SNMP_TRAP_COMMUNITY` shorter
+  than 16 characters: a weak/guessable community defeats the constant-time check
+  and lets an attacker forge traps from any spoofable UDP source IP.
+- Traps whose source IP does not resolve to a known device are now labelled
+  `[unauthenticated-source <ip>]` in the alert so a forged source is visible.
+
 ## [0.11.388] - 2026-10-22
 
 ### Security — Never send IRC credentials over a plaintext connection

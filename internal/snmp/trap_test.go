@@ -208,6 +208,29 @@ func TestTrapReceiver_Start_RequiresCommunity(t *testing.T) {
 	}
 }
 
+// TestTrapReceiver_Start_RequiresMinimumCommunityLength pins H-5: a non-empty
+// but short/guessable community must also be refused. A weak community defeats
+// the constant-time check (an attacker who guesses it can forge traps from any
+// spoofable UDP source IP).
+func TestTrapReceiver_Start_RequiresMinimumCommunityLength(t *testing.T) {
+	t.Parallel()
+	cfg := &config.Config{}
+	cfg.SNMP.TrapCommunity = "short" // non-empty but far below the minimum
+	cfg.SNMP.TrapListenAddr = "127.0.0.1:0"
+
+	rcv, err := NewTrapReceiver(cfg)
+	if err != nil {
+		t.Fatalf("NewTrapReceiver: %v", err)
+	}
+	err = rcv.Start(func(*models.TrapEvent) {})
+	if err == nil {
+		t.Fatal("Start with a short community returned no error; must refuse to start")
+	}
+	if !contains(err.Error(), "16") {
+		t.Errorf("error %q does not mention the minimum length", err.Error())
+	}
+}
+
 // TestTrapReceiver_Enabled_AUDIT094 locks in the graceful-disable behavior: with
 // no SNMP_TRAP_COMMUNITY, Enabled() is false so the daemon idles instead of
 // fatal-exiting (which under the entrypoint supervisor crash-looped the whole

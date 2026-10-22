@@ -16,6 +16,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// minTrapCommunityLen is the minimum SNMP_TRAP_COMMUNITY length (H-5). A short
+// community is trivially guessable ("public" is 6 chars), which defeats the
+// constant-time community check entirely: an attacker who guesses it can forge
+// traps from any spoofable UDP source IP. Require enough entropy that guessing
+// is infeasible.
+const minTrapCommunityLen = 16
+
 // trapRateLimitDrops counts trap datagrams the AUDIT-012 limiter dropped, by
 // reason: "rate" = a tracked source exhausted its token bucket, "cap" = the
 // source map was full so a NEW source was rejected. M29 of the 2026-07-01
@@ -201,6 +208,12 @@ func (t *TrapReceiver) Start(handler func(*models.TrapEvent)) error {
 	// Enabled() and idle instead of treating this as fatal.
 	if t.config.SNMP.TrapCommunity == "" {
 		return fmt.Errorf("SNMP_TRAP_COMMUNITY must be set to a non-empty value; refusing to start the trap listener with an open community string (AUDIT-012)")
+	}
+	// H-5: require minimum community entropy. A short/guessable community makes
+	// the constant-time compare pointless — an attacker who guesses it can forge
+	// traps from any spoofable UDP source IP.
+	if len(t.config.SNMP.TrapCommunity) < minTrapCommunityLen {
+		return fmt.Errorf("SNMP_TRAP_COMMUNITY must be at least %d characters; refusing to start the trap listener with a weak community (H-5)", minTrapCommunityLen)
 	}
 	t.handler = handler
 
