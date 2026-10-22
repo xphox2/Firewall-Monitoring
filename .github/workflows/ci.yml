@@ -5,6 +5,14 @@ name: CI
 # (AUDIT-152 enforces gofmt as the canonical formatter check, AUDIT-121
 # enforces -race coverage, AUDIT-117 calls for more test coverage which
 # will land progressively) builds on this baseline.
+#
+# Trigger strategy (dedupe): the EXPENSIVE jobs (test-race shards, the Postgres
+# integration lane, and the Playwright E2E) run on pull_request ONLY — they are
+# the merge gate. A push to master re-runs only the FAST jobs (build/vet/static
+# analysis/vuln/freshness), which is the "green master" signal that the docker
+# publish workflow keys off, without re-running the slow suite a second time on
+# the already-green merge. Everything here is reproducible locally via
+# `make ci-local`.
 
 on:
   push:
@@ -20,6 +28,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detects which paths a PR changed so path-gated jobs (the Playwright E2E,
+  # which only exercises ui-v2/) can skip on unrelated changes instead of
+  # burning a ~10-minute browser job. Native git diff (no extra action).
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.detect.outputs.ui }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Detect ui-v2 changes
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed=false
+          if [ "$EVENT" = "pull_request" ] && [ -n "$BASE" ]; then
+            if git diff --name-only "$BASE"...HEAD | grep -q '^ui-v2/'; then
+              changed=true
+            fi
+          fi
+          echo "ui=$changed" >> "$GITHUB_OUTPUT"
+
   build-test:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -68,6 +103,9 @@ jobs:
     name: Test (-race)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Pull requests only (merge gate): a master push already passed this on the
+    # PR, so re-running 10 shards on the merge would just double the time.
+    if: github.event_name == 'pull_request'
     # AUDIT-121: the race detector is required on every test. The two packages
     # that carry the suite — `internal/database` (691 tests) and
     # `internal/api/handlers` (444), ~11.5 and ~9 min run sequentially — are
@@ -174,6 +212,9 @@ jobs:
     name: Integration (PostgreSQL) ${{ matrix.group }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Pull requests only (merge gate) — mirrors the race-suite dedupe. Runs
+    # locally via `make ci-local` (the Postgres integration lane).
+    if: github.event_name == 'pull_request'
     # Split into one job per package group so the suites that reset the shared
     # schema (DROP SCHEMA public CASCADE in NewIntegrationDB) each get their
     # own database: a job still runs its group with `-p 1` (one binary at a
@@ -317,6 +358,10 @@ jobs:
     name: Admin UI V2 E2E
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: changes
+    # Pull requests only (merge gate), and only when ui-v2/ changed — backend-only
+    # PRs skip the ~10-minute browser job entirely. Runs locally via `make ui-v2`.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.ui == 'true'
     steps:
       # Browser-level smoke and interaction tests. Typecheck/build cannot catch
       # a component that throws on an empty payload, a stale lazy chunk or a
