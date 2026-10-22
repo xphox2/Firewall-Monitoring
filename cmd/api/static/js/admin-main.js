@@ -4337,6 +4337,64 @@
 
     // ---- Maintenance Windows ----
     var currentMaintenanceWindows = [];
+    var MAINT_DAY_NAMES = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+    var MAINT_DAY_LABELS = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+    // JS getDay(): 0=Sunday.
+    var MAINT_DAY_INDEX = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
+
+    function maintParseDays(raw) {
+        var out = {};
+        String(raw || '').split(',').forEach(function(part) {
+            var token = part.trim().toLowerCase();
+            if (MAINT_DAY_INDEX[token] !== undefined) { out[MAINT_DAY_INDEX[token]] = true; return; }
+            if (/^[1-7]$/.test(token)) { out[Number(token) % 7] = true; return; }
+            if (token === '0') out[0] = true;
+        });
+        return out;
+    }
+
+    function maintRecurLabel(w) {
+        if (!w.recurring) return 'One-off';
+        var rule = String(w.recur_rule || '').toLowerCase();
+        if (rule === 'daily') return 'Daily';
+        if (rule === 'monthly') return 'Monthly';
+        if (rule === 'weekly') {
+            var selected = maintParseDays(w.recur_days);
+            var labels = MAINT_DAY_NAMES.filter(function(day) {
+                return selected[MAINT_DAY_INDEX[day]];
+            }).map(function(day) { return MAINT_DAY_LABELS[day]; });
+            return labels.length ? 'Weekly · ' + labels.join(', ') : 'Weekly';
+        }
+        return 'Recurring';
+    }
+
+    // Mirrors models.MaintenanceWindow.ActiveAt for the card status. The server
+    // is authoritative for alert suppression; this is display only.
+    function maintActiveAt(w, now) {
+        var start = new Date(w.start_time);
+        var end = new Date(w.end_time);
+        if (!w.recurring) return now >= start && now <= end;
+        var duration = end.getTime() - start.getTime();
+        if (duration <= 0) return false;
+        var rule = String(w.recur_rule || '').toLowerCase();
+        if (rule !== 'daily' && rule !== 'weekly' && rule !== 'monthly') return false;
+        var days = maintParseDays(w.recur_days);
+        var lookback = Math.floor(duration / 86400000) + 1;
+        for (var back = 0; back <= lookback; back++) {
+            var day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+            var candidate = new Date(
+                day.getFullYear(), day.getMonth(), day.getDate(),
+                start.getHours(), start.getMinutes(), start.getSeconds(), start.getMilliseconds()
+            );
+            if (candidate.getTime() < start.getTime()) continue;
+            if (rule === 'weekly' && !days[day.getDay()]) continue;
+            if (rule === 'monthly' && day.getDate() !== start.getDate()) continue;
+            if (now.getTime() >= candidate.getTime() && now.getTime() <= candidate.getTime() + duration) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     function loadMaintenance() {
         apiFetch(API_BASE + '/maintenance-windows').then(function(result) {
@@ -4346,9 +4404,8 @@
             var active = 0, scheduled = 0;
             currentMaintenanceWindows.forEach(function(w) {
                 var start = new Date(w.start_time);
-                var end = new Date(w.end_time);
-                if (now >= start && now <= end) active++;
-                else if (now < start) scheduled++;
+                if (maintActiveAt(w, now)) active++;
+                else if (w.recurring || now < start) scheduled++;
             });
             document.getElementById('mw-active').textContent = active;
             document.getElementById('mw-scheduled').textContent = scheduled;
@@ -4380,11 +4437,11 @@
             var now = new Date();
             var html = windows.map(function(w) {
                 var start = new Date(w.start_time);
-                var end = new Date(w.end_time);
                 var status = 'Expired';
                 var statusClass = 'unknown';
-                if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
+                if (maintActiveAt(w, now)) { status = 'Active'; statusClass = 'warning'; }
                 else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
+                else if (w.recurring) { status = 'Recurring'; statusClass = 'info'; }
 
                 var scope = 'All Devices';
                 if (w.device_id) scope = deviceMap[w.device_id] || ('Device #' + w.device_id);
@@ -4398,6 +4455,10 @@
                     '<div style="font-size:0.82rem;color:var(--fwmon-text);margin-bottom:16px;">' +
                         '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
                         '<strong>' + escapeHtml(scope) + '</strong>' +
+                    '</div>' +
+                    '<div style="font-size:0.78rem;color:var(--fwmon-text-dim);margin-bottom:12px;">' +
+                        '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Schedule</span>' +
+                        '<strong>' + escapeHtml(maintRecurLabel(w)) + '</strong>' +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
                         '<div>' +
@@ -4420,11 +4481,11 @@
             var now = new Date();
             var html = windows.map(function(w) {
                 var start = new Date(w.start_time);
-                var end = new Date(w.end_time);
                 var status = 'Expired';
                 var statusClass = 'unknown';
-                if (now >= start && now <= end) { status = 'Active'; statusClass = 'warning'; }
+                if (maintActiveAt(w, now)) { status = 'Active'; statusClass = 'warning'; }
                 else if (now < start) { status = 'Scheduled'; statusClass = 'info'; }
+                else if (w.recurring) { status = 'Recurring'; statusClass = 'info'; }
                 var scope = 'All Devices';
                 if (w.device_id) scope = 'Device #' + w.device_id;
                 if (w.site_id) scope = 'Site #' + w.site_id;
@@ -4437,6 +4498,10 @@
                     '<div style="font-size:0.82rem;color:var(--fwmon-text);margin-bottom:16px;">' +
                         '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Scope</span>' +
                         '<strong>' + escapeHtml(scope) + '</strong>' +
+                    '</div>' +
+                    '<div style="font-size:0.78rem;color:var(--fwmon-text-dim);margin-bottom:12px;">' +
+                        '<span style="color:var(--fwmon-text-mute);font-size:0.72rem;text-transform:uppercase;display:block;margin-bottom:2px;">Schedule</span>' +
+                        '<strong>' + escapeHtml(maintRecurLabel(w)) + '</strong>' +
                     '</div>' +
                     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);border-radius:8px;padding:10px;">' +
                         '<div>' +
@@ -4471,12 +4536,25 @@
         return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     }
 
+    function maintToggleRecur() {
+        var box = document.getElementById('maint-recurring');
+        if (!box) return;
+        var rule = document.getElementById('maint-recur-rule').value;
+        document.getElementById('maint-rrule-row').style.display = box.checked ? '' : 'none';
+        document.getElementById('maint-days-row').style.display = box.checked && rule === 'weekly' ? '' : 'none';
+        document.getElementById('maint-recur-hint').style.display = box.checked ? '' : 'none';
+    }
+
     function showMaintModal(id) {
         AC.openModal('maint-modal');
         document.getElementById('maint-modal-title').textContent = id ? 'Edit Maintenance Window' : 'Create Maintenance Window';
         document.getElementById('maint-form').reset();
         document.getElementById('maint-id').value = '';
         document.getElementById('maint-suppress-all').checked = true;
+        document.getElementById('maint-recurring').checked = false;
+        document.getElementById('maint-recur-rule').value = 'weekly';
+        Array.prototype.forEach.call(document.querySelectorAll('.maint-day'), function(cb) { cb.checked = false; });
+        maintToggleRecur();
         document.getElementById('maint-alert-types-row').style.display = 'none';
         document.getElementById('maint-scope-device').style.display = 'none';
         document.getElementById('maint-scope-site').style.display = 'none';
@@ -4537,6 +4615,13 @@
             // it raw shifted the window by the TZ offset on every edit+save.
             if (w.start_time) document.getElementById('maint-start').value = toDatetimeLocal(w.start_time);
             if (w.end_time) document.getElementById('maint-end').value = toDatetimeLocal(w.end_time);
+            document.getElementById('maint-recurring').checked = !!w.recurring;
+            document.getElementById('maint-recur-rule').value = w.recur_rule || 'weekly';
+            var selectedDays = maintParseDays(w.recur_days);
+            Array.prototype.forEach.call(document.querySelectorAll('.maint-day'), function(cb) {
+                cb.checked = !!selectedDays[MAINT_DAY_INDEX[cb.value]];
+            });
+            maintToggleRecur();
             var scopeVal = 'all';
             if (w.device_id) {
                 scopeVal = 'device';
@@ -4572,6 +4657,11 @@
         });
     }
 
+    var maintRecurring = document.getElementById('maint-recurring');
+    if (maintRecurring) maintRecurring.addEventListener('change', maintToggleRecur);
+    var maintRecurRule = document.getElementById('maint-recur-rule');
+    if (maintRecurRule) maintRecurRule.addEventListener('change', maintToggleRecur);
+
     var maintForm = document.getElementById('maint-form');
     if (maintForm) {
         maintForm.addEventListener('submit', function(e) {
@@ -4579,13 +4669,29 @@
             var id = document.getElementById('maint-id').value;
             var scopeRadio = document.querySelector('input[name="maint-scope"]:checked');
             var scope = scopeRadio ? scopeRadio.value : 'all';
+            var recurring = document.getElementById('maint-recurring').checked;
+            var recurRule = recurring ? document.getElementById('maint-recur-rule').value : '';
+            var recurDays = '';
+            if (recurring && recurRule === 'weekly') {
+                recurDays = Array.prototype.filter.call(
+                    document.querySelectorAll('.maint-day'),
+                    function(cb) { return cb.checked; }
+                ).map(function(cb) { return cb.value; }).join(',');
+                if (!recurDays) {
+                    AC.showError('Select at least one weekday for a weekly window');
+                    return;
+                }
+            }
             var data = {
                 name: document.getElementById('maint-name').value,
                 start_time: new Date(document.getElementById('maint-start').value).toISOString(),
                 end_time: new Date(document.getElementById('maint-end').value).toISOString(),
                 suppress_all: document.getElementById('maint-suppress-all').checked,
                 alert_types: document.getElementById('maint-alert-types').value,
-                notes: document.getElementById('maint-notes').value
+                notes: document.getElementById('maint-notes').value,
+                recurring: recurring,
+                recur_rule: recurRule,
+                recur_days: recurDays
             };
             if (scope === 'device') data.device_id = parseInt(document.getElementById('maint-device-id').value) || null;
             if (scope === 'site') data.site_id = parseInt(document.getElementById('maint-site-id').value) || null;

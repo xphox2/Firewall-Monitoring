@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"firewall-mon/internal/api/response"
@@ -60,8 +61,12 @@ func (h *Handler) CreateMaintenanceWindow(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Start time and end time are required"))
 		return
 	}
-	if window.EndTime.Before(window.StartTime) {
+	if !window.EndTime.After(window.StartTime) {
 		c.JSON(http.StatusBadRequest, response.Error("End time must be after start time"))
+		return
+	}
+	if err := window.NormalizeRecurrence(); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error(err.Error()))
 		return
 	}
 
@@ -97,9 +102,26 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 		return
 	}
 
-	if err := c.ShouldBindJSON(&window); err != nil {
+	raw, err := c.GetRawData()
+	if err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
+	}
+	if err := json.Unmarshal(raw, &window); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+	// Only canonicalise/validate recurrence when the request actually changes
+	// it. Legacy rows may hold pre-canonical values ("WEEKLY"/"MO,TU"); an
+	// unrelated edit (say, the end time) must not reject or rewrite them.
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	recurrenceTouched := false
+	for _, key := range []string{"recurring", "recur_rule", "recur_days"} {
+		if _, ok := fields[key]; ok {
+			recurrenceTouched = true
+			break
+		}
 	}
 	window.ID = id // prevent client from rewriting the PK
 
@@ -111,9 +133,15 @@ func (h *Handler) UpdateMaintenanceWindow(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("Start time and end time are required"))
 		return
 	}
-	if window.EndTime.Before(window.StartTime) {
+	if !window.EndTime.After(window.StartTime) {
 		c.JSON(http.StatusBadRequest, response.Error("End time must be after start time"))
 		return
+	}
+	if recurrenceTouched {
+		if err := window.NormalizeRecurrence(); err != nil {
+			c.JSON(http.StatusBadRequest, response.Error(err.Error()))
+			return
+		}
 	}
 
 	if err := db.UpdateMaintenanceWindow(&window); err != nil {

@@ -172,10 +172,24 @@ func (d *Database) GetMaintenanceWindows() ([]models.MaintenanceWindow, error) {
 }
 
 func (d *Database) GetActiveMaintenanceWindows() ([]models.MaintenanceWindow, error) {
-	var windows []models.MaintenanceWindow
 	now := time.Now()
-	err := d.db.Where("start_time <= ? AND end_time >= ?", now, now).Find(&windows).Error
-	return windows, err
+	// Recurring windows cannot be filtered in SQL by their stored end_time
+	// (that is the first occurrence's end); fetch them all and evaluate the
+	// schedule in Go. One-off windows keep the indexed range query.
+	var candidates []models.MaintenanceWindow
+	if err := d.db.Where(
+		"recurring = ? OR (start_time <= ? AND end_time >= ?)",
+		true, now, now,
+	).Find(&candidates).Error; err != nil {
+		return nil, err
+	}
+	active := make([]models.MaintenanceWindow, 0, len(candidates))
+	for _, window := range candidates {
+		if window.ActiveAt(now) {
+			active = append(active, window)
+		}
+	}
+	return active, nil
 }
 
 // GetUnexpiredMaintenanceWindows returns windows whose end_time is still in the
@@ -185,7 +199,9 @@ func (d *Database) GetActiveMaintenanceWindows() ([]models.MaintenanceWindow, er
 // resolveAlertConfig re-checks start/end against time.Now() on every evaluation.
 func (d *Database) GetUnexpiredMaintenanceWindows() ([]models.MaintenanceWindow, error) {
 	var windows []models.MaintenanceWindow
-	err := d.db.Where("end_time >= ?", time.Now()).Find(&windows).Error
+	// Recurring windows have no series end (delete stops them), so they are
+	// always candidates; resolveAlertConfig re-evaluates ActiveAt(now).
+	err := d.db.Where("recurring = ? OR end_time >= ?", true, time.Now()).Find(&windows).Error
 	return windows, err
 }
 

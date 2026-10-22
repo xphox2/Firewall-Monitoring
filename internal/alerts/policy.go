@@ -491,7 +491,7 @@ func (am *AlertManager) resolveAlertConfigProv(deviceID uint, siteID *uint, aler
 	// Check maintenance windows
 	now := time.Now()
 	for _, w := range am.policyCache.windows {
-		if now.Before(w.StartTime) || now.After(w.EndTime) {
+		if !w.ActiveAt(now) {
 			continue
 		}
 		// Check scope
