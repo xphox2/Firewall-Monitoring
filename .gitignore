@@ -95,3 +95,7 @@ docs/audit-archive/
 
 # go test -json output of .github/scripts/integration-tests.sh
 integration.json
+
+# Playwright artifacts
+ui-v2/test-results/
+ui-v2/playwright-report/

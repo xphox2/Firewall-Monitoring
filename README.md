@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.375-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.376-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.10+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -356,6 +356,18 @@ make qa                    # full pre-commit gate: tidy + gofmt + vet + build + 
 make test-race             # under the race detector (needs CGO)
 make test-integration      # against a real Postgres (TEST_PG_DSN)
 ```
+
+The V2 console has its own suite:
+
+```bash
+cd ui-v2
+npm test                   # Vitest unit tests
+npx playwright install chromium
+npm run test:e2e           # Playwright: built shell + mocked admin API
+```
+
+`test:e2e` serves the committed V2 bundle under `/admin/v2` with a small static
+server and mocks the API in the browser; CI runs it after the bundle build.
 
 ### Install natively (without Docker)
 
