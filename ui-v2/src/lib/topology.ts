@@ -97,3 +97,31 @@ export function bundleEdges<T extends BundleableEdge>(
   }
   return drawn;
 }
+
+export interface MapPosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * Validate a positions payload read from localStorage. Storage is untrusted
+ * and can contain stale/partial entries from an older build; a bad point must
+ * never be used to position a node, or it would land at NaN and vanish.
+ */
+export function normalizePositions(value: unknown): Record<string, MapPosition> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, MapPosition> = {};
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const point = raw as { x?: unknown; y?: unknown };
+    if (
+      typeof point.x === 'number' &&
+      Number.isFinite(point.x) &&
+      typeof point.y === 'number' &&
+      Number.isFinite(point.y)
+    ) {
+      out[id] = { x: point.x, y: point.y };
+    }
+  }
+  return out;
+}
