@@ -11,7 +11,8 @@ All notable changes to this project are documented in this file.
   Export CSV must request the filtered 5,000-row set and download a correctly named file.
 - **System users**: disabling another account PUTs `{disabled:true}`; the current user's own Disable
   button stays disabled.
-- The Playwright suite is now 21 tests, all run by the CI **Admin UI V2 E2E** job.
+- **Alerting**: creating an event rule from the drawer posts the name/source/action/enabled payload.
+- The Playwright suite is now 22 tests, all run by the CI **Admin UI V2 E2E** job.
 
 ## [0.11.377] - 2026-10-22
 
