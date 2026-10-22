@@ -4,7 +4,7 @@ import fcose from 'cytoscape-fcose';
 import { Maximize2, Minus, Plus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
-import { linkColour, linkState } from '@/lib/topology';
+import { bundleEdges, linkColour } from '@/lib/topology';
 
 cytoscape.use(fcose);
 
@@ -26,6 +26,8 @@ export interface MapEdge {
   kind: 'connection' | 'tunnel';
   label?: string;
   status?: string;
+  /** Connection row id — set for declared device connections, not VPN tunnels. */
+  connectionId?: number;
 }
 
 export interface MapSite {
@@ -80,6 +82,7 @@ export function TopologyMap({
   severityByDevice,
   severitySignature,
   onSelectDevice,
+  onSelectConnection,
 }: {
   sites: MapSite[];
   nodes: MapNode[];
@@ -88,10 +91,13 @@ export function TopologyMap({
   severityByDevice?: Map<number, string>;
   severitySignature?: string;
   onSelectDevice?: (deviceId: number) => void;
+  onSelectConnection?: (connectionId: number) => void;
 }) {
   const { theme } = useTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  // Survives element rebuilds (filter/toggle) so an expanded bundle stays open.
+  const expandedRef = useRef<Set<string>>(new Set());
   const [showSites, setShowSites] = useState(true);
   const [linkFilter, setLinkFilter] = useState<LinkFilter>('all');
   const [groupTunnels, setGroupTunnels] = useState(true);
@@ -103,44 +109,9 @@ export function TopologyMap({
     // tunnel peer must disappear when tunnel edges are hidden.
     const visibleEdges =
       linkFilter === 'all' ? edges : edges.filter((edge) => edge.kind === linkFilter);
-    // Bundle parallel tunnels between the same pair into one edge, like the
-    // classic map's tunnel bundles. Connections are never grouped.
-    const drawnEdges: MapEdge[] = [];
-    if (groupTunnels && linkFilter !== 'connection') {
-      type Bundle = MapEdge & { count: number; down: boolean; up: boolean };
-      const bundles = new Map<string, Bundle>();
-      for (const edge of visibleEdges) {
-        if (edge.kind !== 'tunnel') {
-          drawnEdges.push(edge);
-          continue;
-        }
-        const key = [edge.source, edge.target].sort().join('|');
-        const existing = bundles.get(key);
-        if (existing) {
-          existing.count += 1;
-          existing.label = `${existing.count} tunnels`;
-          const state = linkState(edge.status);
-          if (state === 'down') existing.down = true;
-          if (state === 'up') existing.up = true;
-          continue;
-        }
-        const state = linkState(edge.status);
-        bundles.set(key, {
-          ...edge,
-          count: 1,
-          down: state === 'down',
-          up: state === 'up',
-        });
-      }
-      drawnEdges.push(
-        ...Array.from(bundles.values()).map((bundle) => ({
-          ...bundle,
-          status: bundle.down ? 'down' : bundle.up ? 'up' : bundle.status,
-        })),
-      );
-    } else {
-      drawnEdges.push(...visibleEdges);
-    }
+    // Collapse parallel tunnels AND parallel direct links between the same
+    // device pair into one click-to-expand bundle, like the classic map.
+    const drawnEdges = bundleEdges(visibleEdges, groupTunnels);
     const linked = new Set<string>();
     for (const edge of drawnEdges) {
       linked.add(edge.source);
@@ -177,13 +148,17 @@ export function TopologyMap({
     for (const edge of drawnEdges) {
       els.push({
         data: {
-          id: `edge-${edge.id}`,
+          id: edge.bundle ? edge.id : `edge-${edge.id}`,
           source: `dev-${edge.source}`,
           target: `dev-${edge.target}`,
           label: edge.label,
           kind: edge.kind,
           colour: linkColour(edge.status),
+          connectionId: edge.connectionId,
+          bundleKey: edge.bundle ? edge.id : undefined,
+          members: edge.members?.join(','),
         },
+        classes: edge.bundle ? 'bundle' : edge.sublane ? 'sublane' : undefined,
       });
     }
     return els;
@@ -260,6 +235,8 @@ export function TopologyMap({
             'font-size': 7,
             color: '#9ca3af',
             'text-rotation': 'autorotate',
+            'text-wrap': 'wrap',
+            'text-max-width': '90px',
             'text-outline-width': 2,
             'text-outline-color': '#0b1220',
           },
@@ -278,6 +255,30 @@ export function TopologyMap({
             'text-outline-width': 2,
             'text-outline-color': '#0b1220',
           },
+        },
+        {
+          selector: 'edge.bundle',
+          style: {
+            width: 3.5,
+            'font-size': 8,
+            'font-weight': 'bold',
+            color: '#cbd5e1',
+          },
+        },
+        {
+          // Expanded: the carrier disappears and its members take over.
+          selector: 'edge.bundle.expanded',
+          style: { display: 'none' },
+        },
+        {
+          // Members exist in the graph from the start (so expanding never
+          // needs a rebuild/re-layout) but are hidden until their bundle opens.
+          selector: 'edge.sublane',
+          style: { display: 'none' },
+        },
+        {
+          selector: 'edge.sublane.shown',
+          style: { display: 'element', 'font-size': 7 },
         },
         {
           selector: 'node:selected',
@@ -304,6 +305,23 @@ export function TopologyMap({
       maxZoom: 3,
     });
 
+    const container = cy.container();
+
+    // Collapsing hides the carrier, so the bundle itself can no longer be
+    // hit-tested: collapse on background tap / Escape like the classic map.
+    const collapseBundles = () => {
+      cy.edges('.bundle.expanded').forEach((bundle) => {
+        bundle.removeClass('expanded');
+        for (const id of String(bundle.data('members') ?? '')
+          .split(',')
+          .filter(Boolean)) {
+          cy.getElementById(id).removeClass('shown');
+        }
+      });
+      expandedRef.current.clear();
+      if (container) container.style.cursor = 'default';
+    };
+
     cy.on('tap', 'node', (event) => {
       const data = event.target.data();
       if (data.kind === 'site') return;
@@ -313,16 +331,79 @@ export function TopologyMap({
         if (node.deviceId) onSelectDevice?.(node.deviceId);
       }
     });
+    cy.on('tap', 'edge', (event) => {
+      const data = event.target.data();
+      const bundleKey = String(data.bundleKey ?? '');
+      if (bundleKey) {
+        expandedRef.current.add(bundleKey);
+        event.target.addClass('expanded');
+        for (const id of String(data.members ?? '')
+          .split(',')
+          .filter(Boolean)) {
+          cy.getElementById(id).addClass('shown');
+        }
+        // The mouseout never fires for an edge that just became hidden.
+        if (container) container.style.cursor = 'default';
+        return;
+      }
+      const connectionId = Number(data.connectionId);
+      if (Number.isFinite(connectionId) && connectionId > 0) {
+        onSelectConnection?.(connectionId);
+      }
+    });
     cy.on('tap', (event) => {
-      if (event.target === cy) setSelected(null);
+      if (event.target === cy) {
+        setSelected(null);
+        collapseBundles();
+      }
+    });
+
+    // Bundles and connection links are controls, so signal them with a pointer.
+    const interactiveEdge = (target: { data: () => Record<string, unknown> }) => {
+      const data = target.data();
+      return Boolean(data.bundleKey) || Number(data.connectionId) > 0;
+    };
+    cy.on('mouseover', 'edge', (event) => {
+      if (container && interactiveEdge(event.target)) container.style.cursor = 'pointer';
+    });
+    cy.on('mouseout', 'edge', () => {
+      if (container) container.style.cursor = 'default';
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      // Don't collapse while the user is dismissing/typing in a form control
+      // (a command palette, a drawer input, a native select).
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))
+      ) {
+        return;
+      }
+      collapseBundles();
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    // Re-apply expansions after a rebuild; class-based, so no re-layout.
+    cy.edges('.bundle').forEach((bundle) => {
+      const key = String(bundle.data('bundleKey') ?? '');
+      if (!expandedRef.current.has(key)) return;
+      bundle.addClass('expanded');
+      for (const id of String(bundle.data('members') ?? '')
+        .split(',')
+        .filter(Boolean)) {
+        cy.getElementById(id).addClass('shown');
+      }
     });
 
     cyRef.current = cy;
     return () => {
+      document.removeEventListener('keydown', onKeyDown);
       cy.destroy();
       cyRef.current = null;
     };
-  }, [elements, nodeById, onSelectDevice]);
+  }, [elements, nodeById, onSelectDevice, onSelectConnection]);
 
   // Alert rings are data updates, not elements: changing severity must not
   // rebuild the graph (that would reset pan/zoom every poll).
@@ -390,13 +471,16 @@ export function TopologyMap({
             />
             Site groups
           </label>
-          <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
+          <label
+            className="inline-flex items-center gap-1.5 text-[11px] text-text-dim"
+            title="Collapse parallel tunnels and links per device pair; click a bundle to expand it, background or Esc to collapse"
+          >
             <input
               type="checkbox"
               checked={groupTunnels}
               onChange={(e) => setGroupTunnels(e.target.checked)}
             />
-            Bundle tunnels
+            Bundle links
           </label>
         </div>
 
@@ -477,6 +561,9 @@ export function TopologyMap({
           <span className="flex items-center gap-1 text-[10px] text-text-dim">
             <span className="inline-block h-2 w-2 rounded-full border-2 border-sig-warn" />
             warning alert
+          </span>
+          <span className="text-[10px] italic text-text-faint">
+            click a bundle to expand · background or Esc to collapse
           </span>
         </div>
       </div>

@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.368] - 2026-10-21
+
+### Added — Click-to-expand bundles in the V2 topology map
+
+- Parallel **links and tunnels** per device pair now collapse into one bundle edge
+  (`N links` / `N tunnels`); clicking it reveals the member sublanes without
+  rebuilding the graph or re-running the layout. Background click or `Esc`
+  collapses them again.
+- Member sublanes carry their type and port pair (`ethernet · port1 ↔ port2`);
+  a single-member pair is drawn directly, so its ports are visible without a click.
+- Clicking a connection (or an expanded member) opens the five-tab connection
+  drawer in the Connections tab, where Link Evidence lists the member ports and VLANs.
+- Bundles signal clickability with a pointer cursor; expanded state survives
+  filter/toggle rebuilds.
+- Docs: the topology parity gap (VLAN sublanes) is closed; no functional parity
+  gaps remain.
+
 ## [0.11.367] - 2026-10-21
 
 ### Added — Effective coverage view in the V2 alerting page
