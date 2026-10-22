@@ -5,11 +5,11 @@ feature-complete. This page is the single source of truth for what is missing,
 so an operator (or a reviewer) never has to guess whether a thin screen is a bug
 or an unbuilt feature.
 
-**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.368.
+**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.372.
 The baseline table is kept for history; the current-state table and the remaining
 gaps list below are the actionable view.
 
-## Current state (v0.11.368)
+## Current state (v0.11.372)
 
 | Area | State | Remaining |
 |---|---|---|
@@ -136,6 +136,9 @@ V2:
   drill-through. No functional parity gaps remain.
 - **v0.11.370** — Topology layout persistence: the map reconciles in place (polls never reset the
   viewport), nodes are draggable, and Save/Reset layout keep or discard positions per browser.
+- **v0.11.371** — Ops hardening: V2 chunks are content-hashed and a tab holding a previous build
+  reloads once instead of failing on a stale module export.
+- **v0.11.372** — The preview notice now states feature parity instead of listing classic-only pages.
 
 ## Remaining gaps
 
