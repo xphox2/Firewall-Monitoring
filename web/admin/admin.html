@@ -3994,6 +3994,33 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    <label><input type="checkbox" id="maint-recurring"> Repeat this window</label>
+                </div>
+                <div class="form-group" id="maint-rrule-row" style="display:none">
+                    <label for="maint-recur-rule">Frequency</label>
+                    <select id="maint-recur-rule">
+                        <option value="daily">Daily</option>
+                        <option value="weekly" selected>Weekly</option>
+                        <option value="monthly">Monthly (same day of month)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="maint-days-row" style="display:none">
+                    <label>Days</label>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:0.82rem">
+                        <label><input type="checkbox" class="maint-day" value="mon"> Mon</label>
+                        <label><input type="checkbox" class="maint-day" value="tue"> Tue</label>
+                        <label><input type="checkbox" class="maint-day" value="wed"> Wed</label>
+                        <label><input type="checkbox" class="maint-day" value="thu"> Thu</label>
+                        <label><input type="checkbox" class="maint-day" value="fri"> Fri</label>
+                        <label><input type="checkbox" class="maint-day" value="sat"> Sat</label>
+                        <label><input type="checkbox" class="maint-day" value="sun"> Sun</label>
+                    </div>
+                </div>
+                <p id="maint-recur-hint" style="display:none;font-size:0.72rem;color:var(--fwmon-text-mute);margin:-4px 0 10px">
+                    Repeats at the start clock time; the end time sets the duration. Occurrences use
+                    the server timezone; the first occurrence is the start time above.
+                </p>
+                <div class="form-group">
                     <label><input type="checkbox" id="maint-suppress-all" checked> Suppress All Alert Types</label>
                 </div>
                 <div class="form-group" id="maint-alert-types-row" style="display:none">

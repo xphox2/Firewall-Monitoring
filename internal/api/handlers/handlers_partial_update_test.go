@@ -302,3 +302,50 @@ func TestUpdateMaintenanceWindow_rejects_end_before_start(t *testing.T) {
 		t.Fatalf("status=%d body=%s, want 400 for end<start", w.Code, w.Body.String())
 	}
 }
+
+func TestUpdateMaintenanceWindow_recurrenceValidation(t *testing.T) {
+	h, db := setupTestHandler(t)
+	start := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	initial := &models.MaintenanceWindow{
+		Name:      "recurrence",
+		StartTime: start,
+		EndTime:   start.Add(4 * time.Hour),
+	}
+	if err := db.Gorm().Create(initial).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// Weekly without a weekday is rejected.
+	w := doPartialUpdateRequest(t, h.UpdateMaintenanceWindow, "/api/maintenance-windows/:id", initial.ID,
+		map[string]interface{}{"recurring": true, "recur_rule": "weekly", "recur_days": ""})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want 400 for weekly without days", w.Code, w.Body.String())
+	}
+
+	// Valid recurrence is canonicalised.
+	w = doPartialUpdateRequest(t, h.UpdateMaintenanceWindow, "/api/maintenance-windows/:id", initial.ID,
+		map[string]interface{}{"recurring": true, "recur_rule": "WEEKLY", "recur_days": "FR,MO"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body.String())
+	}
+	var after models.MaintenanceWindow
+	if err := db.Gorm().First(&after, initial.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !after.Recurring || after.RecurRule != "weekly" || after.RecurDays != "mon,fri" {
+		t.Errorf("recurrence = %v/%q/%q, want true/weekly/mon,fri", after.Recurring, after.RecurRule, after.RecurDays)
+	}
+
+	// Turning recurrence off clears the schedule fields.
+	w = doPartialUpdateRequest(t, h.UpdateMaintenanceWindow, "/api/maintenance-windows/:id", initial.ID,
+		map[string]interface{}{"recurring": false})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s, want 200", w.Code, w.Body.String())
+	}
+	if err := db.Gorm().First(&after, initial.ID).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if after.Recurring || after.RecurRule != "" || after.RecurDays != "" {
+		t.Errorf("recurrence not cleared: %+v", after)
+	}
+}

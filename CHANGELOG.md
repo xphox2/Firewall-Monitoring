@@ -1,6 +1,25 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.375] - 2026-10-22
+
+### Added — Recurring maintenance windows (both consoles)
+
+- Maintenance windows can repeat **daily**, **weekly** (selected weekdays) or **monthly** (same
+  day of month). The start time is the first occurrence and defines the clock time; the end time
+  defines the duration. Occurrences use the server's local timezone.
+- The server evaluates recurrence in `MaintenanceWindow.ActiveAt`, shared by the active-window
+  listing and the alert resolver. Recurring windows are no longer dropped from the policy cache
+  when their first `end_time` passes (that field is only the first occurrence's end), and no
+  schema migration is needed — the model already carried `recurring`/`recur_rule`/`recur_days`.
+- Create/update normalize and validate recurrence: rules are canonicalised, weekdays accept names,
+  two-letter aliases and ISO numbers, weekly requires at least one day, and one-off windows clear
+  the schedule. Partial edits that do not touch recurrence preserve legacy values untouched.
+- V2: a Repeat control (frequency + weekday chips), a Schedule column, and a hint that recurrence
+  uses the server timezone. Classic (V1): the same controls in the window modal, a Schedule line on
+  each card, and recurring-aware Active/Scheduled/Recurring status.
+- Docs: the last "unexposed in both consoles" maintenance item is closed.
+
 ## [0.11.374] - 2026-10-22
 
 ### Changed — Structured device capability matrix

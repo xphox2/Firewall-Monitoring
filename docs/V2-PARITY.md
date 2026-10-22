@@ -5,11 +5,11 @@ feature-complete. This page is the single source of truth for what is missing,
 so an operator (or a reviewer) never has to guess whether a thin screen is a bug
 or an unbuilt feature.
 
-**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.374.
+**Audit baseline:** v0.11.333 (296 audited units). **Current state:** v0.11.375.
 The baseline table is kept for history; the current-state table and the remaining
 gaps list below are the actionable view.
 
-## Current state (v0.11.374)
+## Current state (v0.11.375)
 
 | Area | State | Remaining |
 |---|---|---|
@@ -26,7 +26,7 @@ gaps list below are the actionable view.
 | Storage / Archive | At parity: retention matrix, archive status + health, archive settings/preflight, gate release/re-engage, parked-chunk reset, restore jobs | — |
 | Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
 | System | At parity: users (disable/reset/passkeys), token expiry/status, audit paging/filters, TOTP wizard + decline, passkey registration/rename, member-since | — |
-| Maintenance | At parity: scoping to all/device/site and per-alert-type suppression | Recurrence (unexposed in both consoles) |
+| Maintenance | At parity: scoping to all/device/site, per-alert-type suppression and daily/weekly/monthly recurrence | — |
 
 ## Historical audit baseline (v0.11.333)
 
@@ -143,6 +143,8 @@ V2:
   severity, channels, escalation, provenance); raw JSON only behind a disclosure.
 - **v0.11.374** — Structured device capability matrix (feature verdicts and per-field observation
   states); no raw-JSON dumps remain.
+- **v0.11.375** — Recurring maintenance windows (daily/weekly/monthly) in both consoles, evaluated
+  server-side by the shared `ActiveAt` helper.
 
 ## Remaining gaps
 
@@ -153,8 +155,8 @@ evidence is in the connection detail, and clicking a link opens that drawer.
 Single-member pairs are drawn directly instead of as a one-item bundle (a
 deliberate improvement: the only member is visible without a click).
 
-The maintenance "recurrence" control is unexposed in both consoles, so it is
-not a V2 parity gap.
+Maintenance recurrence is now available in both consoles (daily, weekly with
+weekday selection, monthly).
 
 No raw-JSON dumps remain. Event, security-event, syslog, trap, flow-sample,
 connection detail, IPSec preview, the event-rule tester, the effective-policy

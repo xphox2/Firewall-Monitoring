@@ -2,7 +2,15 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Plus, Trash2, Edit3, AlertCircle } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { formatDateTime } from '@/lib/utils';
+import { cn, formatDateTime } from '@/lib/utils';
+import {
+  RECUR_RULES,
+  WEEKDAYS,
+  normalizeRecurDays,
+  parseRecurDays,
+  recurrenceLabel,
+  recurrenceValidation,
+} from '@/lib/maintenance';
 import { fromLocalInput, toLocalInput } from '@/lib/datetime';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -22,6 +30,8 @@ interface MaintenanceWindow {
   suppress_alerts?: boolean;
   alert_types?: string;
   recurring?: boolean;
+  recur_rule?: string;
+  recur_days?: string;
   created_by?: string;
 }
 
@@ -78,6 +88,9 @@ export function MaintenanceWorkspace() {
     start_time: toLocalInput(),
     end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
     suppress_all: true,
+    recurring: false,
+    recur_rule: '',
+    recur_days: '',
   });
 
   const saveMutation = useMutation({
@@ -90,6 +103,18 @@ export function MaintenanceWorkspace() {
       if (new Date(endIso) <= new Date(startIso)) {
         throw new Error('End time must be after the start time');
       }
+      const recurError = recurrenceValidation(
+        editing.recurring,
+        editing.recur_rule,
+        editing.recur_days,
+      );
+      if (recurError) throw new Error(recurError);
+      const recurring = Boolean(editing.recurring);
+      const recurRule = recurring ? String(editing.recur_rule || 'weekly') : '';
+      const recurDays =
+        recurring && recurRule === 'weekly'
+          ? normalizeRecurDays(parseRecurDays(editing.recur_days))
+          : '';
       const hasSelectedTypes = (editing.alert_types ?? '')
         .split(',')
         .some((t) => t.trim());
@@ -121,6 +146,9 @@ export function MaintenanceWorkspace() {
         site_id: scopeMode === 'site' ? (editing.site_id ?? null) : null,
         start_time: startIso,
         end_time: endIso,
+        recurring,
+        recur_rule: recurRule,
+        recur_days: recurDays,
       };
       if (editing.id) {
         return apiFetch(`/admin/api/maintenance-windows/${editing.id}`, {
@@ -178,6 +206,16 @@ export function MaintenanceWorkspace() {
     });
   };
 
+  const selectedRecurDays = new Set(parseRecurDays(editing.recur_days));
+  const toggleWeekday = (day: string) => {
+    setEditing((prev) => {
+      const next = new Set(parseRecurDays(prev.recur_days));
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return { ...prev, recur_days: normalizeRecurDays(next) };
+    });
+  };
+
   const columns = useMemo<ColumnDef<MaintenanceWindow, unknown>[]>(
     () => [
       {
@@ -210,6 +248,27 @@ export function MaintenanceWorkspace() {
             {formatDateTime(row.original.end_time)}
           </span>
         ),
+      },
+      {
+        id: 'schedule',
+        header: 'Schedule',
+        cell: ({ row }) => {
+          const recurring = Boolean(row.original.recurring);
+          return (
+            <span
+              className={cn(
+                'rounded px-2 py-0.5 text-[10px] font-semibold',
+                recurring ? 'bg-accent/15 text-accent' : 'bg-bg-panel text-text-faint',
+              )}
+            >
+              {recurrenceLabel(
+                row.original.recurring,
+                row.original.recur_rule,
+                row.original.recur_days,
+              )}
+            </span>
+          );
+        },
       },
       {
         id: 'scope',
@@ -331,6 +390,9 @@ export function MaintenanceWorkspace() {
               start_time: toLocalInput(),
               end_time: toLocalInput(new Date(Date.now() + 2 * 3600_000).toISOString()),
               suppress_all: true,
+              recurring: false,
+              recur_rule: '',
+              recur_days: '',
             });
             setDrawerOpen(true);
           }}
@@ -361,6 +423,11 @@ export function MaintenanceWorkspace() {
             <div className="text-xs font-mono text-text-dim">
               {formatDateTime(w.start_time)} → {formatDateTime(w.end_time)}
             </div>
+            {w.recurring && (
+              <div className="text-[11px] text-accent">
+                {recurrenceLabel(w.recurring, w.recur_rule, w.recur_days)}
+              </div>
+            )}
             <div className="text-[11px] text-text-faint">
               {w.device_id
                 ? devices.find((d) => d.id === w.device_id)?.name ?? `Device #${w.device_id}`
@@ -427,6 +494,77 @@ export function MaintenanceWorkspace() {
               />
             </div>
           </div>
+
+          <div className="space-y-2 rounded-lg border border-border bg-bg-panel/40 p-3">
+            <label className="flex items-center gap-2 text-xs text-text">
+              <input
+                type="checkbox"
+                checked={editing.recurring ?? false}
+                onChange={(e) =>
+                  setEditing((p) => ({
+                    ...p,
+                    recurring: e.target.checked,
+                    recur_rule: e.target.checked ? p.recur_rule || 'weekly' : p.recur_rule,
+                    recur_days: e.target.checked ? p.recur_days ?? '' : '',
+                  }))
+                }
+                className="h-4 w-4 rounded accent-accent"
+              />
+              Repeat this window
+            </label>
+            {editing.recurring && (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-text-dim">Frequency</label>
+                  <select
+                    value={editing.recur_rule || 'weekly'}
+                    onChange={(e) => setEditing((p) => ({ ...p, recur_rule: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                  >
+                    {RECUR_RULES.map((rule) => (
+                      <option key={rule.value} value={rule.value}>
+                        {rule.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {(editing.recur_rule || 'weekly') === 'weekly' && (
+                  <div>
+                    <span className="mb-1 block text-xs font-medium text-text-dim">Days</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {WEEKDAYS.map((day) => {
+                        const active = selectedRecurDays.has(day.value);
+                        return (
+                          <label
+                            key={day.value}
+                            className={cn(
+                              'inline-flex cursor-pointer items-center rounded border px-2 py-1 text-[11px] font-medium',
+                              active
+                                ? 'border-accent/40 bg-accent/15 text-accent'
+                                : 'border-border bg-bg-panel text-text-dim',
+                            )}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={active}
+                              onChange={() => toggleWeekday(day.value)}
+                              className="sr-only"
+                            />
+                            {day.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <p className="text-[10px] leading-relaxed text-text-faint">
+                  Repeats at the start clock time; the end time sets the duration. Occurrences use
+                  the server&apos;s timezone, and the first occurrence is the start time above.
+                </p>
+              </>
+            )}
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-text-dim mb-1">Notes / Ticket Reference</label>
             <textarea
