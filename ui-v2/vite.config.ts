@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig(({ command }) => ({
   plugins: [react()],
   base: '/static/v2/',
+  // Playwright specs live in e2e/ and use a different `test` runtime.
+  test: {
+    include: ['src/**/*.test.{ts,tsx}'],
+  },
   // The router basename differs between the Go-served build (/admin/v2) and
   // `vite dev` (/static/v2, Vite's base). Injecting it as a constant keeps the
   // mode check in the build config instead of the app source.

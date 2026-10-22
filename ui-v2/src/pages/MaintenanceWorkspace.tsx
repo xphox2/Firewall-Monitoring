@@ -519,6 +519,7 @@ export function MaintenanceWorkspace() {
                   <select
                     value={editing.recur_rule || 'weekly'}
                     onChange={(e) => setEditing((p) => ({ ...p, recur_rule: e.target.value }))}
+                    aria-label="Repeat frequency"
                     className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
                   >
                     {RECUR_RULES.map((rule) => (

@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.376] - 2026-10-22
+
+### Added — Browser E2E suite for the V2 console
+
+- Playwright renders the **real built V2 shell** under `/admin/v2` (a small static server serves
+  the shell and the committed assets) with the admin API mocked in the browser.
+- 18 tests: every top-level workspace loads without tripping the render boundary; the lazy
+  topology map mounts (catching stale/missing chunk exports), Save/Reset layout are wired, the
+  effective-policy simulator renders thresholds/channels/provenance, and scheduling a weekly
+  recurring maintenance window posts the canonical `recurring`/`recur_rule`/`recur_days` payload.
+- CI job **Admin UI V2 E2E** builds the bundle, installs Chromium and runs the suite; failure
+  traces/screenshots are uploaded for 7 days.
+- README: the V2 unit + E2E commands are documented.
+
 ## [0.11.375] - 2026-10-22
 
 ### Added — Recurring maintenance windows (both consoles)

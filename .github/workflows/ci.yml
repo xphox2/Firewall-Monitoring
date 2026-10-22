@@ -313,6 +313,50 @@ jobs:
             exit 1
           fi
 
+  ui-v2-e2e:
+    name: Admin UI V2 E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Browser-level smoke and interaction tests. Typecheck/build cannot catch
+      # a component that throws on an empty payload, a stale lazy chunk or a
+      # broken form submit; this job renders the real shell with a mocked API.
+      - name: Check out
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+
+      - name: Install deps
+        working-directory: ui-v2
+        run: npm ci
+
+      - name: Build the V2 bundle
+        working-directory: ui-v2
+        run: npm run build
+
+      - name: Install Chromium
+        working-directory: ui-v2
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright
+        working-directory: ui-v2
+        run: npm run test:e2e
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: ui-v2/test-results
+          retention-days: 7
+
   ui-v2-freshness:
     name: Admin UI V2 bundle freshness
     runs-on: ubuntu-latest
