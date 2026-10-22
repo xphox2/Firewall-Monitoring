@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.366] - 2026-10-21
+
+### Added — Topology alert overlays and tunnel bundling
+
+- **Alert rings**: device nodes carry a ring for open-alert severity (critical red, warning amber),
+  sourced from `/api/connections/status-summary`'s `alert_severity` — alerts only, so an offline
+  device or a down link (already shown by the node fill and edge colour) does not fake an alert.
+  Rings are applied as node data updates, not graph elements, so a 30-second severity poll never
+  resets pan/zoom or selection; selection now draws a halo instead of replacing the ring.
+- **Tunnel bundles**: parallel tunnels between the same device pair collapse into one
+  "N tunnels" edge (toggle, default on). A bundle is down if any member is down, up if any member
+  is up and none is down — using the same `linkState` classifier as the edge colours.
+- Ring colours follow the active theme's tokens (read after the theme attribute applies).
+- Docs: the topology backlog is now VLAN sublanes only (LLDP/FDB/ARP evidence already renders in
+  the connection detail).
+
 ## [0.11.365] - 2026-10-21
 
 ### Changed — Split diff pairs modified lines

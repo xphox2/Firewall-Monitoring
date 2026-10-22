@@ -53,6 +53,10 @@ interface TopologySite {
   name: string;
 }
 
+interface ConnectionStatusSummary {
+  devices?: Array<{ id: number; alert_severity?: string }>;
+}
+
 interface ConnectionRecord {
   id: number;
   name: string;
@@ -177,6 +181,26 @@ function NetworkMapSubTab() {
     queryFn: () => apiFetch<ConnectionRecord[]>('/admin/api/connections'),
     refetchInterval: 30_000,
   });
+  // Alerts-only severity for the map's node rings. The summary endpoint
+  // deliberately excludes offline/down-link state (already shown by the node
+  // and edge colours), unlike the NOC composite worst_severity.
+  const { data: statusSummary } = useQuery({
+    queryKey: ['connection-status-summary'],
+    queryFn: () =>
+      apiFetch<ConnectionStatusSummary>('/admin/api/connections/status-summary'),
+    refetchInterval: 30_000,
+  });
+  const { severityByDevice, severitySignature } = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const device of statusSummary?.devices ?? []) {
+      if (device.alert_severity) map.set(device.id, device.alert_severity);
+    }
+    const signature = Array.from(map.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([id, severity]) => `${id}:${severity}`)
+      .join(',');
+    return { severityByDevice: map, severitySignature: signature };
+  }, [statusSummary]);
 
   const openDevice = useCallback(
     (deviceId: number) => navigate(`/devices/${deviceId}`),
@@ -321,6 +345,8 @@ function NetworkMapSubTab() {
             sites={mapSites}
             nodes={nodes}
             edges={edges}
+            severityByDevice={severityByDevice}
+            severitySignature={severitySignature}
             onSelectDevice={openDevice}
           />
         </Suspense>

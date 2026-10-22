@@ -18,7 +18,7 @@ gaps list below are the actionable view.
 | Flows | At parity: filters, throughput chart, byte-ranked distributions, degraded-window disclosure, conversation drill-down, sample inspector, CSV export | — |
 | Syslog / Traps | At parity: stats charts, range pills, severity filtering, structured inspectors | — |
 | Threat Intel | At parity: lookup verdict, feed switch/status, indicator search/add/delete, storm tuning | — |
-| Topology / Connections / IPSec | Interactive Cytoscape map + five-tab connection detail + structured IPSec preview | Expanding tunnel bundles / VLAN sublanes in the graph itself; graph alert overlays |
+| Topology / Connections / IPSec | Interactive Cytoscape map with alert rings and tunnel bundling + five-tab connection detail + structured IPSec preview | VLAN sublanes inside the graph |
 | Devices | At parity: charts, traffic, config diff/split with paired modifications, revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | — |
 | Collectors / Sites | At parity: probe approve/reject/commands/registration, site CRUD with region/country/timezone/parent hierarchy | — |
 | Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
@@ -127,15 +127,16 @@ V2:
   Storage/archive is at parity.
 - **v0.11.364** — Full site fields (region/country/timezone/parent hierarchy). Collectors/Sites is
   at parity.
-- **v0.11.365** — Split diff pairs delete/insert runs side by side. The only remaining backlog is
-  topology graph depth and the profile-scoped effective view.
+- **v0.11.365** — Split diff pairs delete/insert runs side by side.
+- **v0.11.366** — Topology alert rings (alerts-only) and tunnel bundling. The topology backlog is
+  now VLAN sublanes only.
 
 ## Remaining gaps
 
 1. **Topology graph depth.** The interactive map covers sites, connections,
-   IPSec tunnels, filters, zoom/fit and device drill-through, and the detail
-   drawer has the five tabs. Still classic-only: expanding tunnel bundles /
-   VLAN sublanes inside the graph and alert overlays on nodes.
+   IPSec tunnels, filters, zoom/fit, device drill-through, alert rings and
+   tunnel bundling; LLDP/FDB/ARP evidence is in the connection detail. Still
+   classic-only: VLAN sublanes drawn inside the graph.
 2. **Profile effective view.** Assignments work; the classic per-profile
    "effective" preview is represented by the Configuration Overview.
 
