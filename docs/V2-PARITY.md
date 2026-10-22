@@ -22,7 +22,7 @@ gaps list below are the actionable view.
 | Devices | At parity: charts, traffic, config diff/split with paired modifications, revision view+delete, HA, SD-WAN, ping SLA, security/licences, per-core resources, operational panels | — |
 | Collectors / Sites | At parity: probe approve/reject/commands/registration, site CRUD with region/country/timezone/parent hierarchy | — |
 | Alerts | At parity: filters, stats + per-type volume trend, by-type distribution, bulk ack/snooze, paging, linked flow detections, parsed syslog fields, incidents | — |
-| Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, simulator | Profile-scoped "effective" view (the Configuration Overview covers the need) |
+| Alerting | At parity: rules, profiles, tri-state matrix, assignments, overview, effective-coverage view, simulator | — |
 | Storage / Archive | At parity: retention matrix, archive status + health, archive settings/preflight, gate release/re-engage, parked-chunk reset, restore jobs | — |
 | Integrations | At parity: SMTP/webhooks/IRC servers, channels, commands, advanced credentials | — |
 | System | At parity: users (disable/reset/passkeys), token expiry/status, audit paging/filters, TOTP wizard + decline, passkey registration/rename, member-since | — |
@@ -130,15 +130,16 @@ V2:
 - **v0.11.365** — Split diff pairs delete/insert runs side by side.
 - **v0.11.366** — Topology alert rings (alerts-only) and tunnel bundling. The topology backlog is
   now VLAN sublanes only.
+- **v0.11.367** — Effective coverage view (resolved profile chain, per-type decided-by, rules in
+  order). The only remaining difference is VLAN sublanes in the graph.
 
 ## Remaining gaps
 
 1. **Topology graph depth.** The interactive map covers sites, connections,
    IPSec tunnels, filters, zoom/fit, device drill-through, alert rings and
    tunnel bundling; LLDP/FDB/ARP evidence is in the connection detail. Still
-   classic-only: VLAN sublanes drawn inside the graph.
-2. **Profile effective view.** Assignments work; the classic per-profile
-   "effective" preview is represented by the Configuration Overview.
+   classic-only: VLAN sublanes drawn inside the graph. This is the only
+   documented parity difference left.
 
 Raw-JSON stubs still present: device capabilities (inside a disclosure) and the
 effective-policy simulator. Event, security-event, syslog, trap, flow-sample,
