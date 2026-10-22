@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.381-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.382-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.10+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -407,7 +407,7 @@ The most important ones:
 | `JWT_SECRET_KEY` | _(auto-generated + persisted)_ | Signs login JWTs **and** derives the AES-256 key for stored secrets |
 | `ENCRYPTION_KEY` | _(derived from JWT secret)_ | Optional explicit key for encrypting device/probe secrets at rest |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / _(auto-generated + persisted)_ | Initial admin login — leave `ADMIN_PASSWORD` unset/empty to auto-generate and persist one (a non-default username is strongly recommended) |
-| `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / `public` | Legacy global SNMP defaults (devices are polled by collectors, not the server) |
+| `SNMP_HOST` / `SNMP_PORT` / `SNMP_COMMUNITY` | `192.168.1.1` / `161` / _(empty)_ | Legacy global SNMP defaults (devices are polled by collectors, not the server) |
 | `SNMP_POLL_INTERVAL` | `60s` | `fwmon-poller` monitoring-cycle cadence (staleness threshold = 3× this, min 5m) |
 | `SNMP_TRAP_COMMUNITY` | _(empty — required)_ | Trap community check (AUDIT-012) |
 | `CPU_THRESHOLD` / `MEMORY_THRESHOLD` / `DISK_THRESHOLD` / `SESSION_THRESHOLD` | `80` / `80` / `90` / `100000` | Alert thresholds |

@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.382] - 2026-10-22
+
+### Security — Stop defaulting the SNMP community to "public"
+
+- `entrypoint.sh` and `config.env.example` no longer seed `SNMP_COMMUNITY=public`;
+  the default is now empty, so a fresh deploy does not poll every device with the
+  world's best-known community string. The operator must set their own read-only
+  community (per-device values in the admin UI still override the global default),
+  mirroring the existing `SNMP_TRAP_COMMUNITY` empty-default rule (AUDIT-012).
+- Added a guardrail test pinning that neither file reintroduces the `public`
+  default.
+
 ## [0.11.381] - 2026-10-22
 
 ### Security — Run the container as a non-root user
