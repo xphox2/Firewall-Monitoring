@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.402] - 2026-10-22
+
+### Security — Zero server-owned fields on alert-policy create (mass assignment)
+
+- `CreateAlertPolicy` now zeros `id`, `created_at`, `updated_at`, `is_default`
+  and nils the `rules` association before create, so a client cannot mass-assign
+  them. Added a test.
+
 ## [0.11.401] - 2026-10-22
 
 ### Security — Pin CI/CD actions to commit SHAs
