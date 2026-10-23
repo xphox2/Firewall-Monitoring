@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.419] - 2026-10-23
+
+### Security — Cap restore decompression (decompression-bomb guard)
+
+- The restore worker now bounds the total decompressed bytes to the manifest's
+  recorded `RawBytes` plus a 1 MiB slack, so a compressed object that expands far
+  past its recorded size is truncated instead of buffered into memory. Added a test.
+
 ## [0.11.418] - 2026-10-23
 
 ### Security — Bound the SNMP walk and table indices

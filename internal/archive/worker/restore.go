@@ -65,6 +65,12 @@ type RestoreStore interface {
 // RestoreTickInterval is how often the poller calls RestoreWorker.Tick.
 const RestoreTickInterval = 15 * time.Second
 
+// restoreRawSlack is the extra decompressed bytes allowed past an object's
+// recorded RawBytes (D-8). RawBytes is the exact uncompressed NDJSON size, so a
+// small slack tolerates gzip/trailing-byte variance while a decompression bomb
+// (which expands far past RawBytes) is truncated.
+const restoreRawSlack = 1 << 20 // 1 MiB
+
 // restoreStagingMargin is the free space the staging directory must have
 // beyond an object's size before it is downloaded.
 var restoreStagingMargin uint64 = 512 << 20
@@ -405,14 +411,17 @@ func (r *RestoreWorker) loadObject(ctx context.Context, job *models.ArchiveResto
 }
 
 // eachLine gunzips an object file and hands every line (with its newline)
-// to fn, in order.
-func eachLine(file io.Reader, fn func(line []byte) error) error {
+// to fn, in order. maxBytes bounds the TOTAL decompressed bytes (D-8): the
+// manifest records RawBytes (the exact uncompressed size), so a compressed
+// object that expands far past it — a decompression bomb, or corruption — is
+// truncated instead of buffered into memory line-by-line without bound.
+func eachLine(file io.Reader, maxBytes int64, fn func(line []byte) error) error {
 	zr, err := gzip.NewReader(file)
 	if err != nil {
 		return err
 	}
 	zr.Multistream(false)
-	br := bufio.NewReaderSize(zr, 64<<10)
+	br := bufio.NewReaderSize(io.LimitReader(zr, maxBytes), 64<<10)
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
@@ -450,7 +459,7 @@ func (r *RestoreWorker) stage(ctx context.Context, job *models.ArchiveRestoreJob
 		metrics.IncArchiveRestoreRefused(job.Stream)
 		return fmt.Errorf("%w %s: %v", errRestoreRefused, obj.ObjectKey, err)
 	}
-	if err := eachLine(file, func(line []byte) error {
+	if err := eachLine(file, obj.RawBytes+restoreRawSlack, func(line []byte) error {
 		if _, _, _, derr := b.decode(dec, line); derr != nil {
 			return errDecode{derr}
 		}
@@ -500,7 +509,7 @@ func (r *RestoreWorker) stage(ctx context.Context, job *models.ArchiveRestoreJob
 		started = time.Now()
 		return nil
 	}
-	if err := eachLine(file, func(line []byte) error {
+	if err := eachLine(file, obj.RawBytes+restoreRawSlack, func(line []byte) error {
 		id, ts, dev, derr := b.decode(dec, line)
 		if derr != nil {
 			return refused(derr) // the file changed since the validation pass
