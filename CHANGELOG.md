@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.420] - 2026-10-23
+
+### Security — Refuse non-atomic archive commits unless allowed
+
+- The local archive target now refuses to write when the filesystem supports
+  neither hard links nor RENAME_NOREPLACE (the only commit left is a checked
+  rename with a TOCTOU window), unless `ARCHIVE_ALLOW_NONATOMIC_COMMIT=true`.
+  Added a test + documented the env var.
+
 ## [0.11.419] - 2026-10-23
 
 ### Security — Cap restore decompression (decompression-bomb guard)

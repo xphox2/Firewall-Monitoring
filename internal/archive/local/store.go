@@ -98,6 +98,9 @@ type Store struct {
 	prefix string
 	base   string // dir/prefix
 	now    func() time.Time
+	// allowNonAtomicCommit permits the checked-rename TOCTOU fallback on a
+	// filesystem without hard links or RENAME_NOREPLACE (D-9).
+	allowNonAtomicCommit bool
 	// installID is this install's id (database.ArchiveInstallID): the marker
 	// must carry it ("" = not checked: a read-only user such as
 	// --verify-month).
@@ -128,7 +131,7 @@ func New(cfg config.ArchiveConfig) (*Store, error) {
 	if err := cfg.ValidateLocal(); err != nil {
 		return nil, err
 	}
-	return &Store{root: cfg.Root(), dir: filepath.Clean(cfg.LocalDir), prefix: cfg.Prefix, base: cfg.LocalBase(), now: time.Now}, nil
+	return &Store{root: cfg.Root(), dir: filepath.Clean(cfg.LocalDir), prefix: cfg.Prefix, base: cfg.LocalBase(), now: time.Now, allowNonAtomicCommit: cfg.AllowNonAtomicCommit}, nil
 }
 
 // Dir is the directory every object is under ("<ARCHIVE_LOCAL_DIR>/<prefix>").
@@ -449,14 +452,14 @@ func writeTemp(ctx context.Context, dir, name string, body io.Reader, size int64
 
 // writeSmall writes body to the new file final (crash-safe, never replacing
 // it) and makes it read-only. An existing final is errExists.
-func writeSmall(ctx context.Context, final string, body []byte) error {
+func (s *Store) writeSmall(ctx context.Context, final string, body []byte) error {
 	dir, name := filepath.Split(final)
 	tmp, _, _, err := writeTemp(ctx, dir, name, bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	if _, err := commitNoReplace(tmp, final); err != nil {
+	if _, err := commitNoReplace(tmp, final, s.allowNonAtomicCommit); err != nil {
 		if errors.Is(err, errExists) {
 			return errExists
 		}
@@ -524,7 +527,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	vp := versionFile(p, v)
 	sc := sidecar{Kind: sidecarKind, Key: key, Version: v, Size: size, SHA256: shaHex, MD5: md5Hex, Metadata: meta,
 		WrittenAt: s.now().UTC().Format(time.RFC3339Nano)}
-	if err := writeSidecar(ctx, vp, sc); err != nil {
+	if err := s.writeSidecar(ctx, vp, sc); err != nil {
 		return objstore.PutResult{}, err
 	}
 	if beforeCommit != nil {
@@ -532,7 +535,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 			return objstore.PutResult{}, err
 		}
 	}
-	if _, err := commitNoReplace(tmp, vp); err != nil {
+	if _, err := commitNoReplace(tmp, vp, s.allowNonAtomicCommit); err != nil {
 		if errors.Is(err, errExists) {
 			return objstore.PutResult{}, fmt.Errorf("archive local: %s appeared while it was being written: another writer uses this directory", vp)
 		}
@@ -575,7 +578,7 @@ func syncDirs(dir, base string) error {
 // writeSidecar writes vp's sidecar. One left by a write that crashed before
 // its object was committed (vp does not exist, so it describes nothing) is
 // replaced.
-func writeSidecar(ctx context.Context, vp string, sc sidecar) error {
+func (s *Store) writeSidecar(ctx context.Context, vp string, sc sidecar) error {
 	body, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {
 		return err
@@ -588,7 +591,7 @@ func writeSidecar(ctx context.Context, vp string, sc sidecar) error {
 			return describe("remove the orphaned sidecar", mp, err)
 		}
 	}
-	if err := writeSmall(ctx, mp, body); err != nil {
+	if err := s.writeSmall(ctx, mp, body); err != nil {
 		if errors.Is(err, errExists) {
 			return fmt.Errorf("archive local: %s appeared while it was being written: another writer uses this directory", mp)
 		}
@@ -904,7 +907,7 @@ func (s *Store) Init(ctx context.Context) error {
 		return err
 	}
 	mp := filepath.Join(s.base, MarkerName)
-	if err := writeSmall(ctx, mp, append(body, '\n')); err != nil && !errors.Is(err, errExists) {
+	if err := s.writeSmall(ctx, mp, append(body, '\n')); err != nil && !errors.Is(err, errExists) {
 		return err
 	}
 	if _, err := syncDir(s.base); err != nil {

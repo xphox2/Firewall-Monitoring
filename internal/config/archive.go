@@ -92,6 +92,11 @@ type ArchiveConfig struct {
 	// Lab / self-hosted escape hatches (MinIO, Garage, SeaweedFS on a LAN).
 	AllowHTTP            bool // ARCHIVE_ALLOW_HTTP (default false)
 	AllowPrivateEndpoint bool // ARCHIVE_ALLOW_PRIVATE_ENDPOINT (default false)
+	// AllowNonAtomicCommit permits the local target to write when the
+	// filesystem supports neither hard links nor RENAME_NOREPLACE, so the only
+	// commit is a checked-rename with a TOCTOU window (D-9). Default false
+	// (refuse); set ARCHIVE_ALLOW_NONATOMIC_COMMIT=true for such a share.
+	AllowNonAtomicCommit bool
 
 	// invalid lists ARCHIVE_* values that were set but could not be parsed
 	// (strictIntEnv / strictBoolEnv). They are fatal in Validate instead of
