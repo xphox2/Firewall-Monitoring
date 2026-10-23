@@ -653,6 +653,14 @@ func (am *AlertManager) ProcessTrap(trap *models.TrapEvent, siteID *uint) error 
 		severity = eventRuleSeverity
 	}
 
+	// H-5: label traps whose source IP does not resolve to a known device, so a
+	// forged (spoofed-source) trap surfaces as unauthenticated instead of an
+	// unlabeled alert. UDP source IPs are trivially spoofable; a trap that maps
+	// to no known device is the signal that should be visible to the operator.
+	if trap.DeviceID == 0 && trap.SourceIP != "" {
+		trap.Message = fmt.Sprintf("[unauthenticated-source %s] %s", trap.SourceIP, trap.Message)
+	}
+
 	alert := models.Alert{
 		Timestamp:  trap.Timestamp,
 		DeviceID:   trap.DeviceID,
