@@ -22,6 +22,7 @@ import (
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/detect"
+	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/metrics"
 	"firewall-mon/internal/models"
@@ -1240,7 +1241,15 @@ func (p *Poller) runThreatFeedSync() {
 		ttl = 14
 	}
 	expires := time.Now().Add(time.Duration(ttl) * 24 * time.Hour)
-	client := &http.Client{Timeout: 60 * time.Second}
+	// SSRF guard (H-9): threat-feed URLs are operator-supplied, so the client
+	// must not be able to dial a loopback/private/link-local address via a
+	// DNS-rebinding race. SafeDialContext resolves, validates every candidate IP
+	// and dials the validated IP directly. Proxy is disabled: the built-in feeds
+	// are public HTTPS.
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = httputil.SafeDialContext(10 * time.Second)
+	tr.Proxy = nil
+	client := &http.Client{Timeout: 60 * time.Second, Transport: tr}
 	total := 0
 	for _, feed := range feeds {
 		if _, off := disabled[feed.Name]; off {
