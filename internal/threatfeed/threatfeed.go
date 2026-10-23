@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -126,7 +127,11 @@ func Fetch(ctx context.Context, client *http.Client, feed Feed, authHeader strin
 	}
 	req.Header.Set("User-Agent", "firewall-mon-threatfeed/1")
 	if authHeader != "" {
-		if name, value, ok := strings.Cut(authHeader, ":"); ok {
+		// D-21: the auth header may carry a bearer token — never send it over
+		// plain HTTP. Strip it (with a warning) for a non-HTTPS feed.
+		if !strings.HasPrefix(strings.ToLower(feed.URL), "https://") {
+			log.Printf("threat-feed: refusing to send auth header to non-HTTPS feed %q", feed.URL)
+		} else if name, value, ok := strings.Cut(authHeader, ":"); ok {
 			req.Header.Set(strings.TrimSpace(name), strings.TrimSpace(value))
 		}
 	}
