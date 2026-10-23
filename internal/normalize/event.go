@@ -320,13 +320,21 @@ func atoi(s string) (int64, bool) {
 			return 0, false
 		}
 	}
+	const maxInt64 = int64(9223372036854775807)
 	var n int64
 	for ; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			return 0, false
 		}
-		n = n*10 + int64(c-'0')
+		d := int64(c - '0')
+		// D-28: detect overflow BEFORE multiplying — a 19-digit value like
+		// "9999999999999999999" previously wrapped to a small (possibly
+		// in-range) number and slipped past the callers' range checks.
+		if n > (maxInt64-d)/10 {
+			return 0, false
+		}
+		n = n*10 + d
 	}
 	if neg {
 		n = -n

@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.409] - 2026-10-23
+
+### Security — Detect integer overflow in the syslog numeric parser
+
+- `normalize.atoi` now detects int64 overflow before multiplying, so a 19-digit
+  vendor value (e.g. "9999999999999999999") is rejected instead of wrapping to a
+  small in-range number that slipped past the callers' range checks. Added a test.
+
 ## [0.11.408] - 2026-10-23
 
 ### Security — Validate device fields on update
