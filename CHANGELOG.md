@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.393] - 2026-10-22
+
+### Security — SSRF guard on the threat-feed fetcher
+
+- The threat-feed HTTP client now dials through `httputil.SafeDialContext`
+  (resolve → validate every candidate IP → dial the validated IP) with the proxy
+  disabled, closing the DNS-rebinding window for the operator-supplied feed URLs.
+
 ## [0.11.392] - 2026-10-22
 
 ### Security — 128-bit TOTP recovery codes
