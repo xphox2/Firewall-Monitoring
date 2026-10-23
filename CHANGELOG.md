@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.392] - 2026-10-22
+
+### Security — 128-bit TOTP recovery codes
+
+- TOTP recovery codes now mint 16 random bytes (32 hex chars = 128 bits) instead
+  of 5 bytes (40 bits), which was GPU-brute-forceable in minutes through the
+  stored SHA-256 hash. Added a test pinning the length and uniqueness.
+
 ## [0.11.391] - 2026-10-22
 
 ### Security — Whitelist status classes in diagram panels (stored XSS)

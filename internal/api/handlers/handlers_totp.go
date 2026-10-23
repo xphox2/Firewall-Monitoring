@@ -48,11 +48,14 @@ func validateTOTPCode(code, secret string) bool {
 	return err == nil && ok
 }
 
-// newRecoveryCodes mints N human-typable single-use codes (10 hex chars).
+// newRecoveryCodes mints N human-typable single-use codes (32 hex chars = 128
+// bits). The pre-fix 5-byte code was 40 bits, brute-forceable on a GPU in
+// minutes; 16 bytes makes an offline brute-force of the stored SHA-256 hash
+// infeasible regardless of hashing cost.
 func newRecoveryCodes(n int) ([]string, error) {
 	codes := make([]string, n)
 	for i := range codes {
-		var b [5]byte
+		var b [16]byte
 		if _, err := rand.Read(b[:]); err != nil {
 			return nil, err
 		}
