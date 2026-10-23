@@ -1,6 +1,9 @@
 package configdiff
 
-import "strings"
+import (
+	"bytes"
+	"strings"
+)
 
 // Parser limits, mirroring the OPNsense parser's maxOPNDepth / maxOPNObjects.
 // A hostile or pathological config must not drive unbounded stack growth (a
@@ -101,23 +104,23 @@ func (fortigateNormalizer) ParseObjects(raw []byte) ([]ConfigObject, error) {
 		out = append(out, ConfigObject{Kind: kind, Name: name, Path: path, Attrs: f.attrs})
 	}
 
-	for _, rawLine := range strings.Split(string(raw), "\n") {
+	forEachLine(bytes.NewReader(raw), func(rawLine string) bool {
 		line := strings.TrimSpace(rawLine)
 		if line == "" {
-			continue
+			return true
 		}
 		switch {
 		case strings.HasPrefix(line, "config "):
 			stack = append(stack, &frame{seg: dottedSeg(line[len("config "):]), attrs: map[string]string{}})
 			if len(stack) > maxFortiDepth {
-				return out, nil
+				return false
 			}
 
 		case strings.HasPrefix(line, "edit "):
 			key := unquoteToken(strings.TrimSpace(line[len("edit "):]))
 			stack = append(stack, &frame{isEdit: true, name: key, attrs: map[string]string{}})
 			if len(stack) > maxFortiDepth {
-				return out, nil
+				return false
 			}
 
 		case line == "next":
@@ -147,16 +150,17 @@ func (fortigateNormalizer) ParseObjects(raw []byte) ([]ConfigObject, error) {
 		case strings.HasPrefix(line, "set "), strings.HasPrefix(line, "unset "):
 			owner, prefix := setTarget()
 			if owner == nil {
-				continue
+				return true
 			}
 			key, val := parseSetLine(line)
 			if key == "" {
-				continue
+				return true
 			}
 			owner.attrs[prefix+key] = val
 			owner.object = true
 		}
-	}
+		return true
+	})
 
 	return out, nil
 }

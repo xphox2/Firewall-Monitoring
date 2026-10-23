@@ -1,6 +1,7 @@
 package configdiff
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -135,11 +136,12 @@ func summarizeChanges(changes []ObjectChange) ChangeSummary {
 // semantics are key/value, not positional.
 func lineSet(b []byte) map[string]struct{} {
 	out := map[string]struct{}{}
-	for _, ln := range strings.Split(string(b), "\n") {
+	forEachLine(bytes.NewReader(b), func(ln string) bool {
 		if t := strings.TrimSpace(ln); t != "" {
 			out[t] = struct{}{}
 		}
-	}
+		return true
+	})
 	return out
 }
 
