@@ -14,7 +14,8 @@ func TestNOCHub_ComputesOnFirstSubscribe_M11(t *testing.T) {
 	_, db := setupTestHandler(t)
 	hub := newNOCHub(db, time.Hour) // ticker effectively never fires in-test
 
-	ch, latest := hub.subscribe()
+	ch, latest, ok := hub.subscribe()
+	_ = ok
 	defer hub.unsubscribe(ch)
 
 	if latest == nil {
@@ -23,7 +24,8 @@ func TestNOCHub_ComputesOnFirstSubscribe_M11(t *testing.T) {
 
 	// Second subscriber while one is active: no fresh compute required, the
 	// cached latest is returned.
-	ch2, latest2 := hub.subscribe()
+	ch2, latest2, ok := hub.subscribe()
+	_ = ok
 	defer hub.unsubscribe(ch2)
 	if latest2 == nil {
 		t.Fatal("second subscriber must receive the cached snapshot")

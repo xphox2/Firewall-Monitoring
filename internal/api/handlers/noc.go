@@ -70,6 +70,11 @@ func newNOCHub(db database.Store, interval time.Duration) *nocHub {
 	}
 }
 
+// maxNOCSubscribers caps concurrent NOC SSE subscribers (D-16). Each subscriber
+// pins a goroutine and (on tick) an in-memory frame, so an unbounded count is a
+// cheap memory/goroutine-exhaustion DoS.
+const maxNOCSubscribers = 100
+
 // Run computes and broadcasts a snapshot every interval until ctx is cancelled.
 // Started once in a background goroutine (cmd/api).
 //
@@ -177,9 +182,13 @@ func sseFrame(event string, data []byte) []byte {
 // hours stale. The channel is registered only after that compute: registered
 // before it, the first subscriber received the fresh snapshot and feed on the
 // channel AND in `latest`, and painted them twice.
-func (h *nocHub) subscribe() (chan []byte, []byte) {
+func (h *nocHub) subscribe() (chan []byte, []byte, bool) {
 	ch := make(chan []byte, 8) // a tick can carry two frames (snapshot + feed)
 	h.mu.Lock()
+	if len(h.subs) >= maxNOCSubscribers {
+		h.mu.Unlock()
+		return nil, nil, false // D-16: subscriber cap reached
+	}
 	wasIdle := len(h.subs) == 0
 	if !wasIdle {
 		h.subs[ch] = struct{}{}
@@ -199,7 +208,7 @@ func (h *nocHub) subscribe() (chan []byte, []byte) {
 		latest = append(append(latest, h.latestSnapshot...), h.latestFeed...)
 	}
 	h.mu.Unlock()
-	return ch, latest
+	return ch, latest, true
 }
 
 func (h *nocHub) unsubscribe(ch chan []byte) {
@@ -262,6 +271,15 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 	// (audit L5). Instead each write below arms a fresh rolling deadline via rc:
 	// a healthy reader keeps resetting it, while a stuck write eventually errors
 	// out so the handler returns and unsubscribes.
+	// D-16: subscribe BEFORE writing the SSE headers so a full hub can be
+	// answered with a 503 instead of a half-open stream.
+	ch, latest, ok := h.nocHub.subscribe()
+	if !ok {
+		c.JSON(http.StatusServiceUnavailable, response.Error("NOC stream at capacity"))
+		return
+	}
+	defer h.nocHub.unsubscribe(ch)
+
 	rc := http.NewResponseController(c.Writer)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -269,9 +287,6 @@ func (h *Handler) GetNOCStream(c *gin.Context) {
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("X-Accel-Buffering", "no") // don't let a reverse proxy buffer SSE
 	c.Writer.WriteHeader(http.StatusOK)
-
-	ch, latest := h.nocHub.subscribe()
-	defer h.nocHub.unsubscribe(ch)
 
 	// writeSSE writes complete SSE frames (the hub formats them).
 	writeSSE := func(b []byte) bool {

@@ -44,7 +44,8 @@ func TestNOCHub_FeedIsSeparateAndSentOnChange(t *testing.T) {
 	_, db := setupTestHandler(t)
 	hub := newNOCHub(db, time.Hour)
 
-	ch, latest := hub.subscribe() // 0->1 computes once
+	ch, latest, ok := hub.subscribe()
+	_ = ok // 0->1 computes once
 	defer hub.unsubscribe(ch)
 	if !bytes.Contains(latest, []byte("event: feed\n")) || !bytes.HasPrefix(latest, []byte("data: ")) {
 		t.Fatalf("new subscriber replay must be the snapshot then the feed; got %.120q", latest)
@@ -60,7 +61,8 @@ func TestNOCHub_FeedIsSeparateAndSentOnChange(t *testing.T) {
 
 	// A second subscriber while one is watching: registered at once, replayed
 	// from `latest`, and gets the next tick on its channel.
-	ch2, latest2 := hub.subscribe()
+	ch2, latest2, ok := hub.subscribe()
+	_ = ok
 	if !bytes.Equal(latest2, latest) || len(drain(ch2)) != 0 {
 		t.Fatalf("second subscriber: replay differs or the channel already carries frames")
 	}

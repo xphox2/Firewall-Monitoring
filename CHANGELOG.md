@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.417] - 2026-10-23
+
+### Security — Cap NOC SSE subscribers
+
+- The NOC live stream now caps concurrent subscribers at 100 (per process), so an
+  unbounded count can't exhaust goroutines/memory; a full hub answers 503. Added
+  a test. (The Flows SSE stream already had a 2-slot cap.)
+
 ## [0.11.416] - 2026-10-23
 
 ### Security — Serialize BatchInserter flush calls
