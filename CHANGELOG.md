@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.412] - 2026-10-23
+
+### Security — Threat-feed redirect + HTTPS guards
+
+- The threat-feed client now caps redirects at 3 and refuses a redirect to a
+  different host (D-20).
+- `threatfeed.Fetch` no longer sends the auth header to a non-HTTPS feed (D-21),
+  logging a warning instead. Added a test.
+
 ## [0.11.411] - 2026-10-23
 
 ### Security — Fail closed on unauthenticated SNMPv3

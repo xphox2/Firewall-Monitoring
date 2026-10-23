@@ -1249,7 +1249,21 @@ func (p *Poller) runThreatFeedSync() {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.DialContext = httputil.SafeDialContext(10 * time.Second)
 	tr.Proxy = nil
-	client := &http.Client{Timeout: 60 * time.Second, Transport: tr}
+	client := &http.Client{
+		Timeout:   60 * time.Second,
+		Transport: tr,
+		// D-20: a redirect could send a signed/authenticated request somewhere the
+		// operator did not configure. Follow at most 3, and only to the same host.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return fmt.Errorf("stopped after 3 redirects")
+			}
+			if len(via) > 0 && via[0].URL.Host != req.URL.Host {
+				return fmt.Errorf("refusing redirect to a different host %q", req.URL.Host)
+			}
+			return nil
+		},
+	}
 	total := 0
 	for _, feed := range feeds {
 		if _, off := disabled[feed.Name]; off {
