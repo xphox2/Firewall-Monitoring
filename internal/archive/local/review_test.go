@@ -203,14 +203,14 @@ func TestCommitNoReplace_Paths(t *testing.T) {
 				}
 				return p
 			}
-			how, err := commitNoReplace(mk("first"), final)
+			how, err := commitNoReplace(mk("first"), final, true)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if how != c.want && !(c.name == "renameat2" && how == commitCheckedRename && renameNoReplaceSys("x", "y") == errNoReplaceUnsupported) {
 				t.Fatalf("committed by %q, want %q", how, c.want)
 			}
-			if _, err := commitNoReplace(mk("second"), final); !errors.Is(err, errExists) {
+			if _, err := commitNoReplace(mk("second"), final, true); !errors.Is(err, errExists) {
 				t.Fatalf("a second commit = %v, want errExists", err)
 			}
 			if b, _ := os.ReadFile(final); string(b) != "first" {
@@ -227,6 +227,31 @@ func TestCommitNoReplace_Paths(t *testing.T) {
 	r := Probe(ctx, root, root, 0)
 	if c := checkNamed(r, "no-replace"); c == nil || !c.Warn || !strings.Contains(c.Detail, "not atomic") {
 		t.Fatalf("probe on a filesystem without an atomic commit: %+v", r.Checks)
+	}
+}
+
+// TestCommitNoReplace_NonAtomicRefused pins D-9: with neither hard links nor
+// RENAME_NOREPLACE, the checked-rename fallback is refused unless
+// nonAtomicOK is set.
+func TestCommitNoReplace_NonAtomicRefused(t *testing.T) {
+	noLink := func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	noRename := func(string, string) error { return errNoReplaceUnsupported }
+	ol, or := linkFile, renameNoReplace
+	linkFile, renameNoReplace = noLink, noRename
+	t.Cleanup(func() { linkFile, renameNoReplace = ol, or })
+
+	dir := t.TempDir()
+	tmp := filepath.Join(dir, ".obj.tmp")
+	if err := os.WriteFile(tmp, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	final := filepath.Join(dir, "obj")
+
+	if _, err := commitNoReplace(tmp, final, false); !errors.Is(err, errNonAtomicRefused) {
+		t.Fatalf("commitNoReplace without nonAtomicOK = %v, want errNonAtomicRefused", err)
+	}
+	if _, err := commitNoReplace(tmp, final, true); err != nil {
+		t.Fatalf("commitNoReplace with nonAtomicOK = %v, want nil", err)
 	}
 }
 

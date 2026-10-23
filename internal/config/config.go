@@ -776,6 +776,7 @@ func loadArchiveConfig() ArchiveConfig {
 		StagingDir:           strings.TrimSpace(getEnv("ARCHIVE_STAGING_DIR", "")),
 		AllowHTTP:            strictBoolEnv("ARCHIVE_ALLOW_HTTP", false, &bad),
 		AllowPrivateEndpoint: strictBoolEnv("ARCHIVE_ALLOW_PRIVATE_ENDPOINT", false, &bad),
+		AllowNonAtomicCommit: strictBoolEnv("ARCHIVE_ALLOW_NONATOMIC_COMMIT", false, &bad),
 		Target:               normalizeArchiveTarget(getEnv("ARCHIVE_TARGET", "")),
 		LocalDir:             strings.TrimSpace(getEnv("ARCHIVE_LOCAL_DIR", "")),
 		// Environment only: the admin form cannot widen what it may browse.

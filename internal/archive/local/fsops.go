@@ -24,6 +24,10 @@ var errExists = errors.New("already exists")
 // errNoReplaceUnsupported: the filesystem has no atomic no-replace rename.
 var errNoReplaceUnsupported = errors.New("no-replace rename not supported")
 
+// errNonAtomicRefused: the filesystem supports neither hard links nor an atomic
+// no-replace rename, and ARCHIVE_ALLOW_NONATOMIC_COMMIT is false (D-9).
+var errNonAtomicRefused = errors.New("filesystem has no atomic no-replace commit; set ARCHIVE_ALLOW_NONATOMIC_COMMIT=true to accept a checked rename")
+
 // The primitives commitNoReplace uses, variables so tests can take every
 // path: os.Link, renameat2(RENAME_NOREPLACE) (renamex_np(RENAME_EXCL) on
 // macOS).
@@ -54,7 +58,7 @@ const (
 //     directory — the archive's advisory lock allows one archive writer per
 //     database, and the install id in the marker refuses a directory another
 //     install initialised.
-func commitNoReplace(tmp, final string) (how string, err error) {
+func commitNoReplace(tmp, final string, nonAtomicOK bool) (how string, err error) {
 	err = linkFile(tmp, final)
 	if err == nil {
 		// The object is committed; a temporary name left behind (the
@@ -75,6 +79,12 @@ func commitNoReplace(tmp, final string) (how string, err error) {
 		return "", errExists
 	case !errors.Is(err, errNoReplaceUnsupported):
 		return "", err
+	}
+	// D-9: the only remaining commit is a checked rename with a TOCTOU window
+	// between the Lstat and the Rename. Refuse unless the operator explicitly
+	// allowed a non-atomic filesystem.
+	if !nonAtomicOK {
+		return "", errNonAtomicRefused
 	}
 	if _, err := os.Lstat(final); err == nil {
 		return "", errExists

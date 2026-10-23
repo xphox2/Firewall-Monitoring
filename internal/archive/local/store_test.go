@@ -202,7 +202,7 @@ func TestPut_NeverOverwrites(t *testing.T) {
 			if err := os.WriteFile(tmp, []byte("x"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := commitNoReplace(tmp, s.file(rel)); !errors.Is(err, errExists) {
+			if _, err := commitNoReplace(tmp, s.file(rel), true); !errors.Is(err, errExists) {
 				t.Fatalf("commitNoReplace onto an object = %v, want errExists", err)
 			}
 			if got, _ := os.ReadFile(s.file(rel)); !bytes.Equal(got, a) {

@@ -79,7 +79,7 @@ func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 	}
 	res.write = time.Since(start)
 	defer os.Remove(tmp)
-	how, err := commitNoReplace(tmp, final)
+	how, err := commitNoReplace(tmp, final, true)
 	if err != nil {
 		return res, describe("commit a test file in", dir, err)
 	}
@@ -93,7 +93,7 @@ func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 		return res, err
 	}
 	defer os.Remove(tmp2)
-	switch _, err := commitNoReplace(tmp2, final); {
+	switch _, err := commitNoReplace(tmp2, final, true); {
 	case errors.Is(err, errExists):
 	case err == nil:
 		return res, fmt.Errorf("archive local: %s: a rename replaced an existing file; the archive needs a filesystem that refuses it (hard links or an atomic rename)", dir)
