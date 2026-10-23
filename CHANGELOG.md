@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.414] - 2026-10-23
+
+### Security — Send the MaxMind license key via header, not query string
+
+- `MaxMindUpdater` now sends the license key only through HTTP Basic auth (the
+  Authorization header) instead of the query string (where it leaked into logs
+  and referrers), and disables the environment proxy so the header never reaches
+  an HTTP(S)_PROXY. Added tests.
+
 ## [0.11.413] - 2026-10-23
 
 ### Security — Redact the webhook URL in test-webhook errors
