@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/auth"
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/configdiff"
 	"firewall-mon/internal/database"
@@ -232,6 +233,14 @@ func (h *Handler) UpdateDevice(c *gin.Context) {
 // on any rejection. Shared by UpdateDevice and RestoreDevice so a
 // restore-with-settings can never bypass a check an edit would apply.
 func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Device, updates map[string]interface{}) (map[string]interface{}, bool) {
+	// H-10: public_visible is the ONLY control exposing a device to the
+	// unauthenticated public dashboard, so changing it (either direction) is
+	// admin-only — an operator must not be able to publish device telemetry.
+	if _, has := updates["public_visible"]; has && !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		c.JSON(http.StatusForbidden, response.Error("Only admins can change public visibility"))
+		return nil, false
+	}
+
 	allowedFields := map[string]bool{
 		"name":              true,
 		"hostname":          true,

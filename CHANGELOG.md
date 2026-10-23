@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.394] - 2026-10-22
+
+### Security — Gate `public_visible` behind the admin role
+
+- `public_visible` is the only control exposing a device to the unauthenticated
+  public dashboard, but the operator role could set it via `PUT /devices/:id`.
+  `prepareDeviceUpdates` now refuses (403) a `public_visible` change unless the
+  caller is an admin. Added a test.
+
 ## [0.11.393] - 2026-10-22
 
 ### Security — SSRF guard on the threat-feed fetcher
