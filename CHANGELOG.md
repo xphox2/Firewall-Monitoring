@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.395] - 2026-10-22
+
+### Security — Zero server-owned fields on IRC create (mass assignment)
+
+- `CreateIRCServer` / `CreateIRCChannel` / `CreateIRCCommand` now zero the
+  server-owned fields (`id`, timestamps, runtime status, `last_error`, and the
+  channels/server associations) before create, so a client cannot mass-assign
+  them. Added tests.
+
 ## [0.11.394] - 2026-10-22
 
 ### Security — Gate `public_visible` behind the admin role

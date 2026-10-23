@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/httputil"
@@ -61,6 +62,16 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 	if server.ServerPort == 0 {
 		server.ServerPort = 6667
 	}
+
+	// H-11: zero server-owned fields so a client cannot mass-assign them (id,
+	// timestamps, runtime status, or the channels association).
+	server.ID = 0
+	server.CreatedAt = time.Time{}
+	server.UpdatedAt = time.Time{}
+	server.Status = ""
+	server.LastConnected = nil
+	server.LastError = ""
+	server.Channels = nil
 
 	db.EncryptIRCServerSecrets(&server)
 
@@ -264,6 +275,14 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 		return
 	}
 
+	// H-11: zero server-owned fields so a client cannot mass-assign them.
+	channel.ID = 0
+	channel.CreatedAt = time.Time{}
+	channel.UpdatedAt = time.Time{}
+	channel.Status = ""
+	channel.JoinedAt = nil
+	channel.Server = nil
+
 	db.EncryptIRCChannelSecrets(&channel)
 
 	if err := db.Gorm().Create(&channel).Error; err != nil {
@@ -384,6 +403,11 @@ func (h *Handler) CreateIRCCommand(c *gin.Context) {
 	if cmd.CommandType == "" {
 		cmd.CommandType = "static"
 	}
+
+	// H-11: zero server-owned fields so a client cannot mass-assign them.
+	cmd.ID = 0
+	cmd.CreatedAt = time.Time{}
+	cmd.UpdatedAt = time.Time{}
 
 	if err := db.Gorm().Create(&cmd).Error; err != nil {
 		httputil.InternalError(c, "Failed to create command", err)
