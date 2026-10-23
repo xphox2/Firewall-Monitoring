@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.405] - 2026-10-23
+
+### Security — Rate-limit the 2FA enrollment verify step
+
+- `Verify2FA` now spends the shared per-account re-auth budget (burst 5, then
+  one a minute) before validating the TOTP code, so a 6-digit code can't be
+  brute-forced through the enrollment endpoint. Added a test.
+
 ## [0.11.404] - 2026-10-23
 
 ### Security — Revoke API tokens on password change / 2FA reset

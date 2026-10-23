@@ -455,6 +455,24 @@ func TestVerify2FA_ConsumesCode(t *testing.T) {
 	}
 }
 
+// TestVerify2FA_RateLimited pins M-2: the code verification spends the
+// per-account re-auth budget (burst 5, then one a minute), so a TOTP code —
+// only 6 digits — cannot be brute-forced through Verify2FA.
+func TestVerify2FA_RateLimited(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h, store := totpTestHandler(t, hardeningTOTPSecret)
+	store.admin.TOTPEnabled = false
+	wrong := "000000"
+	for i := 0; i < 5; i++ {
+		if rec := verifyReq(h, wrong); rec.Code != http.StatusBadRequest {
+			t.Fatalf("attempt %d: status = %d, want 400 (body=%s)", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := verifyReq(h, wrong); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("6th attempt: status = %d, want 429", rec.Code)
+	}
+}
+
 // TestLogin_AttemptRow_FailureWhenCompletionRefuses: a password that verifies
 // but whose login is refused at completion records a FAILED attempt row.
 func TestLogin_AttemptRow_FailureWhenCompletionRefuses(t *testing.T) {
