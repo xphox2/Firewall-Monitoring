@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
@@ -89,7 +90,13 @@ func (h *Handler) CreateAlertPolicy(c *gin.Context) {
 		return
 	}
 
+	// H-18: zero server-owned fields so a client cannot mass-assign them —
+	// id, timestamps, the default flag, or the rules association.
 	policy.ID = 0
+	policy.CreatedAt = time.Time{}
+	policy.UpdatedAt = time.Time{}
+	policy.IsDefault = false
+	policy.Rules = nil
 	if err := db.CreateAlertPolicy(&policy); err != nil {
 		httputil.InternalError(c, "Failed to create alert policy", err)
 		return
