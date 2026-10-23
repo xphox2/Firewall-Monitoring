@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.407] - 2026-10-23
+
+### Security — CSRF protection on the login endpoint
+
+- The login page now issues a pre-auth CSRF cookie, and the password + TOTP
+  login POSTs must echo it back as the `X-CSRF-Token` header (double-submit
+  cookie), closing the login-CSRF gap on the pre-session `/api/auth/*` routes.
+  Added a middleware test.
+
 ## [0.11.406] - 2026-10-23
 
 ### Security — Short JWT secret is now a fatal startup error

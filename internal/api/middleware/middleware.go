@@ -428,6 +428,52 @@ func GenerateCSRFToken(authToken, secret string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// preauthCSRFCookieName is the cookie that carries the pre-auth CSRF token for
+// the login flow (M-4). It is intentionally readable by JS (not HttpOnly) so
+// the login page can echo it back as the X-CSRF-Token header.
+const preauthCSRFCookieName = "preauth_csrf"
+
+// SetPreauthCSRFCookie issues a fresh random pre-auth CSRF token cookie. Called
+// when rendering the login page so the login POST can be validated against it
+// (double-submit-cookie: a cross-site attacker can neither read the cookie nor
+// set the custom header). If entropy is unavailable the cookie is set empty,
+// which makes the login POST fail closed.
+func SetPreauthCSRFCookie(c *gin.Context) {
+	token := ""
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err == nil {
+		token = hex.EncodeToString(b)
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     preauthCSRFCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: false, // the login page JS reads it to echo the header
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// LoginCSRFProtection guards the pre-session login endpoints (M-4). The login
+// POST must echo the preauth_csrf cookie back as the X-CSRF-Token header; a
+// cross-site form POST cannot set a custom header, so a forged login is
+// rejected. API-token requests are irrelevant here (these routes are pre-session).
+func LoginCSRFProtection() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodPost {
+			c.Next()
+			return
+		}
+		cookie, err := c.Cookie(preauthCSRFCookieName)
+		header := c.GetHeader("X-CSRF-Token")
+		if err != nil || cookie == "" || header == "" || !hmac.Equal([]byte(header), []byte(cookie)) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "CSRF token missing or invalid"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// API-token requests carry no cookies, so there is no ambient
