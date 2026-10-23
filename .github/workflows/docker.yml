@@ -37,7 +37,7 @@ jobs:
       github.event.workflow_run.event == 'push'
     steps:
       - name: Check out the commit CI validated
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
         with:
           # Pin to the exact SHA the CI run tested — github.sha in a
           # workflow_run context is the default-branch head, which may have
@@ -77,11 +77,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.creds.outputs.ok == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
       - name: Login to Docker Hub
         if: steps.creds.outputs.ok == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -89,7 +89,7 @@ jobs:
       - name: Extract metadata
         id: meta
         if: steps.creds.outputs.ok == 'true'
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
         with:
           images: xphox/firewall-mon
           # Collector-parity tag set. The branch-conditional and sha-context
@@ -105,7 +105,7 @@ jobs:
 
       - name: Build and push
         if: steps.creds.outputs.ok == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25  # v5
         with:
           context: .
           push: true

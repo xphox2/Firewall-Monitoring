@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.401] - 2026-10-22
+
+### Security — Pin CI/CD actions to commit SHAs
+
+- Every `uses:` in the workflows now references a full commit SHA with a `# vN`
+  comment instead of a mutable `@vN` tag, so a compromised action tag can't
+  re-point a build (supply chain). Covers checkout, setup-go, setup-node,
+  upload-artifact and the docker build/login/metadata/build-push actions.
+
 ## [0.11.400] - 2026-10-22
 
 ### Security — Verify the SSH host key in deploy.sh
