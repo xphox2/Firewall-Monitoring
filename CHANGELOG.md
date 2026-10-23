@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.391] - 2026-10-22
+
+### Security — Whitelist status classes in diagram panels (stored XSS)
+
+- `diagram-panels.js` interpolated a device/connection/tunnel status RAW into a
+  `class="badge ${status}"` attribute (and in two sites into the text too), so a
+  crafted status could break out of the attribute. Statuses now go through a
+  `statusCls` whitelist (up/down/stale/unknown) and the text through
+  `escapeHtml`. Added a guardrail test.
+
 ## [0.11.390] - 2026-10-22
 
 ### Security — Stream config line scans to bound memory
