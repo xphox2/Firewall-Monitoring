@@ -104,16 +104,20 @@ type ThreatFeedConfig struct {
 }
 
 type ServerConfig struct {
-	Host          string
-	Port          string
-	ReadTimeout   time.Duration
-	WriteTimeout  time.Duration
-	IdleTimeout   time.Duration
-	EnableTLS     bool
-	TLSCertFile   string
-	TLSKeyFile    string
-	JWTSecretKey  string
-	EncryptionKey string
+	Host         string
+	Port         string
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	IdleTimeout  time.Duration
+	EnableTLS    bool
+	TLSCertFile  string
+	TLSKeyFile   string
+	JWTSecretKey string
+	// JWTSecretAllowWeak is the JWT_SECRET_KEY_ALLOW_WEAK escape hatch: when
+	// true, a short operator-set JWT secret logs a warning instead of failing
+	// startup (M-3). Defaults false (fail closed).
+	JWTSecretAllowWeak bool
+	EncryptionKey      string
 	// CookieSecure is the explicit COOKIE_SECURE value. It is only honoured
 	// when CookieSecureExplicit is true; otherwise the Secure flag is decided
 	// per request (middleware.RequestOverHTTPS: in-process TLS, or a trusted
@@ -530,6 +534,7 @@ func Load() *Config {
 			TLSCertFile:          getEnv("SERVER_TLS_CERT", "/etc/firewall-mon/tls.crt"),
 			TLSKeyFile:           getEnv("SERVER_TLS_KEY", "/etc/firewall-mon/tls.key"),
 			JWTSecretKey:         getEnv("JWT_SECRET_KEY", ""),
+			JWTSecretAllowWeak:   getBoolEnv("JWT_SECRET_KEY_ALLOW_WEAK", false),
 			EncryptionKey:        getEnv("ENCRYPTION_KEY", ""),
 			CookieSecure:         getBoolEnv("COOKIE_SECURE", getBoolEnv("SERVER_ENABLE_TLS", false)),
 			CookieSecureExplicit: os.Getenv("COOKIE_SECURE") != "",
@@ -868,11 +873,15 @@ func (c *Config) Validate() error {
 	if c.Server.JWTSecretKey == "" {
 		log.Println("NOTICE: JWT_SECRET_KEY not set — a key will be auto-generated and persisted to <SECRETS_DIR>/.jwt-secret. Tokens survive restarts as long as that directory persists; if it is lost, every login token is invalidated (and, unless ENCRYPTION_KEY is set, every stored encrypted credential becomes unreadable too). Set JWT_SECRET_KEY explicitly for portable deployments.")
 	} else if len(c.Server.JWTSecretKey) < 32 {
-		// AUDIT L2: HS256 with a low-entropy operator-set secret is offline
+		// M-3: HS256 with a low-entropy operator-set secret is offline
 		// brute-forceable (and it also seeds the AES key when ENCRYPTION_KEY is
 		// unset). The auto-generated key is 32 bytes; hold operator-set keys to
-		// the same floor. Warn (not fatal) so an upgrade can't brick boot.
-		log.Printf("WARNING: JWT_SECRET_KEY is only %d characters — use at least 32 random characters; a short secret is brute-forceable and weakens token + credential security", len(c.Server.JWTSecretKey))
+		// the same floor — now FATAL (not a warning) so a weak secret can't
+		// ship, with JWT_SECRET_KEY_ALLOW_WEAK=1 as the explicit escape hatch.
+		if !c.Server.JWTSecretAllowWeak {
+			return fmt.Errorf("JWT_SECRET_KEY is only %d characters (need at least 32 random characters) — a short secret is brute-forceable and weakens token + credential security. Set JWT_SECRET_KEY_ALLOW_WEAK=1 to override.", len(c.Server.JWTSecretKey))
+		}
+		log.Printf("WARNING: JWT_SECRET_KEY is only %d characters and JWT_SECRET_KEY_ALLOW_WEAK=1 is set — a short secret is brute-forceable and weakens token + credential security", len(c.Server.JWTSecretKey))
 	}
 	// AUDIT-173 (belt-and-braces): with the empty-as-unset resolution above,
 	// AdminPassword can never be empty here; if a future refactor breaks that
