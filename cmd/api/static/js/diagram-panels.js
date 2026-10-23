@@ -10,6 +10,20 @@
     // this file after AdminCommon is defined), so this is safe.
     const AC = window.AdminCommon;
 
+    // Whitelist a status string → CSS class. The class is interpolated into a
+    // `class="badge ${…}"` attribute, so a device/connection/tunnel status must
+    // never be interpolated raw — a crafted status (e.g. `" onmouseover=…`) would
+    // otherwise break out of the attribute (stored XSS). The badge TEXT is
+    // escaped separately by the callers.
+    function statusCls(status) {
+        switch (status) {
+            case 'up': return 'up';
+            case 'down': return 'down';
+            case 'stale': return 'stale';
+            default: return 'unknown';
+        }
+    }
+
     let panelChartInstances = {};
     let currentPanelConnId = null;
     let pendingOverlayCharts = []; // overlay iface charts to load when the Overlay tab is first shown (avoids 0-size render on a hidden tab)
@@ -234,7 +248,7 @@
         const srcName = conn.source_device?.name || 'Device ' + conn.source_device_id;
         const dstName = conn.dest_device?.name || 'Device ' + conn.dest_device_id;
         const typeBadge = window.typeBadgeHtml(conn.connection_type);
-        const statusBadge = `<span class="badge ${conn.status}">${window.escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
+        const statusBadge = `<span class="badge ${statusCls(conn.status)}">${window.escapeHtml((conn.status || 'unknown').toUpperCase())}</span>`;
         const methodLabels = {ip_match:'Direct',interface_ip:'Direct',bidirectional:'Direct',provisioned:'Provisioned',tunnel_overlay:'Tunnel subnet',tunnel_indirect:'Indirect',wan_inferred:'Indirect',name_match:'Indirect',overlay_name:'Indirect',lldp_neighbor:'LLDP confirmed',fdb_match:'MAC-table matched',arp_match:'ARP inferred'};
         // AUDIT-184: the unknown-method fallback renders the raw match_method —
         // escape it (the known labels are literals, but escaping both arms is
@@ -353,7 +367,7 @@
             // direct link's totals come from interface counters and a blanket
             // repoint would blank its tiles. See setPanelByteKpis.
             const statusEl = document.getElementById('pkpi-status');
-            statusEl.innerHTML = `<span class="badge ${c.status}" style="font-size:0.75rem;">${(c.status || 'unknown').toUpperCase()}</span>`;
+            statusEl.innerHTML = `<span class="badge ${statusCls(c.status)}" style="font-size:0.75rem;">${window.escapeHtml((c.status || 'unknown').toUpperCase())}</span>`;
 
             if (family === 'direct') {
                 // Direct links carry interfaces, not tunnels — render the member
@@ -1030,7 +1044,7 @@
         return ifaces.map((f, i) => {
             const rowId = `iface-${rowKey}-${i}`;
             const up = f.status === 'up';
-            const statusBadge = `<span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(f.status || 'unknown').toUpperCase()}</span>`;
+            const statusBadge = `<span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${window.escapeHtml((f.status || 'unknown').toUpperCase())}</span>`;
             const errs = (f.in_errors || 0) + (f.out_errors || 0);
             const errCell = errs > 0 ? `<span style="color:var(--fwmon-sig-warn);">${window.formatNum(errs)} err</span>` : '';
             const meta = ifaceMeta(f);
@@ -1291,7 +1305,7 @@
                         <span style="font-size:0.66rem;font-weight:700;letter-spacing:0.5px;color:var(--fwmon-series-6);background:var(--fwmon-card-bg);border:1px solid var(--fwmon-border);border-radius:4px;padding:2px 7px;">${typeLabel(o.type)}</span>
                         <span style="font-family:monospace;font-size:0.85rem;font-weight:600;color:var(--fwmon-text);">${window.escapeHtml(o.name)}</span>
                         <span style="font-size:0.78rem;color:var(--fwmon-text-faint);">on ${window.escapeHtml(o.device_name || '-')}</span>
-                        <span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${(o.status || 'unknown').toUpperCase()}</span>
+                        <span class="badge ${up ? 'up' : 'down'}" style="font-size:0.62rem;">${window.escapeHtml((o.status || 'unknown').toUpperCase())}</span>
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:10px;margin-bottom:10px;">
                         ${kv('VNI', o.vni ? o.vni : '—')}
@@ -1482,7 +1496,7 @@
                 // Guarded like every sibling call site. The API always sends a status
                 // today (no omitempty), so this is consistency rather than a live fix.
                 const st = t.status || 'unknown';
-                const statusBadge = `<span class="badge ${st}">${st.toUpperCase()}</span>`;
+                const statusBadge = `<span class="badge ${statusCls(st)}">${window.escapeHtml(st.toUpperCase())}</span>`;
                 return `
                     <tr class="panel-tunnel-row" data-action="dp-toggle-tunnel" data-row="${rowId}" data-device="${devId}" data-tunnel="${window.escapeHtml(chartGroup(t))}">
                         <td><span class="chevron" id="pchev-${rowId}">&#9654;</span></td>
