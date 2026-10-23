@@ -59,6 +59,14 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 		return
 	}
 
+	// D-24: validate the server host like the "test connection" endpoint, so an
+	// admin (or a stolen session) can't point the bot at a loopback/private/
+	// link-local address (SSRF).
+	if !isValidExternalIP(server.ServerHost) {
+		c.JSON(http.StatusBadRequest, response.Error("Server host resolves to a blocked address"))
+		return
+	}
+
 	if server.ServerPort == 0 {
 		server.ServerPort = 6667
 	}
@@ -123,6 +131,14 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	}
 	if v, ok := updates["nick"].(string); ok && v == "" {
 		delete(updates, "nick")
+	}
+
+	// D-24: validate the server host (if changed) like the "test connection"
+	// endpoint, so an admin can't point the bot at a loopback/private/link-local
+	// address.
+	if host, ok := updates["server_host"].(string); ok && host != "" && !isValidExternalIP(host) {
+		c.JSON(http.StatusBadRequest, response.Error("Server host resolves to a blocked address"))
+		return
 	}
 
 	if len(updates) == 0 {

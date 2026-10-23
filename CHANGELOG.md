@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.415] - 2026-10-23
+
+### Security — Validate the IRC server host on save
+
+- `CreateIRCServer` / `UpdateIRCServer` now validate `server_host` with
+  `isValidExternalIP` (like the "test connection" endpoint), so an admin can't
+  point the bot at a loopback/private/link-local address (SSRF). Added a test.
+
 ## [0.11.414] - 2026-10-23
 
 ### Security — Send the MaxMind license key via header, not query string
