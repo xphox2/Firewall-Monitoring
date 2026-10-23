@@ -24,6 +24,7 @@ import (
 // and is a separate commit.
 type BatchInserter[T any] struct {
 	mu            sync.Mutex
+	flushMu       sync.Mutex // serializes flushFn calls (D-15)
 	buf           []T
 	maxSize       int
 	flushInterval time.Duration
@@ -108,7 +109,8 @@ func (b *BatchInserter[T]) Add(item T) {
 
 // Flush swaps out the current buffer and calls flushFn on the collected items.
 // If the buffer is empty, it does nothing. Errors from flushFn are logged but
-// not propagated.
+// not propagated. flushFn calls are serialized (D-15): the buffer swap is safe
+// under b.mu, but flushFn (a DB write) must not run concurrently with itself.
 func (b *BatchInserter[T]) Flush() {
 	b.mu.Lock()
 	if len(b.buf) == 0 {
@@ -119,6 +121,8 @@ func (b *BatchInserter[T]) Flush() {
 	b.buf = make([]T, 0, b.maxSize)
 	b.mu.Unlock()
 
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
 	if err := b.flushFn(items); err != nil {
 		log.Printf("BatchInserter flush error: %v", err)
 	}
