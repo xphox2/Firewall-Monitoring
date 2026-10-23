@@ -38,6 +38,9 @@ usage() {
     echo "  -k, --key      SSH private key file"
     echo "      --dry-run  Print what deploy would do without making any"
     echo "                 remote changes (AUDIT-098). Run this first."
+    echo "      --insecure Disable SSH host-key verification (H-16 escape"
+    echo "                 hatch). NOT recommended — only for a first deploy"
+    echo "                 to a fresh host whose key is not yet in known_hosts."
     exit 1
 }
 
@@ -82,6 +85,7 @@ deploy_remote() {
     PORT=22
     KEY=""
     DRY_RUN=false
+    INSECURE=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -90,6 +94,7 @@ deploy_remote() {
             -p|--port) PORT="$2"; shift 2 ;;
             -k|--key) KEY="$2"; shift 2 ;;
             --dry-run) DRY_RUN=true; shift ;;
+            --insecure) INSECURE=true; shift ;;
             *) usage ;;
         esac
     done
@@ -103,9 +108,19 @@ deploy_remote() {
     build
 
     REMOTE_DIR="/opt/${APP_NAME}"
-    SSH_OPTS="-p ${PORT}"
+    # H-16: verify the server host key on every ssh/rsync, so a MITM or a
+    # re-provisioned host (new key) cannot silently intercept the deploy. The
+    # pre-fix script accepted whatever key the server presented.
+    SSH_OPTS="-p ${PORT} -o StrictHostKeyChecking=yes"
     if [ -n "$KEY" ]; then
         SSH_OPTS="${SSH_OPTS} -i ${KEY}"
+    fi
+    if [ "$INSECURE" = true ]; then
+        # Explicit escape hatch: skip verification AND discard the known_hosts
+        # lookup. Only for a first deploy to a fresh host; the operator should
+        # re-run without --insecure after the key is recorded.
+        SSH_OPTS="${SSH_OPTS} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        log_warn "Insecure mode: SSH host-key verification DISABLED (H-16 escape hatch)."
     fi
 
     log_info "Creating remote directory..."

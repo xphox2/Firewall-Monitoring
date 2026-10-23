@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.400] - 2026-10-22
+
+### Security — Verify the SSH host key in deploy.sh
+
+- `deploy.sh` now forces `StrictHostKeyChecking=yes` on every ssh/rsync, so a
+  MITM or re-provisioned host cannot silently intercept a deploy. An explicit
+  `--insecure` flag opts back out (with a warning) for a first deploy to a fresh
+  host.
+
 ## [0.11.399] - 2026-10-22
 
 ### Security — Bind the observability listeners to loopback
