@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.390] - 2026-10-22
+
+### Security — Stream config line scans to bound memory
+
+- The forward-only config line scans (the FortiGate object parser, `lineSet`,
+  and the `config`/`end` balance validator) now stream through a shared
+  `forEachLine` helper (a `bufio.Scanner` with a bounded buffer) instead of
+  `strings.Split(string(b), "\n")`, which materialises a per-line `[]string` plus
+  a full `string(b)` copy and amplifies a large backup's memory footprint.
+  The diff/block-masking helpers that require random access to the line slice
+  are unchanged.
+
 ## [0.11.389] - 2026-10-22
 
 ### Security — Harden the SNMP trap receiver against forgery

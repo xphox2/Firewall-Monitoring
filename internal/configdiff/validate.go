@@ -92,14 +92,15 @@ func ValidateFortiGateBackup(b []byte) error {
 	// that START with the keyword (after optional indentation) so embedded
 	// keywords inside string values don't get counted.
 	configCount, endCount := 0, 0
-	for _, line := range strings.Split(s, "\n") {
+	forEachLine(strings.NewReader(s), func(line string) bool {
 		trim := strings.TrimLeft(line, " \t")
 		if strings.HasPrefix(trim, "config ") {
 			configCount++
 		} else if trim == "end" {
 			endCount++
 		}
-	}
+		return true
+	})
 	if configCount < FortiOSMinConfigBlocks {
 		return fmt.Errorf("%w: %d config blocks (want >= %d)", ErrTooFewConfigBlocks, configCount, FortiOSMinConfigBlocks)
 	}
