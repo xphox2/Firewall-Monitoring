@@ -24,6 +24,30 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// maxSyslogFieldLen bounds each free-form syslog string field (D-27). The body
+// is capped at 5 MiB and the batch at 1000 messages, but a single crafted field
+// (message / structured-data / hostname …) could still be most of the body and
+// amplify memory in the normalization path. Truncate, don't reject: a syslog row
+// with a huge field is still worth keeping (its prefix).
+const maxSyslogFieldLen = 64 * 1024
+
+// truncateSyslogFields caps each free-form field of a syslog message to
+// maxSyslogFieldLen before normalization/save.
+func truncateSyslogFields(m *models.SyslogMessage) {
+	trunc := func(s *string) {
+		if len(*s) > maxSyslogFieldLen {
+			*s = (*s)[:maxSyslogFieldLen]
+		}
+	}
+	trunc(&m.Message)
+	trunc(&m.StructuredData)
+	trunc(&m.Hostname)
+	trunc(&m.AppName)
+	trunc(&m.ProcessID)
+	trunc(&m.MessageID)
+	trunc(&m.SourceIP)
+}
+
 // batchDedupCheck implements the AUDIT-042 idempotency check for probe batch
 // endpoints. If the request carries an `X-Probe-Batch-ID` already recorded for
 // this probe, it writes a 200 "deduped" response and returns dup=true (the
@@ -186,6 +210,7 @@ func (h *Handler) ReceiveSyslogMessages(c *gin.Context) {
 		// created_at is the server's ingest stamp (the archive cuts chunks by
 		// it): zero it so GORM stamps it, whatever the body sent.
 		messages[i].CreatedAt = time.Time{}
+		truncateSyslogFields(&messages[i])
 		if messages[i].DeviceID == 0 && messages[i].SourceIP != "" {
 			if devID := ipToDevice[messages[i].SourceIP]; devID > 0 {
 				messages[i].DeviceID = devID

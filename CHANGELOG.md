@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.410] - 2026-10-23
+
+### Security — Cap syslog field lengths on ingest
+
+- Each free-form syslog field (message, structured-data, hostname, app name,
+  process id, message id, source IP) is now truncated to 64 KiB before
+  normalization/save, so a crafted multi-MB field can't amplify memory in the
+  normalize path. Added a test.
+
 ## [0.11.409] - 2026-10-23
 
 ### Security — Detect integer overflow in the syslog numeric parser
