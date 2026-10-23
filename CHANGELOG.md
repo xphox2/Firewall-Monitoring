@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.403] - 2026-10-22
+
+### Security — Patch the Tailwind build dependency chain
+
+- `npm audit fix` bumped `postcss` (8.5.10 → 8.5.31), `source-map-js`
+  (1.2.1 → 1.2.2) and `nanoid` (3.3.11 → 3.3.20), resolving the high-severity
+  advisories in the Tailwind build tooling. The committed `tailwind.css` output
+  is byte-identical (patch-level deps don't change it).
+- Remaining: `postcss-selector-parser` (< 7.1.6, via `postcss-nested`) needs a
+  tailwindcss **3 → 4 major migration** to clear — a breaking-change upgrade
+  (config + `@tailwind` directives + postcss plugin) that warrants its own
+  careful CSS-output pass, tracked separately.
+
 ## [0.11.402] - 2026-10-22
 
 ### Security — Zero server-owned fields on alert-policy create (mass assignment)
