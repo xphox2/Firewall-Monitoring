@@ -200,6 +200,10 @@ type SNMPConfig struct {
 	V3AuthPass string
 	V3PrivType string // "DES", "AES", "AES192", "AES256", ""
 	V3PrivPass string
+	// V3AllowNoAuth is the SNMP_V3_ALLOW_NOAUTH escape hatch (D-19): when true,
+	// SNMPv3 with no authentication (noAuthNoPriv) is permitted instead of a
+	// fatal startup error. Defaults false (fail closed).
+	V3AllowNoAuth bool
 }
 
 type DatabaseConfig struct {
@@ -566,6 +570,7 @@ func Load() *Config {
 			V3AuthPass:     getEnv("SNMP_V3_AUTH_PASS", ""),
 			V3PrivType:     getEnv("SNMP_V3_PRIV_TYPE", ""),
 			V3PrivPass:     getEnv("SNMP_V3_PRIV_PASS", ""),
+			V3AllowNoAuth:  getBoolEnv("SNMP_V3_ALLOW_NOAUTH", false),
 		},
 		Database: DatabaseConfig{
 			Type:     getEnv("DB_TYPE", "postgres"),
@@ -810,8 +815,14 @@ func (c *Config) Validate() error {
 		if c.SNMP.V3Username == "" {
 			log.Println("WARNING: SNMP_VERSION=3 but SNMP_V3_USERNAME not set")
 		}
-		if c.SNMP.V3AuthType != "" && c.SNMP.V3AuthPass == "" {
-			log.Println("WARNING: SNMP_V3_AUTH_TYPE set but SNMP_V3_AUTH_PASS is empty")
+		// D-19: SNMPv3 with no authentication configured degrades to
+		// noAuthNoPriv, which is indistinguishable from a cleartext community —
+		// fail closed so a misconfigured v3 can't silently poll unauthenticated.
+		if c.SNMP.V3AuthType == "" || c.SNMP.V3AuthPass == "" {
+			if !c.SNMP.V3AllowNoAuth {
+				return fmt.Errorf("SNMP_VERSION=3 requires SNMP_V3_AUTH_TYPE and SNMP_V3_AUTH_PASS; refusing unauthenticated SNMPv3. Set SNMP_V3_ALLOW_NOAUTH=true to override.")
+			}
+			log.Println("WARNING: SNMP_VERSION=3 with SNMP_V3_ALLOW_NOAUTH=true — polling unauthenticated (noAuthNoPriv)")
 		}
 		if c.SNMP.V3PrivType != "" && c.SNMP.V3PrivPass == "" {
 			log.Println("WARNING: SNMP_V3_PRIV_TYPE set but SNMP_V3_PRIV_PASS is empty")

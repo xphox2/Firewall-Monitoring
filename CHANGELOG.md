@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.411] - 2026-10-23
+
+### Security — Fail closed on unauthenticated SNMPv3
+
+- `SNMP_VERSION=3` with no auth configured now fails startup (it degrades to
+  noAuthNoPriv, indistinguishable from a cleartext community) unless
+  `SNMP_V3_ALLOW_NOAUTH=true`. Documented the env var; added a test.
+
 ## [0.11.410] - 2026-10-23
 
 ### Security — Cap syslog field lengths on ingest
