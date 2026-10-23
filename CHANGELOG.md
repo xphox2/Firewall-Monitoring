@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.396] - 2026-10-22
+
+### Security — HTML-escape SVG chart tooltips/labels
+
+- `RenderAlertTimelineSVG` interpolated DB-sourced bucket tooltips and labels
+  into `<title>`/`<text>` without escaping. They now go through
+  `template.HTMLEscapeString`. Added a test.
+
 ## [0.11.395] - 2026-10-22
 
 ### Security — Zero server-owned fields on IRC create (mass assignment)
