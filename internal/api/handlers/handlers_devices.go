@@ -296,6 +296,36 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 		}
 	}
 
+	// M-5: validate the remaining port/numeric/enum fields the allow-list admits
+	// so a malformed value can't be persisted and later crash a poller (or be
+	// interpreted as an unsafe default on read).
+	for _, portField := range []struct{ name, label string }{
+		{"ssh_port", "SSH port"},
+		{"api_port", "API port"},
+	} {
+		if v, ok := filteredUpdates[portField.name]; ok {
+			p, isNum := v.(float64) // JSON numbers decode as float64
+			if !isNum || p < 1 || p > 65535 || p != float64(int(p)) {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid "+portField.label))
+				return nil, false
+			}
+		}
+	}
+	if v, ok := filteredUpdates["snmp_version"]; ok {
+		s, isStr := v.(string)
+		if !isStr || (s != "1" && s != "2c" && s != "3") {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid SNMP version (must be '1', '2c', or '3')"))
+			return nil, false
+		}
+	}
+	if v, ok := filteredUpdates["ssh_poll_interval"]; ok {
+		n, isNum := v.(float64) // JSON numbers decode as float64
+		if !isNum || n < 0 || n != float64(int(n)) {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid SSH poll interval"))
+			return nil, false
+		}
+	}
+
 	// Validate ip_address if present - skip for probe-managed devices (they use private IPs)
 	if ipVal, ok := filteredUpdates["ip_address"]; ok {
 		if device.ProbeID != nil && *device.ProbeID > 0 {
