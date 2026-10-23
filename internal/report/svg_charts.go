@@ -109,7 +109,7 @@ func RenderAlertTimelineSVG(buckets []AlertBucket, th ReportTheme) template.HTML
 			<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="%s" rx="1.5" class="alert-bar">
 				<title>%s</title>
 			</rect>
-		`, bx, by, bw, hVal, color, b.Tooltip))
+		`, bx, by, bw, hVal, color, template.HTMLEscapeString(b.Tooltip)))
 	}
 
 	// 4. X-Axis labels & ticks
@@ -118,7 +118,7 @@ func RenderAlertTimelineSVG(buckets []AlertBucket, th ReportTheme) template.HTML
 		if b.Label != "" {
 			tickX := float64(plotXStart) + float64(i)*barWidth + barWidth/2
 			sb.WriteString(fmt.Sprintf(`<line x1="%.2f" y1="%d" x2="%.2f" y2="%d" class="axis-line" />`, tickX, plotYEnd, tickX, plotYEnd+5))
-			sb.WriteString(fmt.Sprintf(`<text x="%.2f" y="%d" class="axis-label" text-anchor="middle">%s</text>`, tickX, plotYEnd+18, b.Label))
+			sb.WriteString(fmt.Sprintf(`<text x="%.2f" y="%d" class="axis-label" text-anchor="middle">%s</text>`, tickX, plotYEnd+18, template.HTMLEscapeString(b.Label)))
 		}
 	}
 
