@@ -2986,7 +2986,7 @@ func main() {
 	// black box. POLLER_METRICS_ADDR overrides the default; "off" disables it.
 	pollerMetricsAddr := os.Getenv("POLLER_METRICS_ADDR")
 	if pollerMetricsAddr == "" {
-		pollerMetricsAddr = ":9101"
+		pollerMetricsAddr = "127.0.0.1:9101"
 	}
 	if pollerMetricsAddr == "off" {
 		pollerMetricsAddr = ""

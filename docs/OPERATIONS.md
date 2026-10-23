@@ -89,7 +89,8 @@ What this changes for operators:
   proxy therefore needs the token. See [monitoring/README.md](monitoring/README.md).
 - **Poller / trap-receiver:** both now expose `/healthz`, `/readyz`, and
   Prometheus `/metrics` on their own listeners (`POLLER_METRICS_ADDR` default
-  `:9101`, `TRAP_METRICS_ADDR` default `:9102`; set either to `off` to disable).
+  `127.0.0.1:9101`, `TRAP_METRICS_ADDR` default `127.0.0.1:9102`; set either to
+  `off` to disable).
   Those listeners have no token check: they default to loopback, and
   `METRICS_TOKEN` does not apply to them.
 - **Encryption-key fail-fast (M8):** unlike the API (which stays up and reports

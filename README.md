@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.398-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.399-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.10+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -234,8 +234,8 @@ public AUDIT-NNN row exists.
   is set (then `Authorization: Bearer`), since port 8080 is usually
   internet-facing — see [docs/monitoring](docs/monitoring/README.md).
 - **[Server] Poller + trap-receiver `/metrics`, `/healthz`, `/readyz`**
-  (v0.10.487; `POLLER_METRICS_ADDR` default `:9101`, `TRAP_METRICS_ADDR`
-  default `:9102`; set to `off` to disable).
+  (v0.10.487; `POLLER_METRICS_ADDR` default `127.0.0.1:9101`, `TRAP_METRICS_ADDR`
+  default `127.0.0.1:9102`; set to `off` to disable).
 - **[Server] Structured logging** (slog) with request-ID correlation.
 
 The full **website-ready** feature inventory (with status, role, and

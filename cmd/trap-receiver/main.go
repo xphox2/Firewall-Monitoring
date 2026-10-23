@@ -24,7 +24,7 @@ import (
 func trapMetricsAddr() string {
 	addr := os.Getenv("TRAP_METRICS_ADDR")
 	if addr == "" {
-		addr = ":9102"
+		addr = "127.0.0.1:9102"
 	}
 	if addr == "off" {
 		return ""
