@@ -274,6 +274,13 @@ func (h *Handler) Verify2FA(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, response.Error("No pending 2FA setup — run setup first"))
 		return
 	}
+	// M-2: rate-limit the code verification per account like every other re-auth
+	// step — a TOTP code is only 6 digits, so guessing must be bounded even
+	// though codes rotate every 30 s.
+	if !h.reauth.Allow(admin.ID) {
+		c.JSON(http.StatusTooManyRequests, response.Error(reauthLimitedMsg))
+		return
+	}
 	if !validateTOTPCode(req.Code, secret) {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid code — check your authenticator app"))
 		return
