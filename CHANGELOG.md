@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.404] - 2026-10-23
+
+### Security — Revoke API tokens on password change / 2FA reset
+
+- `ResetAdminCredentials` now soft-revokes the account's API tokens when the
+  password changes or TOTP is reset (a credential-compromise recovery), using
+  the existing `revokeAPITokensForAdmin` helper. A bare "remove passkeys" reset
+  leaves tokens untouched. Added a test.
+
 ## [0.11.403] - 2026-10-22
 
 ### Security — Patch the Tailwind build dependency chain

@@ -242,6 +242,15 @@ func (d *Database) ResetAdminCredentials(adminID uint, r AdminReset) (int64, err
 			}
 			removed = res.RowsAffected
 		}
+		// M-1: a password change or 2FA reset is a credential-compromise
+		// recovery — revoke the account's API tokens (a separate bearer
+		// credential that bypasses TOTP) so a stolen token doesn't outlive the
+		// reset. A bare "remove passkeys" (no password/2FA change) leaves them.
+		if r.PasswordHash != "" || r.ClearTOTP {
+			if err := revokeAPITokensForAdmin(tx, adminID); err != nil {
+				return err
+			}
+		}
 		updates := map[string]interface{}{}
 		if r.PasswordHash != "" {
 			updates["password"] = r.PasswordHash
