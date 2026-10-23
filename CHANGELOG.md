@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.416] - 2026-10-23
+
+### Security — Serialize BatchInserter flush calls
+
+- `BatchInserter.Flush` now serializes `flushFn` (the DB write) with a dedicated
+  mutex, so the size-triggered flush and the ticker flush can't run the write
+  concurrently. Added a concurrency test.
+
 ## [0.11.415] - 2026-10-23
 
 ### Security — Validate the IRC server host on save

@@ -220,3 +220,43 @@ func TestBatcher_DroppedReflectsExactCount(t *testing.T) {
 		t.Errorf("Dropped() = %d, want 47", d)
 	}
 }
+
+// TestBatcher_FlushSerialized pins D-15: flushFn (a DB write) must never run
+// concurrently with itself, even when the ticker and a size-triggered flush
+// race.
+func TestBatcher_FlushSerialized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping timing/concurrency-dependent test in -short mode (AUDIT-142)")
+	}
+	var inFlight, maxInFlight atomic.Int64
+
+	b := NewBatchInserter[int](2, time.Millisecond, func(items []int) error {
+		cur := inFlight.Add(1)
+		for {
+			max := maxInFlight.Load()
+			if cur <= max || maxInFlight.CompareAndSwap(max, cur) {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+		inFlight.Add(-1)
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 20; i++ {
+				b.Add(i)
+			}
+		}()
+	}
+	wg.Wait()
+	b.Stop()
+
+	if maxInFlight.Load() > 1 {
+		t.Errorf("flushFn ran concurrently (max in-flight = %d)", maxInFlight.Load())
+	}
+}
