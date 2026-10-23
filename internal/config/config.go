@@ -521,7 +521,7 @@ func Load() *Config {
 	var retentionBad []string
 	cfg := &Config{
 		Server: ServerConfig{
-			Host:                 getEnv("SERVER_HOST", "0.0.0.0"),
+			Host:                 getEnv("SERVER_HOST", "127.0.0.1"),
 			Port:                 getEnv("SERVER_PORT", "8080"),
 			ReadTimeout:          getDurationEnv("SERVER_READ_TIMEOUT", 30*time.Second),
 			WriteTimeout:         getDurationEnv("SERVER_WRITE_TIMEOUT", 30*time.Second),
@@ -817,6 +817,18 @@ func (c *Config) Validate() error {
 	if c.Server.EnableTLS {
 		if c.Server.TLSCertFile == "" || c.Server.TLSKeyFile == "" {
 			return fmt.Errorf("SERVER_ENABLE_TLS=true but TLS cert/key files not configured")
+		}
+	}
+
+	// H-14: warn when the API binds a non-loopback address without TLS —
+	// credentials and session cookies would cross the network in cleartext.
+	// The default is loopback (127.0.0.1); a deployment that listens on
+	// 0.0.0.0 must either enable SERVER_ENABLE_TLS or sit behind a
+	// TLS-terminating reverse proxy.
+	if !c.Server.EnableTLS {
+		host := c.Server.Host
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			log.Printf("WARNING: SERVER_HOST=%s with SERVER_ENABLE_TLS=false — the API listens on a non-loopback address without TLS. Put a TLS-terminating reverse proxy in front (see docs/OPERATIONS.md), or set SERVER_HOST=127.0.0.1.", host)
 		}
 	}
 
