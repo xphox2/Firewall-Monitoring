@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.398] - 2026-10-22
+
+### Security — Default `SERVER_HOST` to loopback
+
+- The server config default is now `127.0.0.1` (was `0.0.0.0`), and
+  `config.env.example` documents it. `Validate()` now warns when the API binds a
+  non-loopback address with `SERVER_ENABLE_TLS=false`. The Docker entrypoint
+  keeps `0.0.0.0` for the published port mapping (a TLS reverse proxy is
+  expected in front).
+
 ## [0.11.397] - 2026-10-22
 
 ### Security — Harden the compose service

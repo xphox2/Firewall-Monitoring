@@ -162,6 +162,10 @@ SNMP_PORT=${SNMP_PORT:-161}
 SNMP_COMMUNITY=${SNMP_COMMUNITY:-}
 SNMP_VERSION=${SNMP_VERSION:-2c}
 SNMP_POLL_INTERVAL=${SNMP_POLL_INTERVAL:-60s}
+# The Docker container binds 0.0.0.0 so the published port mapping reaches it;
+# a TLS-terminating reverse proxy (docker-compose.proxy.yml / docs/nginx.conf)
+# is expected in front. The NATIVE install example (config.env.example) defaults
+# to loopback instead.
 SERVER_HOST=${SERVER_HOST:-0.0.0.0}
 SERVER_PORT=${SERVER_PORT:-8080}
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
