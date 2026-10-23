@@ -57,8 +57,17 @@ func NewMaxMindUpdater(licenseKey, accountID, editionIDs, destDir string) *MaxMi
 		accountID:  strings.TrimSpace(accountID),
 		editions:   editions,
 		destDir:    destDir,
-		client:     &http.Client{Timeout: 5 * time.Minute},
+		client:     newMaxMindClient(),
 	}
+}
+
+// newMaxMindClient builds the download client with the environment proxy
+// disabled (D-23): the license key rides in the Authorization header, so an
+// HTTP(S)_PROXY (and its logs) must never see it.
+func newMaxMindClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	return &http.Client{Timeout: 5 * time.Minute, Transport: tr}
 }
 
 // UpdateAll downloads every configured edition, isolating per-edition failures so
@@ -205,13 +214,16 @@ func (u *MaxMindUpdater) newRequest(ctx context.Context, edition, suffix string)
 	}
 	q := req.URL.Query()
 	q.Set("edition_id", edition)
-	q.Set("license_key", u.licenseKey)
 	q.Set("suffix", suffix)
 	req.URL.RawQuery = q.Encode()
-	// MaxMind also accepts account-id + license-key via HTTP Basic auth; set it
-	// when an account id is configured (harmless alongside the query-param key).
-	if u.accountID != "" {
-		req.SetBasicAuth(u.accountID, u.licenseKey)
+	// D-23: send the license key ONLY via HTTP Basic auth (the Authorization
+	// header), never in the query string where it leaks into logs and referrers.
+	// MaxMind keys Basic auth on account-id + license-key; legacy accounts with
+	// only a license key use the key as the username.
+	user := u.accountID
+	if user == "" {
+		user = u.licenseKey
 	}
+	req.SetBasicAuth(user, u.licenseKey)
 	return req, nil
 }
