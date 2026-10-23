@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.413] - 2026-10-23
+
+### Security — Redact the webhook URL in test-webhook errors
+
+- The "Test connection" webhook handler no longer echoes the raw webhook URL
+  (whose path/query may carry a secret token) in its error responses — it
+  redacts to the host and unwraps the `*url.Error` to surface only the cause.
+  Added a guardrail test.
+
 ## [0.11.412] - 2026-10-23
 
 ### Security — Threat-feed redirect + HTTPS guards
