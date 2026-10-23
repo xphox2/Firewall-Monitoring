@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.397] - 2026-10-22
+
+### Security — Harden the compose service
+
+- `docker-compose.yml` now sets `no-new-privileges`, drops the default
+  capabilities the container never needs (`NET_RAW`, `MKNOD`, `SETFCAP`,
+  `SETPCAP`, `SYS_CHROOT`, `FSETID`, `KILL`, `AUDIT_WRITE`), and bounds
+  `pids_limit`, `mem_limit` and `cpus`. The capabilities the non-root container
+  needs (CHOWN/DAC_OVERRIDE/FOWNER, SETUID/SETGID, NET_BIND_SERVICE) are kept.
+
 ## [0.11.396] - 2026-10-22
 
 ### Security — HTML-escape SVG chart tooltips/labels
