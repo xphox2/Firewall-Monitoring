@@ -1473,7 +1473,9 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	client := &http.Client{Timeout: 10 * time.Second, Transport: tr}
 	httpReq, err := http.NewRequest("POST", webhookURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("Invalid URL: %v", err)))
+		// D-22: don't echo the URL (or the malformed string) back — it may carry
+		// a secret token.
+		c.JSON(http.StatusBadRequest, response.Error("Invalid webhook URL"))
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -1487,9 +1489,20 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		// D-22: a *url.Error stringifies the full request URL (whose path/query
+		// may carry a secret token) — redact to the host and surface only the
+		// underlying cause, matching the notifier's host-only error redaction.
+		host := "webhook"
+		if parsed != nil && parsed.Host != "" {
+			host = parsed.Scheme + "://" + parsed.Host
+		}
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
 		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
-			"message": fmt.Sprintf("Failed to reach webhook: %v", err),
+			"message": fmt.Sprintf("Failed to reach webhook %s: %v", host, err),
 		}))
 		return
 	}
