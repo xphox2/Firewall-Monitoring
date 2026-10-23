@@ -4,6 +4,18 @@
 
     var API_BASE = '/api';
 
+    // preauthCSRFToken reads the pre-auth CSRF cookie the login page sets (M-4)
+    // and echoes it back as the X-CSRF-Token header on the login/totp POSTs, so
+    // the server can reject a cross-site forged login (double-submit cookie).
+    function preauthCSRFToken() {
+        try {
+            var m = document.cookie.match(/(?:^|;\s*)preauth_csrf=([^;]+)/);
+            return m ? decodeURIComponent(m[1]) : '';
+        } catch (err) {
+            return '';
+        }
+    }
+
     // completeLogin is the one success path for password, TOTP and passkey
     // sign-in. The redirect is always /admin: a must_change_password account
     // is then stopped by the server-side gate and the SPA's forced-change
@@ -192,7 +204,7 @@
 
         fetch(API_BASE + '/auth/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': preauthCSRFToken() },
             body: JSON.stringify({ username: username, password: password })
         })
         .then(function(response) { return response.json(); })
@@ -234,7 +246,7 @@
 
         fetch(API_BASE + '/auth/totp', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': preauthCSRFToken() },
             body: JSON.stringify({ code: code })
         })
         .then(function(response) { return response.json(); })

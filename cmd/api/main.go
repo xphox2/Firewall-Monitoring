@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.406"
+const ServerVersion = "0.11.407"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -743,6 +743,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 	router.GET("/security.txt", securityTxt)
 
 	router.GET("/admin/login", func(c *gin.Context) {
+		// M-4: issue the pre-auth CSRF token cookie before rendering the page.
+		middleware.SetPreauthCSRFCookie(c)
 		middleware.RenderHTML(c, http.StatusOK, "login.html", nil)
 	})
 
@@ -767,10 +769,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			public.GET("/display-settings", handler.GetPublicDisplaySettings)
 		}
 
-		api.POST("/auth/login", middleware.LoginRateLimiter(), handler.Login)
+		api.POST("/auth/login", middleware.LoginRateLimiter(), middleware.LoginCSRFProtection(), handler.Login)
 		// 2FA second step (P0-3): exchanges the pending_2fa cookie + a TOTP or
 		// recovery code for a session. Same rate limiter as login.
-		api.POST("/auth/totp", middleware.LoginRateLimiter(), handler.TOTPLogin)
+		api.POST("/auth/totp", middleware.LoginRateLimiter(), middleware.LoginCSRFProtection(), handler.TOTPLogin)
 		// Passkey (WebAuthn) usernameless login. Its own LoginRateLimiter
 		// instance (separate bucket from password login); like the rest of
 		// /api/auth/* it is pre-session, so no CSRF. 404 while disabled; the
