@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.418] - 2026-10-23
+
+### Security — Bound the SNMP walk and table indices
+
+- `SNMPClient.Walk` now truncates results at 4096 PDUs, and `getIndexFromOID`
+  rejects indices above 1,000,000, so a misbehaving agent can't exhaust memory
+  or poison map keys. Added a test.
+
 ## [0.11.417] - 2026-10-23
 
 ### Security — Cap NOC SSE subscribers

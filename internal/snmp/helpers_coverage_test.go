@@ -81,6 +81,7 @@ func TestGetIndexFromOID(t *testing.T) {
 		{"single-element index", base + ".7", 7},
 		{"multi-element uses last", base + ".1.3.1.1", 1},
 		{"non-numeric → -1", base + ".x", -1},
+		{"huge index → -1 (D-17)", base + ".999999999", -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

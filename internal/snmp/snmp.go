@@ -31,6 +31,14 @@ func ipv4FromTableIndex(suffix string) string {
 	return ip
 }
 
+// maxWalkPDUs and maxOIDIndex bound the SNMP walk and table indices (D-17) so a
+// misbehaving agent returning an unbounded table — or a huge OID index — can't
+// exhaust memory or poison map keys.
+const (
+	maxWalkPDUs = 4096
+	maxOIDIndex = 1000000
+)
+
 // Standard MIB OIDs (vendor-neutral)
 var (
 	// IP-MIB ipAddrTable (standard, works on all vendors)
@@ -191,6 +199,11 @@ func (s *SNMPClient) Walk(oid string) ([]gosnmp.SnmpPDU, error) {
 	result, err := s.client.WalkAll(oid)
 	if err != nil {
 		return nil, err
+	}
+	// D-17: bound the walk so a misbehaving agent returning an unbounded table
+	// can't exhaust memory.
+	if len(result) > maxWalkPDUs {
+		result = result[:maxWalkPDUs]
 	}
 	return result, nil
 }
@@ -573,11 +586,17 @@ func getIndexFromOID(oid, base string) int {
 		// This is the standard SNMP table indexing pattern
 		var index int
 		if n, _ := fmt.Sscanf(parts[len(parts)-1], "%d", &index); n == 1 {
-			return index
+			if index >= 0 && index <= maxOIDIndex {
+				return index
+			}
+			return -1 // D-17: out-of-range index
 		}
 		// Fallback to first element for simpler OIDs
 		if n, _ := fmt.Sscanf(parts[0], "%d", &index); n == 1 {
-			return index
+			if index >= 0 && index <= maxOIDIndex {
+				return index
+			}
+			return -1 // D-17: out-of-range index
 		}
 	}
 	return -1
