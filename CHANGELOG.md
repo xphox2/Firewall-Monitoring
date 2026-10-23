@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.399] - 2026-10-22
+
+### Security — Bind the observability listeners to loopback
+
+- The poller and trap-receiver `/metrics`/`/healthz`/`/readyz` listeners now
+  default to `127.0.0.1:9101` / `127.0.0.1:9102` (were `:9101`/`:9102` — all
+  interfaces), matching what the docs already claimed. They are unauthenticated,
+  so loopback-only is the correct default.
+
 ## [0.11.398] - 2026-10-22
 
 ### Security — Default `SERVER_HOST` to loopback
