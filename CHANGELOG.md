@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.406] - 2026-10-23
+
+### Security — Short JWT secret is now a fatal startup error
+
+- A short operator-set `JWT_SECRET_KEY` (< 32 chars) is now a fatal startup
+  error (was a warning) — HS256 with low entropy is offline brute-forceable and
+  also seeds the AES key when `ENCRYPTION_KEY` is unset. `JWT_SECRET_KEY_ALLOW_WEAK=1`
+  is the explicit escape hatch. Added tests + documented the env var.
+
 ## [0.11.405] - 2026-10-23
 
 ### Security — Rate-limit the 2FA enrollment verify step
