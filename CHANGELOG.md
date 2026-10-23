@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.408] - 2026-10-23
+
+### Security — Validate device fields on update
+
+- `prepareDeviceUpdates` now validates `ssh_port` / `api_port` (1-65535),
+  `snmp_version` (allow-listed `1`/`2c`/`3`) and `ssh_poll_interval`
+  (non-negative), so a malformed value can't be persisted and later mis-read.
+  Added a table-driven test.
+
 ## [0.11.407] - 2026-10-23
 
 ### Security — CSRF protection on the login endpoint
