@@ -1,6 +1,27 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.426] - 2026-10-24
+
+### Security — Gate system-health DB internals behind admin (M-13)
+
+- The standalone `/api/system` endpoint — which exposes DB connection-pool
+  stats, database size, and the on-disk `data_directory` (host layout
+  disclosure) — is now in `adminOnlyRoutes`; it previously defaulted GET to
+  the viewer role. No live UI depends on it (the "Server Platform" card that
+  polled it no longer exists in any page; the polling code is a documented
+  no-op).
+- The shared dashboard-health composite (`/api/dashboard/health`, served to
+  every authenticated role from one background snapshot) now serves a
+  redacted view to non-admin callers: the `db` block keeps only `reachable`
+  (the Database service tile reads it) and the `host` block drops the
+  `data_disk_*` entries (they embed the data-directory path). Version,
+  uptime, runtime and generic host CPU/mem/load stay visible to all roles.
+  Redaction builds fresh maps and never mutates the shared snapshot, so an
+  admin request still sees everything. The vitals summary is unaffected
+  (it carries no DB internals). A guardrail test pins the route entry and
+  handler tests pin the redaction for viewer/operator/admin.
+
 ## [0.11.425] - 2026-10-24
 
 ### Security — Warn when writable dirs land inside the project checkout (M-14)

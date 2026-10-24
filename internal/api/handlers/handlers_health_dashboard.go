@@ -4,10 +4,12 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"firewall-mon/internal/api/response"
+	"firewall-mon/internal/auth"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/logging"
 	"firewall-mon/internal/models"
@@ -261,6 +263,43 @@ func (h *Handler) RunDashboardHealthHub(ctx context.Context) {
 	h.dashHub.Run(ctx)
 }
 
+// redactPlatformForRole returns a NON-ADMIN view of the platform block: DB
+// internals — pool stats (open/in_use/idle/wait — an operational-corruption
+// and capacity oracle), database size, and the on-disk data_directory (host
+// layout disclosure) — are admin-only (M-13), while version/uptime/runtime and
+// the generic host CPU/memory/load stay visible to every authenticated role
+// (the shared dashboard's platform tiles rely on them).
+//
+// It builds NEW maps and never mutates the shared snapshot: the dashboard
+// health payload is computed once by the background hub and served to every
+// client, so redacting in place would leak the internals to an admin on the
+// very next request (and race the refresher).
+func redactPlatformForRole(platform gin.H) gin.H {
+	out := make(gin.H, len(platform))
+	for k, v := range platform {
+		out[k] = v
+	}
+	if dbm, ok := platform["db"].(gin.H); ok {
+		red := gin.H{}
+		if r, ok := dbm["reachable"].(bool); ok {
+			red["reachable"] = r
+		}
+		out["db"] = red
+	}
+	if host, ok := platform["host"].(gin.H); ok {
+		red := make(gin.H, len(host))
+		for k, v := range host {
+			// data_disk_* embeds the database's data_directory path — the
+			// same disclosure as db.data_directory, one level down.
+			if !strings.HasPrefix(k, "data_disk_") {
+				red[k] = v
+			}
+		}
+		out["host"] = red
+	}
+	return out
+}
+
 // GetDashboardHealth serves the background-computed system-health composite that
 // powers every module of the customizable dashboard. It is NOT the NOC: it
 // summarizes the health of the Firewall-Mon platform + pipeline (server box, DB,
@@ -277,6 +316,17 @@ func (h *Handler) GetDashboardHealth(c *gin.Context) {
 		return
 	}
 	snap, _, generatedAt := h.dashHub.request()
+	// M-13: the shared snapshot carries admin-only DB internals. Redact for
+	// non-admin callers — through a fresh shallow copy, never by mutating the
+	// snapshot the hub shares with every other client.
+	if plat, ok := snap["platform"].(gin.H); ok && !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		red := make(gin.H, len(snap))
+		for k, v := range snap {
+			red[k] = v
+		}
+		red["platform"] = redactPlatformForRole(plat)
+		snap = red
+	}
 	serveSnapshot(c, snap, generatedAt)
 }
 
