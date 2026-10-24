@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.425"
+const ServerVersion = "0.11.426"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -876,6 +876,13 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/tokens":                    true,
 			"/admin/api/tokens/:id":                true,
 			"/admin/api/probes/:id/regenerate-key": true,
+			// M-13: the standalone system-health page exposes DB internals —
+			// pool stats, database size, the on-disk data_directory — so it
+			// is admin-only. The shared dashboard composite serves the same
+			// data but redacts those fields per role (redactPlatformForRole);
+			// the metrics chart stays viewer-visible (server CPU/mem trend,
+			// no DB internals).
+			"/admin/api/system": true,
 			// Revealing a stored device credential in plaintext is admin-only,
 			// even though day-to-day device edits are operator-level.
 			"/admin/api/devices/:id/reveal-secret": true,
