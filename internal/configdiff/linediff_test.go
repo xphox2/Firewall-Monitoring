@@ -244,3 +244,45 @@ func itoa(n int) string {
 	}
 	return string(b[i:])
 }
+
+// TestScanDiffLines_Cap asserts the line-budget boundary directly: exactly
+// maxDiffLines lines are accepted, one more stops the scan and reports tooBig
+// instead of materialising an unbounded slice.
+func TestScanDiffLines_Cap(t *testing.T) {
+	atCap := strings.Repeat("x\n", maxDiffLines)
+	lines, tooBig := scanDiffLines([]byte(atCap))
+	if tooBig {
+		t.Fatalf("exactly maxDiffLines lines must be accepted, got tooBig")
+	}
+	if len(lines) != maxDiffLines {
+		t.Fatalf("expected %d lines, got %d", maxDiffLines, len(lines))
+	}
+
+	overCap := strings.Repeat("x\n", maxDiffLines+1)
+	lines, tooBig = scanDiffLines([]byte(overCap))
+	if !tooBig {
+		t.Fatalf("maxDiffLines+1 lines must be rejected, got %d accepted", len(lines))
+	}
+	if len(lines) != maxDiffLines {
+		t.Fatalf("scan should stop at the cap, got %d lines", len(lines))
+	}
+}
+
+// TestDiffLines_LineBudgetExceeded verifies DiffLines fails closed when a side
+// exceeds the budget: no rows are rendered (a partial line diff would silently
+// look complete) and the note tells the operator to compare offline.
+func TestDiffLines_LineBudgetExceeded(t *testing.T) {
+	a := strings.Repeat("line\n", maxDiffLines+1)
+	b := "line\nchanged"
+
+	d := DiffLines("", []byte(a), []byte(b))
+	if !d.Truncated {
+		t.Fatalf("over-budget config must mark the diff truncated")
+	}
+	if len(d.Rows) != 0 {
+		t.Fatalf("over-budget config must withhold rows, got %d", len(d.Rows))
+	}
+	if !strings.Contains(d.Note, "line diff limit") {
+		t.Fatalf("note should explain the line limit, got %q", d.Note)
+	}
+}

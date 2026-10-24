@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.423] - 2026-10-24
+
+### Security — Cap and stream the config line diff (D-29)
+
+- The line diff's remaining slice-based path (`prepareDiffInput`) now streams
+  lines through the shared `forEachLine` helper instead of
+  `strings.Split(string(b), "\n")`, which materialised the full `[]string` plus
+  a whole-buffer string copy per side with no way to stop early. The CRLF
+  normalization copy is likewise skipped for LF-only captures (`bytes.ReplaceAll`
+  always allocates a fresh buffer).
+- A new `maxDiffLines` budget (100k lines/side) makes a pathological revision
+  fail closed — `DiffLines` withholds all rows with an operator-facing note
+  instead of allocating unbounded line slices, interning tables and Myers
+  vectors before the row cap could engage. Tests pin the cap boundary and the
+  fail-closed behavior.
+- Vendor `MaskVolatileLines` pipelines still operate on the whole buffer (their
+  regexes are inherently full-text); only the split/normalize path changed.
+
 ## [0.11.422] - 2026-10-24
 
 ### Security — Gate `api_insecure_tls` behind admin + audit-log it

@@ -2,9 +2,9 @@ package configdiff
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"regexp"
-	"strings"
 )
 
 // LineRow is one row of the rendered line diff.
@@ -34,6 +34,13 @@ const (
 	// an unbounded N·D search would burn CPU/memory to render a diff no operator
 	// wants line-by-line anyway. Past this we bail to a whole-block replace.
 	maxEditDistance = 2000
+	// maxDiffLines bounds how many lines ONE side may contribute before the
+	// line diff refuses to run. maxDiffRows only caps what gets emitted; the
+	// line slices, the interning table and the Myers vectors are all sized by
+	// the input line count, so without this a pathological revision would
+	// allocate unbounded memory before the row cap ever engages. Real firewall
+	// configs are four to five orders of magnitude below this.
+	maxDiffLines = 100000
 )
 
 // volatileTokenRe extracts the pattern name from a masked line, e.g.
@@ -53,8 +60,19 @@ var volatileTokenRe = regexp.MustCompile(`<volatile-([a-z0-9-]+)/?>`)
 // whose only difference is volatile (masked-equal, raw-different) is reported as
 // Op "volatile" rather than a delete/insert pair.
 func DiffLines(vendor string, a, b []byte) LineDiff {
-	aRaw, aMask, aOK := prepareDiffInput(vendor, a)
-	bRaw, bMask, bOK := prepareDiffInput(vendor, b)
+	aRaw, aMask, aOK, aBig := prepareDiffInput(vendor, a)
+	bRaw, bMask, bOK, bBig := prepareDiffInput(vendor, b)
+
+	// Line-count budget exceeded: refuse rather than render a partial diff. A
+	// config this size is hostile or corrupt, and the log line makes the
+	// refusal diagnosable instead of a silent empty panel.
+	if aBig || bBig {
+		log.Printf("ERROR: configdiff: %s revision exceeds the %d-line diff budget; withholding raw line diff", vendor, maxDiffLines)
+		return LineDiff{
+			Truncated: true,
+			Note:      fmt.Sprintf("Config exceeds the %d-line diff limit; the line diff is withheld to bound memory. Download both revisions to compare offline.", maxDiffLines),
+		}
+	}
 
 	// AUDIT-200 fail-closed: if either side's masking violated the line-count
 	// invariant, the secret display-substitution above CANNOT be trusted — the
@@ -188,15 +206,23 @@ func volatileName(maskA, maskB string) string {
 
 // prepareDiffInput returns the display lines and the masked (alignment) lines for
 // one config, guaranteed to be the same length. Newlines are normalized (CRLF→LF)
-// and a single trailing empty line (from a trailing newline) is dropped.
+// and a single trailing empty line (from a trailing newline) is dropped. tooBig
+// reports that the config exceeded maxDiffLines, in which case the caller must
+// withhold the diff entirely rather than render a partial one.
 //
 // maskOK reports whether the masker held the line-count invariant. When false,
 // maskLines falls back to rawLines (so the slices stay coherent for any caller)
 // but the secret display-substitution below never ran against a trustworthy
 // mask — DiffLines must NOT render the result (AUDIT-200: this used to degrade
 // silently, rendering every secret in cleartext).
-func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string, maskOK bool) {
-	clean := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string, maskOK, tooBig bool) {
+	// Normalize CRLF only when it is actually present: bytes.ReplaceAll always
+	// returns a fresh buffer, so the unconditional call cost a full-size copy
+	// per side for every LF-only capture.
+	clean := raw
+	if bytes.Contains(raw, []byte("\r\n")) {
+		clean = bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+	}
 
 	var masked []byte
 	if lm, ok := Lookup(vendor).(LineMasker); ok {
@@ -205,8 +231,14 @@ func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string, 
 		masked = clean
 	}
 
-	rawLines = splitTrimCR(clean)
-	maskLines = splitTrimCR(masked)
+	rawLines, tooBig = scanDiffLines(clean)
+	if tooBig {
+		return nil, nil, false, true
+	}
+	maskLines, tooBig = scanDiffLines(masked)
+	if tooBig {
+		return nil, nil, false, true
+	}
 
 	// Invariant: masking must preserve line count. If a masker ever violates it,
 	// fall back to unmasked alignment — and report it, so DiffLines fails closed
@@ -239,15 +271,25 @@ func prepareDiffInput(vendor string, raw []byte) (rawLines, maskLines []string, 
 		rawLines = rawLines[:k-1]
 		maskLines = maskLines[:len(maskLines)-1]
 	}
-	return rawLines, maskLines, maskOK
+	return rawLines, maskLines, maskOK, false
 }
 
-func splitTrimCR(b []byte) []string {
-	lines := strings.Split(string(b), "\n")
-	for i, l := range lines {
-		lines[i] = strings.TrimSuffix(l, "\r")
-	}
-	return lines
+// scanDiffLines streams b into the line slice the Myers diff indexes into,
+// stopping at maxDiffLines. This replaces strings.Split(string(b), "\n"), which
+// always materialises the full []string (plus a whole-buffer string copy) with
+// no way to stop early — the last slice-based path left after the forward-only
+// scans moved to forEachLine. Trailing \r (CRLF input) is stripped by the
+// scanner, matching the old per-line TrimSuffix.
+func scanDiffLines(b []byte) (lines []string, tooBig bool) {
+	forEachLine(bytes.NewReader(b), func(line string) bool {
+		if len(lines) >= maxDiffLines {
+			tooBig = true
+			return false
+		}
+		lines = append(lines, line)
+		return true
+	})
+	return lines, tooBig
 }
 
 // internRange maps the lines in src[lo:hi] to dense ints via the shared ids
