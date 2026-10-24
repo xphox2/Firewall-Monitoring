@@ -67,7 +67,7 @@ func TestDBSSLModeDefault_ExplicitWins(t *testing.T) {
 func TestValidate_DBSSLModeInvalid(t *testing.T) {
 	c := validConfig()
 	c.Database.Type = "postgres"
-	c.Database.Host = "db.internal"
+	c.Database.Host = "db.example.net"
 	c.Database.SSLMode = "reqiure" // the typo under test
 
 	err := c.Validate()
