@@ -1,6 +1,22 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.424] - 2026-10-24
+
+### Security — Topology-aware `DB_SSL_MODE` default (M-10)
+
+- An unset `DB_SSL_MODE` now defaults to `require` for any remote Postgres and
+  keeps `disable` only for loopback/unix-socket hosts (the single-container
+  topology, where the API talks to Postgres over a socket in the same box) —
+  previously a remote `DB_HOST` silently sent DB credentials and all data in
+  cleartext. An explicit `DB_SSL_MODE` (including `disable` on a remote host)
+  still wins, so existing installs are unchanged; a remote Postgres without
+  SSL now fails loudly at startup instead of quietly accepting an
+  eavesdropped link. `config.env.example` now ships the variable commented
+  out with the topology rule documented. `Validate()` rejects a typo'd
+  sslmode at startup. Tests pin the topology table, both explicit-override
+  directions, and the validation.
+
 ## [0.11.423] - 2026-10-24
 
 ### Security — Cap and stream the config line diff (D-29)
