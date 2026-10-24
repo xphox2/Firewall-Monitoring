@@ -632,9 +632,12 @@ func (h *Handler) TestIRCServer(c *gin.Context) {
 
 	err := bot.Connect()
 	if err != nil {
+		// L-11: the error can carry text the remote ircd chose (SASL/
+		// registration failures) — strip control bytes and cap it before it
+		// is echoed to the browser.
 		c.JSON(http.StatusOK, response.Success(gin.H{
 			"success": false,
-			"message": "Failed to connect: " + err.Error(),
+			"message": "Failed to connect: " + irc.SanitizeErrorText(err.Error()),
 		}))
 		return
 	}
@@ -647,6 +650,10 @@ func (h *Handler) TestIRCServer(c *gin.Context) {
 	}))
 }
 
+// maxIRCMessageBytes leaves ~110 bytes of the 512-byte IRC line for the
+// prefix the server prepends when relaying (nick!user@host + channel name).
+const maxIRCMessageBytes = 400
+
 func (h *Handler) SendIRCMessage(c *gin.Context) {
 	var req struct {
 		ServerID uint   `json:"server_id" binding:"required"`
@@ -656,6 +663,15 @@ func (h *Handler) SendIRCMessage(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return
+	}
+
+	// L-15: an IRC line is at most 512 bytes INCLUDING the relayed
+	// ":nick!user@host PRIVMSG #chan :" prefix and CRLF, and ircds silently
+	// truncate (or reject) anything longer. Reject up front rather than let a
+	// message be cut mid-word — or let an oversized body queue on the bot.
+	if len(req.Message) > maxIRCMessageBytes {
+		c.JSON(http.StatusBadRequest, response.Error("Message too long (max "+strconv.Itoa(maxIRCMessageBytes)+" bytes)"))
 		return
 	}
 

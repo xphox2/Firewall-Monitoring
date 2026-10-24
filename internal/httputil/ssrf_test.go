@@ -66,3 +66,22 @@ func TestSafeDialContext_RefusesBlocked_AUDIT020(t *testing.T) {
 		}
 	}
 }
+
+// TestIsBlockedIP_IPv4MappedIPv6_L16 pins L-16: the IPv4-mapped IPv6 form of a
+// blocked IPv4 address (::ffff:a.b.c.d — what a dual-stack resolver or a
+// hand-typed literal can yield) is blocked exactly like the IPv4 form. net.IP's
+// predicates and IPNet.Contains unmap via To4(); this guards against a future
+// port to netip.Addr, whose IsLoopback/IsPrivate do NOT unmap (Unmap() needed).
+func TestIsBlockedIP_IPv4MappedIPv6_L16(t *testing.T) {
+	for _, s := range []string{
+		"::ffff:127.0.0.1", "::ffff:10.1.2.3", "::ffff:172.16.0.1", "::ffff:192.168.1.1",
+		"::ffff:169.254.169.254", "::ffff:100.64.0.1", "::ffff:0.1.2.3", "::ffff:0.0.0.0",
+	} {
+		if !IsBlockedIP(net.ParseIP(s)) {
+			t.Errorf("IsBlockedIP(%s) = false, want true", s)
+		}
+	}
+	if IsBlockedIP(net.ParseIP("::ffff:8.8.8.8")) {
+		t.Errorf("IsBlockedIP(::ffff:8.8.8.8) = true, want false (public)")
+	}
+}

@@ -1522,18 +1522,31 @@ func (h *Handler) TestWebhook(c *gin.Context) {
 	}))
 }
 
+// publicDisplaySettingDefaults is the EXPLICIT allow-list (L-12) of settings
+// the unauthenticated /api/public/display-settings endpoint may return, with
+// the value served when no row exists. It used to return every row matching
+// "public_%", so any future setting whose key merely started with "public_"
+// (or a stale retired row) was published to anonymous callers. A key must be
+// added here deliberately to become public.
+var publicDisplaySettingDefaults = map[string]string{
+	"public_show_vpn":         "false",
+	"public_show_connections": "false",
+	"public_refresh_interval": "30",
+	"public_interfaces":       "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
+	"display_timezone":        "America/New_York",
+}
+
 func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	isAdmin := c.GetBool("is_admin")
-	defaults := map[string]string{
-		"public_show_vpn":         "false",
-		"public_show_connections": "false",
-		"public_refresh_interval": "30",
-		"public_interfaces":       "{}", // JSON: {"1":["wan1"],"2":["dmz"]}
-		"display_timezone":        "America/New_York",
+	result := make(map[string]string, len(publicDisplaySettingDefaults))
+	keys := make([]string, 0, len(publicDisplaySettingDefaults))
+	for k, v := range publicDisplaySettingDefaults {
+		result[k] = v
+		keys = append(keys, k)
 	}
 
 	if h.db == nil {
-		resp := gin.H{"success": true, "data": defaults, "is_admin": isAdmin}
+		resp := gin.H{"success": true, "data": result, "is_admin": isAdmin}
 		c.JSON(http.StatusOK, resp)
 		return
 	}
@@ -1543,17 +1556,14 @@ func (h *Handler) GetPublicDisplaySettings(c *gin.Context) {
 	// of this anonymous read path — kiosks poll it every ~30s, and any anon
 	// caller could force continuous no-op write transactions on prod PG. The
 	// retired keys are referenced nowhere anymore; stale rows are harmless
-	// (they merely echo in the response map) so no migration replaces it.
+	// (L-12: the allow-list below now keeps them out of the response) so no
+	// migration replaces it.
 
 	var settings []models.SystemSetting
-	if err := h.db.Gorm().Where("\"key\" LIKE ? OR \"key\" = ?", "public_%", "display_timezone").Find(&settings).Error; err != nil {
+	if err := h.db.Gorm().Where("\"key\" IN ?", keys).Find(&settings).Error; err != nil {
 		log.Printf("Failed to get public settings: %v", err)
 	}
 
-	result := make(map[string]string)
-	for k, v := range defaults {
-		result[k] = v
-	}
 	for _, s := range settings {
 		result[s.Key] = s.Value
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"firewall-mon/internal/httputil"
@@ -571,7 +572,7 @@ func (b *Bot) Start() {
 		num := numeric
 		conn.AddCallback(num, func(e *irc.Event) {
 			defer logging.Recover("irc-callback-errnumeric")
-			log.Printf("IRC: server rejected command (%s): %s", num, strings.Join(e.Arguments, " "))
+			log.Printf("IRC: server rejected command (%s): %s", num, SanitizeErrorText(strings.Join(e.Arguments, " ")))
 		})
 	}
 
@@ -579,7 +580,7 @@ func (b *Bot) Start() {
 
 	addr := fmt.Sprintf("%s:%d", server.ServerHost, server.ServerPort)
 	if err := conn.Connect(addr); err != nil {
-		log.Printf("IRC: Failed to connect to %s: %v", addr, err)
+		log.Printf("IRC: Failed to connect to %s: %s", addr, SanitizeErrorText(err.Error()))
 		b.updateStatus("error", err.Error())
 		b.mu.Lock()
 		b.Conn = nil
@@ -664,7 +665,7 @@ func (b *Bot) Start() {
 	// safeQuit, whose timeout bounds the park-forever H5 hazard.
 	logging.SafeGo("irc-conn-loop", func() { // REL-01
 		err := <-conn.ErrorChan()
-		log.Printf("IRC: Connection to %s lost: %v", addr, err)
+		log.Printf("IRC: Connection to %s lost: %s", addr, SanitizeErrorText(err.Error()))
 		b.mu.Lock()
 		b.Conn = nil
 		b.mu.Unlock()
@@ -1035,8 +1036,12 @@ func (b *Bot) onNotice(e *irc.Event) {
 	message := e.Message()
 	nick := e.Nick
 
+	// D-33: log THAT NickServ answered an identify, never what it said. Many
+	// services echo the command back ("Invalid command: IDENTIFY <password>"),
+	// and some put the account password in the syntax hint — the body would
+	// write the bot's NickServ credential into the server log.
 	if nick == "NickServ" && strings.Contains(strings.ToUpper(message), "IDENTIFY") {
-		log.Printf("IRC: NickServ identification result: %s", message)
+		log.Printf("IRC: NickServ identification notice received from %s (body redacted)", b.Server.ServerHost)
 	}
 }
 
@@ -1044,7 +1049,9 @@ func (b *Bot) updateStatus(status, errMsg string) {
 	updates := map[string]interface{}{
 		"status": status,
 	}
-	if errMsg != "" {
+	// L-11: last_error is shown verbatim in the admin IRC page and carries
+	// server-controlled text (SASL/registration failures).
+	if errMsg = SanitizeErrorText(errMsg); errMsg != "" {
 		updates["last_error"] = errMsg
 	}
 	b.db.Model(b.Server).Updates(updates)
@@ -1544,6 +1551,32 @@ func sanitizeIRC(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// maxErrorTextLen bounds an error string surfaced by SanitizeErrorText. Real
+// dial/TLS/SASL failures fit comfortably; anything longer is an ircd (or a
+// hostile one) echoing arbitrary text back at us.
+const maxErrorTextLen = 300
+
+// SanitizeErrorText makes an error from go-ircevent or the remote ircd safe to
+// echo to an API client, persist as last_error, or interpolate into a log line
+// (L-11). Server-controlled text (SASL failure reasons, numeric rejections) can
+// carry CR/LF — forging extra log lines — or ANSI/terminal escapes, and is
+// unbounded in length. Every control rune becomes a space, whitespace runs are
+// collapsed, invalid UTF-8 is dropped and the result is capped.
+func SanitizeErrorText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(s, ""))
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > maxErrorTextLen {
+		// Cut on a byte boundary, then drop any rune the cut split.
+		s = strings.ToValidUTF8(s[:maxErrorTextLen], "") + "..."
+	}
+	return s
 }
 
 func safePrivmsg(conn *irc.Connection, target, message string) error {

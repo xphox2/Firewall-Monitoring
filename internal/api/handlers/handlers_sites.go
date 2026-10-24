@@ -3,8 +3,10 @@ package handlers
 import (
 	"errors"
 	"log"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/database"
@@ -98,7 +100,12 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		return
 	}
 
-	if site.ParentSiteID != nil && *site.ParentSiteID > 0 {
+	// L-14: 0 is the UI's "no parent"; store it as NULL rather than a dangling
+	// reference to a site 0 that can never exist.
+	if site.ParentSiteID != nil && *site.ParentSiteID == 0 {
+		site.ParentSiteID = nil
+	}
+	if site.ParentSiteID != nil {
 		parent, err := db.GetSite(*site.ParentSiteID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, response.Error("Parent site not found"))
@@ -110,7 +117,15 @@ func (h *Handler) CreateSite(c *gin.Context) {
 		}
 	}
 
+	// L-13: zero server-owned fields so a client cannot mass-assign them (same
+	// hygiene as H-11's CreateIRCServer). The associations matter most: GORM's
+	// Create upserts a populated parent_site / probes graph, so a nested object
+	// in the body would write rows this endpoint never meant to touch.
 	site.ID = 0
+	site.CreatedAt = time.Time{}
+	site.UpdatedAt = time.Time{}
+	site.ParentSite = nil
+	site.Probes = nil
 	if err := db.CreateSite(&site); err != nil {
 		httputil.InternalError(c, "Failed to create site", err)
 		return
@@ -153,10 +168,21 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 	}
 
 	if parentIDVal, ok := updates["parent_site_id"]; ok {
-		if parentIDVal == nil {
+		// L-14: a JSON map decodes numbers as float64 and keeps strings/bools
+		// as-is. Anything but null or a whole number in uint32 range used to
+		// fall through to the UPDATE unvalidated — "abc" and 1.5 surfaced as
+		// a 500 from PostgreSQL (SQLite stored them), -3 stored a dangling
+		// parent. 0 and null both mean "no parent".
+		pid, isNum := parentIDVal.(float64)
+		switch {
+		case parentIDVal == nil || (isNum && pid == 0):
 			updates["parent_site_id"] = nil
-		} else if pid, isNum := parentIDVal.(float64); isNum && pid > 0 {
+		case !isNum || pid < 0 || pid != math.Trunc(pid) || pid > math.MaxUint32:
+			c.JSON(http.StatusBadRequest, response.Error("Invalid parent_site_id"))
+			return
+		default:
 			parentID := uint(pid)
+			updates["parent_site_id"] = parentID
 			parent, err := db.GetSite(parentID)
 			if err != nil || parent == nil {
 				c.JSON(http.StatusBadRequest, response.Error("Parent site not found"))
@@ -220,7 +246,11 @@ func (h *Handler) UpdateSite(c *gin.Context) {
 		}
 	}
 
-	if err := db.Gorm().Model(site).Updates(filteredUpdates).Error; err != nil {
+	// Bare model + WHERE, not Model(site): GetSite preloads ParentSite, and
+	// GORM re-derives parent_site_id from a loaded belongs-to association —
+	// a parent change or clear returned 200 but persisted the OLD parent
+	// (same trap UpdateDevice/UpdateProbe hit in v0.10.394).
+	if err := db.Gorm().Model(&models.Site{}).Where("id = ?", id).Updates(filteredUpdates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update site", err)
 		return
 	}
