@@ -1,6 +1,40 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.432] - 2026-10-24
+
+### Security — Archive local target can no longer be led out of its directory (D-10)
+
+- The local archive target checked each directory below its base with
+  `Lstat` (no symbolic links), but every later call — creating the temporary
+  file, the no-replace commit, `chmod`, the sidecar write and remove, the
+  read-back, the temp-file sweep — took a path and walked it again. Anyone
+  who can write the share could swap a directory for a link between the
+  check and the call and make the archive create, read, `chmod` or remove
+  files outside it (a mutation test shows the pre-fix commit landing in the
+  linked directory).
+- Every file operation of the target, of `Init` and of the write probe now
+  goes through an `os.Root` opened on `ARCHIVE_LOCAL_DIR`: each name is
+  resolved with `openat` below that directory at the moment of the call and
+  one that escapes it — through a link swapped in at any time — is refused.
+  The prefix directory is resolved through the root too. The last name of
+  every open is additionally opened with `openat(O_NOFOLLOW)` on its
+  directory's descriptor, so an object is still never read through a link,
+  even one pointing inside the archive. `renameat2(RENAME_NOREPLACE)`
+  (`renameatx_np(RENAME_EXCL)` on macOS) and directory `fsync` run on the
+  directory's descriptor; the uncached read-back (`O_DIRECT` / fadvise /
+  `F_NOCACHE`) opens through the root as well. The existing "no symbolic
+  links in the archive" checks stay as a first line.
+- `Head` now refuses an object that is not a regular file instead of
+  reporting the size of a link's target, and a stored copy that is not a
+  regular file is never reused by a retry.
+- Note: a prefix directory that is a link to somewhere outside
+  `ARCHIVE_LOCAL_DIR` (previously accepted when it resolved under
+  `ARCHIVE_ALLOWED_ROOT`) is now refused; point `ARCHIVE_LOCAL_DIR` at the
+  real directory instead. `TestPut_DirectorySwappedMidWrite`,
+  `TestRoot_NothingEscapes` and `TestHead_ObjectLinkNotFollowed` pin the
+  behaviour (each fails with the root bypassed).
+
 ## [0.11.431] - 2026-10-24
 
 ### Security — Random, signed CSRF tokens (D-13)

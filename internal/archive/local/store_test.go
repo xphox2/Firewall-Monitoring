@@ -57,6 +57,17 @@ func realDev(p string) uint64 {
 	return d
 }
 
+// testFS is a root on dir for the package's own primitives, closed with t.
+func testFS(t *testing.T, dir string) *fsys {
+	t.Helper()
+	f, err := openFS(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	return f
+}
+
 // openStore is New with the test install id, on a stubbed volume.
 func openStore(t *testing.T, cfg config.ArchiveConfig) *Store {
 	t.Helper()
@@ -107,7 +118,7 @@ func TestConformance(t *testing.T) {
 			Store:  s,
 			Prefix: testPrefix,
 			Corrupt: func(t *testing.T, rel string) {
-				v, err := latestVersion(s.file(rel))
+				v, err := latestVersion(testFS(t, s.dir), s.file(rel))
 				if err != nil || v == 0 {
 					t.Fatalf("no version of %s: %v", rel, err)
 				}
@@ -175,7 +186,7 @@ func TestPut_NeverOverwrites(t *testing.T) {
 		t.Run(map[bool]string{false: "link", true: "rename"}[noLink], func(t *testing.T) {
 			if noLink {
 				orig := linkFile
-				linkFile = func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+				linkFile = func(*fsys, string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
 				t.Cleanup(func() { linkFile = orig })
 			}
 			s, _ := newStore(t)
@@ -202,7 +213,7 @@ func TestPut_NeverOverwrites(t *testing.T) {
 			if err := os.WriteFile(tmp, []byte("x"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := commitNoReplace(tmp, s.file(rel), true); !errors.Is(err, errExists) {
+			if _, err := commitNoReplace(testFS(t, s.dir), tmp, s.file(rel), true); !errors.Is(err, errExists) {
 				t.Fatalf("commitNoReplace onto an object = %v, want errExists", err)
 			}
 			if got, _ := os.ReadFile(s.file(rel)); !bytes.Equal(got, a) {

@@ -114,6 +114,20 @@ type Store struct {
 // SetInstallID sets the install id the marker must carry (Init writes it).
 func (s *Store) SetInstallID(id string) { s.installID = id }
 
+// openFS opens ARCHIVE_LOCAL_DIR as the root every file operation of one
+// call goes through (D-10, root.go). A directory that is not there is the
+// volume that is not mounted: the marker's ErrUninitialized.
+func (s *Store) openFS() (*fsys, error) {
+	f, err := openFS(s.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, s.uninitialized()
+	}
+	if err != nil {
+		return nil, describe("open", s.dir, err)
+	}
+	return f, nil
+}
+
 // deviceOf is the st_dev of a path; a variable so tests can simulate a
 // volume replaced under the archive (an unmount).
 var deviceOf = deviceOfSys
@@ -158,10 +172,10 @@ func versionFile(p string, v int) string {
 
 // latestVersion is the highest version of the object at p (0: none). Versions
 // are written in order, each only after the one before exists.
-func latestVersion(p string) (int, error) {
+func latestVersion(f *fsys, p string) (int, error) {
 	v := 0
 	for {
-		_, err := os.Lstat(versionFile(p, v+1))
+		_, err := f.Lstat(versionFile(p, v+1))
 		if errors.Is(err, fs.ErrNotExist) {
 			return v, nil
 		}
@@ -186,8 +200,8 @@ type sidecar struct {
 
 const sidecarKind = "fwmon-archive-object"
 
-func readSidecar(vp string) (*sidecar, error) {
-	f, err := os.OpenFile(vp+metaSuffix, os.O_RDONLY|oNoFollow, 0) // #nosec G304 -- a sidecar below the archive's directory
+func readSidecar(r *fsys, vp string) (*sidecar, error) {
+	f, err := r.openLeaf(vp+metaSuffix, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, err
@@ -228,14 +242,24 @@ func (s *Store) markerPresent() error {
 	return err
 }
 
+// uninitialized is the error of a missing marker.
+func (s *Store) uninitialized() error {
+	return fmt.Errorf("%w: %s has no %s: the archive was never initialised there, or the partition or share is not mounted (on the host, and bind-mounted into the container)",
+		objstore.ErrUninitialized, s.base, MarkerName)
+}
+
 // markerDev checks the marker and returns the device it is on.
 func (s *Store) markerDev() (uint64, error) {
 	mp := filepath.Join(s.base, MarkerName)
-	_, err := os.Lstat(mp)
+	f, err := s.openFS()
+	if err != nil {
+		return 0, err
+	}
+	_, err = f.Lstat(mp)
+	f.Close()
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return 0, fmt.Errorf("%w: %s has no %s: the archive was never initialised there, or the partition or share is not mounted (on the host, and bind-mounted into the container)",
-			objstore.ErrUninitialized, s.base, MarkerName)
+		return 0, s.uninitialized()
 	case err != nil:
 		return 0, describe("stat", mp, err)
 	}
@@ -257,7 +281,12 @@ func (s *Store) checkOwner() error {
 		return nil
 	}
 	mp := filepath.Join(s.base, MarkerName)
-	b, err := os.ReadFile(mp) // #nosec G304 -- the marker below the archive's directory
+	f, err := s.openFS()
+	if err != nil {
+		return err
+	}
+	b, err := f.ReadFile(mp)
+	f.Close()
 	if err != nil {
 		return describe("read", mp, err)
 	}
@@ -299,9 +328,10 @@ func (s *Store) stillMounted(dir string, dev uint64) error {
 // directory, never a symbolic link (a link inside the archive could lead an
 // object out of it). With create, a missing one is created; the base itself
 // is never created here (Init does, once): a missing base is a volume that is
-// not there.
-func (s *Store) dirs(dir string, create bool) error {
-	bi, err := os.Stat(s.base)
+// not there. The checks keep the archive's own rule (no links at all); the
+// root f is what makes a link swapped in after them harmless (D-10).
+func (s *Store) dirs(f *fsys, dir string, create bool) error {
+	bi, err := f.Stat(s.base)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			if merr := s.markerPresent(); merr != nil {
@@ -323,7 +353,7 @@ func (s *Store) dirs(dir string, create bool) error {
 	cur := s.base
 	for _, seg := range strings.Split(rel, string(filepath.Separator)) {
 		cur = filepath.Join(cur, seg)
-		fi, err := os.Lstat(cur)
+		fi, err := f.Lstat(cur)
 		switch {
 		case err == nil && fi.Mode()&fs.ModeSymlink != 0:
 			return fmt.Errorf("archive local: %s is a symbolic link: the archive's directories must be real directories", cur)
@@ -331,10 +361,10 @@ func (s *Store) dirs(dir string, create bool) error {
 			return fmt.Errorf("archive local: %s is not a directory", cur)
 		case err == nil:
 		case errors.Is(err, fs.ErrNotExist) && create:
-			if err := os.Mkdir(cur, dirMode); err != nil && !errors.Is(err, fs.ErrExist) {
+			if err := f.Mkdir(cur, dirMode); err != nil && !errors.Is(err, fs.ErrExist) {
 				return describe("create directory", cur, err)
 			}
-			if fi, err := os.Lstat(cur); err != nil || !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
+			if fi, err := f.Lstat(cur); err != nil || !fi.IsDir() || fi.Mode()&fs.ModeSymlink != 0 {
 				return fmt.Errorf("archive local: %s is not a directory after creating it", cur)
 			}
 		case errors.Is(err, fs.ErrNotExist):
@@ -369,18 +399,16 @@ func (s *Store) onNetwork() bool {
 	return true
 }
 
-// openRead opens version file vp for reading: never through a symbolic
-// link, and on a network filesystem bypassing this client's page cache, so
-// a read-back verifies what the server stored, not what was just written
-// into local memory (openUncached).
-func (s *Store) openRead(vp string) (io.ReadCloser, error) {
-	if err := s.dirs(filepath.Dir(vp), false); err != nil {
+// openRead opens version file vp for reading: through the root and never
+// through a symbolic link (D-10), and on a network filesystem bypassing this
+// client's page cache, so a read-back verifies what the server stored, not
+// what was just written into local memory (openUncached).
+func (s *Store) openRead(r *fsys, vp string) (io.ReadCloser, error) {
+	if err := s.dirs(r, filepath.Dir(vp), false); err != nil {
 		return nil, err
 	}
-	// A directory swapped for a link between this check and the open below
-	// is not caught (accepted: it needs write access to the share itself).
 	if s.onNetwork() {
-		f, direct, err := openUncached(vp)
+		f, direct, err := openUncached(r, vp)
 		if err != nil {
 			return nil, err
 		}
@@ -389,7 +417,7 @@ func (s *Store) openRead(vp string) (io.ReadCloser, error) {
 		}
 		return f, nil
 	}
-	return os.OpenFile(vp, os.O_RDONLY|oNoFollow, 0) // #nosec G304 -- an object below the archive's directory
+	return r.openLeaf(vp, os.O_RDONLY, 0)
 }
 
 // notFound is the error of an object that does not exist: ErrNotFound when
@@ -419,17 +447,24 @@ func (c ctxReader) Read(p []byte) (int, error) {
 
 // writeTemp copies size bytes of body into a new temporary file in dir and
 // fsyncs it, returning its name and the bytes' sha256 and MD5.
-func writeTemp(ctx context.Context, dir, name string, body io.Reader, size int64) (tmp, shaHex, md5Hex string, err error) {
-	f, err := os.CreateTemp(dir, "."+name+tmpInfix+"*")
-	if err != nil {
-		return "", "", "", describe("create a temporary file in", dir, err)
+// The file is created through the root r (O_EXCL, mode 0600, D-10).
+func writeTemp(ctx context.Context, r *fsys, dir, name string, body io.Reader, size int64) (tmp, shaHex, md5Hex string, err error) {
+	var f *os.File
+	for try := 0; ; try++ {
+		tmp = filepath.Join(dir, "."+name+tmpInfix+randomSuffix())
+		f, err = r.openLeaf(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || try == 9 {
+			return "", "", "", describe("create a temporary file in", dir, err)
+		}
 	}
-	tmp = f.Name()
 	ok := false
 	defer func() {
 		if !ok {
 			f.Close()
-			_ = os.Remove(tmp)
+			_ = r.Remove(tmp)
 		}
 	}()
 	sh, mh := sha256.New(), md5.New() // #nosec G401 -- the S3-compatible ETag
@@ -452,20 +487,20 @@ func writeTemp(ctx context.Context, dir, name string, body io.Reader, size int64
 
 // writeSmall writes body to the new file final (crash-safe, never replacing
 // it) and makes it read-only. An existing final is errExists.
-func (s *Store) writeSmall(ctx context.Context, final string, body []byte) error {
+func (s *Store) writeSmall(ctx context.Context, r *fsys, final string, body []byte) error {
 	dir, name := filepath.Split(final)
-	tmp, _, _, err := writeTemp(ctx, dir, name, bytes.NewReader(body), int64(len(body)))
+	tmp, _, _, err := writeTemp(ctx, r, filepath.Clean(dir), name, bytes.NewReader(body), int64(len(body)))
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
-	if _, err := commitNoReplace(tmp, final, s.allowNonAtomicCommit); err != nil {
+	defer r.Remove(tmp) // a no-op once committed
+	if _, err := commitNoReplace(r, tmp, final, s.allowNonAtomicCommit); err != nil {
 		if errors.Is(err, errExists) {
 			return errExists
 		}
 		return describe("commit", final, err)
 	}
-	_ = os.Chmod(final, objectMode)
+	_ = r.Chmod(final, objectMode)
 	return nil
 }
 
@@ -486,26 +521,31 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	if err := s.checkOwner(); err != nil {
 		return objstore.PutResult{}, err
 	}
-	p := s.file(rel)
-	dir, name := filepath.Split(p)
-	dir = filepath.Clean(dir)
-	if err := s.dirs(dir, true); err != nil {
-		return objstore.PutResult{}, err
-	}
-	sweepTemps(dir, name)
-	tmp, shaHex, md5Hex, err := writeTemp(ctx, dir, name, io.NewSectionReader(body, 0, size), size)
+	r, err := s.openFS()
 	if err != nil {
 		return objstore.PutResult{}, err
 	}
-	defer os.Remove(tmp) // a no-op once committed
+	defer r.Close()
+	p := s.file(rel)
+	dir, name := filepath.Split(p)
+	dir = filepath.Clean(dir)
+	if err := s.dirs(r, dir, true); err != nil {
+		return objstore.PutResult{}, err
+	}
+	sweepTemps(r, dir, name)
+	tmp, shaHex, md5Hex, err := writeTemp(ctx, r, dir, name, io.NewSectionReader(body, 0, size), size)
+	if err != nil {
+		return objstore.PutResult{}, err
+	}
+	defer r.Remove(tmp) // a no-op once committed
 	res := objstore.PutResult{Rel: rel, Key: key, Size: size, SHA256: shaHex, ETag: md5Hex}
 
-	latest, err := latestVersion(p)
+	latest, err := latestVersion(r, p)
 	if err != nil {
 		return objstore.PutResult{}, err
 	}
 	if latest > 0 {
-		same, err := s.sameObject(ctx, versionFile(p, latest), size, shaHex, meta)
+		same, err := s.sameObject(ctx, r, versionFile(p, latest), size, shaHex, meta)
 		if err != nil {
 			return objstore.PutResult{}, err
 		}
@@ -513,7 +553,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 			// The stored copy may be the one a crash interrupted before its
 			// directory fsync: make it durable, on the same volume, before
 			// it counts.
-			if err := syncDirs(dir, s.base); err != nil {
+			if err := syncDirs(r, dir, s.base); err != nil {
 				return objstore.PutResult{}, err
 			}
 			if err := s.stillMounted(dir, dev); err != nil {
@@ -527,7 +567,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	vp := versionFile(p, v)
 	sc := sidecar{Kind: sidecarKind, Key: key, Version: v, Size: size, SHA256: shaHex, MD5: md5Hex, Metadata: meta,
 		WrittenAt: s.now().UTC().Format(time.RFC3339Nano)}
-	if err := s.writeSidecar(ctx, vp, sc); err != nil {
+	if err := s.writeSidecar(ctx, r, vp, sc); err != nil {
 		return objstore.PutResult{}, err
 	}
 	if beforeCommit != nil {
@@ -535,7 +575,7 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 			return objstore.PutResult{}, err
 		}
 	}
-	if _, err := commitNoReplace(tmp, vp, s.allowNonAtomicCommit); err != nil {
+	if _, err := commitNoReplace(r, tmp, vp, s.allowNonAtomicCommit); err != nil {
 		if errors.Is(err, errExists) {
 			return objstore.PutResult{}, fmt.Errorf("archive local: %s appeared while it was being written: another writer uses this directory", vp)
 		}
@@ -543,14 +583,14 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 	}
 	// Read-only is best effort: a share mounted without permission support
 	// keeps its mount's file mode (Probe reports it).
-	_ = os.Chmod(vp, objectMode)
-	if err := syncDirs(dir, s.base); err != nil {
+	_ = r.Chmod(vp, objectMode)
+	if err := syncDirs(r, dir, s.base); err != nil {
 		return objstore.PutResult{}, err
 	}
 	if err := s.stillMounted(dir, dev); err != nil {
 		return objstore.PutResult{}, err
 	}
-	fi, err := os.Stat(vp)
+	fi, err := r.Lstat(vp)
 	if err != nil {
 		return objstore.PutResult{}, describe("stat", vp, err)
 	}
@@ -564,9 +604,9 @@ func (s *Store) Put(ctx context.Context, rel string, body io.ReaderAt, size int6
 // syncDirs fsyncs dir and every directory above it up to base: the new
 // object's name, and the names of the directories MkdirAll may just have
 // created for it, survive a power cut.
-func syncDirs(dir, base string) error {
+func syncDirs(r *fsys, dir, base string) error {
 	for d := dir; ; d = filepath.Dir(d) {
-		if _, err := syncDir(d); err != nil {
+		if _, err := syncDir(r, d); err != nil {
 			return describe("fsync directory", d, err)
 		}
 		if d == base || !within(d, base) || filepath.Dir(d) == d {
@@ -578,20 +618,22 @@ func syncDirs(dir, base string) error {
 // writeSidecar writes vp's sidecar. One left by a write that crashed before
 // its object was committed (vp does not exist, so it describes nothing) is
 // replaced.
-func (s *Store) writeSidecar(ctx context.Context, vp string, sc sidecar) error {
+func (s *Store) writeSidecar(ctx context.Context, r *fsys, vp string, sc sidecar) error {
 	body, err := json.MarshalIndent(sc, "", "  ")
 	if err != nil {
 		return err
 	}
 	body = append(body, '\n')
 	mp := vp + metaSuffix
-	if _, err := os.Lstat(mp); err == nil {
-		_ = os.Chmod(mp, 0o600) // an SMB server refuses to delete a read-only file
-		if err := os.Remove(mp); err != nil {
+	if fi, err := r.Lstat(mp); err == nil {
+		if fi.Mode()&fs.ModeSymlink == 0 {
+			_ = r.Chmod(mp, 0o600) // an SMB server refuses to delete a read-only file
+		}
+		if err := r.Remove(mp); err != nil {
 			return describe("remove the orphaned sidecar", mp, err)
 		}
 	}
-	if err := s.writeSmall(ctx, mp, body); err != nil {
+	if err := s.writeSmall(ctx, r, mp, body); err != nil {
 		if errors.Is(err, errExists) {
 			return fmt.Errorf("archive local: %s appeared while it was being written: another writer uses this directory", mp)
 		}
@@ -603,15 +645,15 @@ func (s *Store) writeSidecar(ctx context.Context, vp string, sc sidecar) error {
 // sameObject reports whether the stored version vp holds exactly size bytes
 // hashing to shaHex — read in full, not taken from its sidecar — with the
 // metadata meta.
-func (s *Store) sameObject(ctx context.Context, vp string, size int64, shaHex string, meta map[string]string) (bool, error) {
-	fi, err := os.Stat(vp)
+func (s *Store) sameObject(ctx context.Context, r *fsys, vp string, size int64, shaHex string, meta map[string]string) (bool, error) {
+	fi, err := r.Lstat(vp)
 	if err != nil {
 		return false, describe("stat", vp, err)
 	}
-	if fi.Size() != size {
+	if !fi.Mode().IsRegular() || fi.Size() != size {
 		return false, nil
 	}
-	sc, err := readSidecar(vp)
+	sc, err := readSidecar(r, vp)
 	switch {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, errCorruptSidecar):
 		return false, nil // a copy without (readable) metadata is never reused
@@ -620,7 +662,7 @@ func (s *Store) sameObject(ctx context.Context, vp string, size int64, shaHex st
 	case sc.SHA256 != shaHex || !maps.Equal(sc.Metadata, meta):
 		return false, nil
 	}
-	got, err := s.hashFile(ctx, vp, sha256.New(), nil)
+	got, err := s.hashFile(ctx, r, vp, sha256.New(), nil)
 	if err != nil {
 		return false, err
 	}
@@ -629,8 +671,8 @@ func (s *Store) sameObject(ctx context.Context, vp string, size int64, shaHex st
 
 // hashFile hashes the file at p, copying its bytes to w as well (nil
 // discards), and returns the hex digest.
-func (s *Store) hashFile(ctx context.Context, p string, h hash.Hash, w io.Writer) (string, error) {
-	f, err := s.openRead(p)
+func (s *Store) hashFile(ctx context.Context, r *fsys, p string, h hash.Hash, w io.Writer) (string, error) {
+	f, err := s.openRead(r, p)
 	if err != nil {
 		return "", describe("open", p, err)
 	}
@@ -647,15 +689,15 @@ func (s *Store) hashFile(ctx context.Context, p string, h hash.Hash, w io.Writer
 
 // version resolves a version id ("" = the latest) of the object at p; 0
 // when there is none.
-func version(p, versionID string) (int, error) {
+func version(f *fsys, p, versionID string) (int, error) {
 	if versionID == "" {
-		return latestVersion(p)
+		return latestVersion(f, p)
 	}
 	v, err := strconv.Atoi(versionID)
 	if err != nil || v < 1 || strconv.Itoa(v) != versionID {
 		return 0, nil
 	}
-	if _, err := os.Lstat(versionFile(p, v)); err != nil {
+	if _, err := f.Lstat(versionFile(p, v)); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return 0, nil
 		}
@@ -670,8 +712,13 @@ func (s *Store) Head(ctx context.Context, rel, versionID string) (objstore.Objec
 	if err != nil {
 		return objstore.ObjectInfo{}, err
 	}
+	r, err := s.openFS()
+	if err != nil {
+		return objstore.ObjectInfo{}, err
+	}
+	defer r.Close()
 	p := s.file(rel)
-	v, err := version(p, versionID)
+	v, err := version(r, p, versionID)
 	if err != nil {
 		return objstore.ObjectInfo{}, err
 	}
@@ -679,20 +726,23 @@ func (s *Store) Head(ctx context.Context, rel, versionID string) (objstore.Objec
 		return objstore.ObjectInfo{}, s.notFound(key, versionID)
 	}
 	vp := versionFile(p, v)
-	fi, err := os.Stat(vp)
+	fi, err := r.Lstat(vp)
 	if errors.Is(err, fs.ErrNotExist) {
 		return objstore.ObjectInfo{}, s.notFound(key, versionID)
 	} else if err != nil {
 		return objstore.ObjectInfo{}, describe("stat", vp, err)
 	}
+	if !fi.Mode().IsRegular() {
+		return objstore.ObjectInfo{}, fmt.Errorf("archive local: %s is not a regular file: an object is never read through a symbolic link", vp)
+	}
 	info := objstore.ObjectInfo{Key: key, Size: fi.Size(), VersionID: strconv.Itoa(v)}
-	switch sc, err := readSidecar(vp); {
+	switch sc, err := readSidecar(r, vp); {
 	case err == nil:
 		info.ETag, info.Metadata = sc.MD5, sc.Metadata
 	case errors.Is(err, fs.ErrNotExist):
 		// No sidecar (an object copied in by hand): its ETag is the MD5 of
 		// its bytes, and it has no metadata.
-		if info.ETag, err = s.hashFile(ctx, vp, md5.New(), nil); err != nil { // #nosec G401 -- the S3-compatible ETag
+		if info.ETag, err = s.hashFile(ctx, r, vp, md5.New(), nil); err != nil { // #nosec G401 -- the S3-compatible ETag
 			return objstore.ObjectInfo{}, err
 		}
 	default:
@@ -740,8 +790,13 @@ func (s *Store) VerifyFull(ctx context.Context, want objstore.PutResult, w io.Wr
 	if err != nil {
 		return err
 	}
+	r, err := s.openFS()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
 	p := s.file(want.Rel)
-	v, err := version(p, want.VersionID)
+	v, err := version(r, p, want.VersionID)
 	if err != nil {
 		return err
 	}
@@ -749,13 +804,13 @@ func (s *Store) VerifyFull(ctx context.Context, want objstore.PutResult, w io.Wr
 		return missing(s.notFound(key, want.VersionID))
 	}
 	vp := versionFile(p, v)
-	switch sc, err := readSidecar(vp); {
+	switch sc, err := readSidecar(r, vp); {
 	case err == nil && want.ETag != "" && sc.MD5 != want.ETag:
 		return mismatch("archive local: verify %s: ETag %q, want %q", want.Key, sc.MD5, want.ETag)
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return err
 	}
-	f, err := s.openRead(vp)
+	f, err := s.openRead(r, vp)
 	if errors.Is(err, fs.ErrNotExist) {
 		return missing(s.notFound(key, want.VersionID))
 	} else if err != nil {
@@ -786,8 +841,13 @@ func (s *Store) GetBytes(ctx context.Context, rel, versionID string, limit int64
 	if err != nil {
 		return nil, objstore.ObjectInfo{}, err
 	}
+	r, err := s.openFS()
+	if err != nil {
+		return nil, objstore.ObjectInfo{}, err
+	}
+	defer r.Close()
 	vp := versionFile(s.file(rel), mustAtoi(info.VersionID))
-	f, err := s.openRead(vp)
+	f, err := s.openRead(r, vp)
 	if err != nil {
 		return nil, objstore.ObjectInfo{}, describe("open", vp, err)
 	}
@@ -813,7 +873,12 @@ func (s *Store) Versions(ctx context.Context, rel string) (int, error) {
 	if _, err := s.Key(rel); err != nil {
 		return 0, err
 	}
-	return latestVersion(s.file(rel))
+	r, err := s.openFS()
+	if err != nil {
+		return 0, err
+	}
+	defer r.Close()
+	return latestVersion(r, s.file(rel))
 }
 
 // Preflight checks the directory: it resolves (symbolic links followed)
@@ -895,7 +960,12 @@ func (s *Store) Init(ctx context.Context) error {
 	if s.installID == "" {
 		return errors.New("archive local: no install id: the archive directory is initialised only by the archive worker")
 	}
-	if err := os.MkdirAll(s.base, dirMode); err != nil {
+	r, err := openFS(s.dir)
+	if err != nil {
+		return describe("open", s.dir, err)
+	}
+	defer r.Close()
+	if err := r.MkdirAll(s.base, dirMode); err != nil {
 		return describe("create directory", s.base, err)
 	}
 	if _, err := ResolveUnderRoot(s.root, s.base); err != nil {
@@ -907,13 +977,13 @@ func (s *Store) Init(ctx context.Context) error {
 		return err
 	}
 	mp := filepath.Join(s.base, MarkerName)
-	if err := s.writeSmall(ctx, mp, append(body, '\n')); err != nil && !errors.Is(err, errExists) {
+	if err := s.writeSmall(ctx, r, mp, append(body, '\n')); err != nil && !errors.Is(err, errExists) {
 		return err
 	}
-	if _, err := syncDir(s.base); err != nil {
+	if _, err := syncDir(r, s.base); err != nil {
 		return describe("fsync directory", s.base, err)
 	}
-	if _, err := syncDir(filepath.Dir(s.base)); err != nil {
+	if _, err := syncDir(r, filepath.Dir(s.base)); err != nil {
 		return describe("fsync directory", filepath.Dir(s.base), err)
 	}
 	return s.checkOwner()
