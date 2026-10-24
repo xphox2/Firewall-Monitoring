@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -29,10 +30,10 @@ var errNoReplaceUnsupported = errors.New("no-replace rename not supported")
 var errNonAtomicRefused = errors.New("filesystem has no atomic no-replace commit; set ARCHIVE_ALLOW_NONATOMIC_COMMIT=true to accept a checked rename")
 
 // The primitives commitNoReplace uses, variables so tests can take every
-// path: os.Link, renameat2(RENAME_NOREPLACE) (renamex_np(RENAME_EXCL) on
-// macOS).
+// path: link(2) through the root, renameat2(RENAME_NOREPLACE)
+// (renameatx_np(RENAME_EXCL) on macOS) on the directory's descriptor.
 var (
-	linkFile        = os.Link
+	linkFile        = (*fsys).Link
 	renameNoReplace = renameNoReplaceSys
 )
 
@@ -58,12 +59,14 @@ const (
 //     directory — the archive's advisory lock allows one archive writer per
 //     database, and the install id in the marker refuses a directory another
 //     install initialised.
-func commitNoReplace(tmp, final string, nonAtomicOK bool) (how string, err error) {
-	err = linkFile(tmp, final)
+//
+// Every step goes through the root f (D-10).
+func commitNoReplace(f *fsys, tmp, final string, nonAtomicOK bool) (how string, err error) {
+	err = linkFile(f, tmp, final)
 	if err == nil {
 		// The object is committed; a temporary name left behind (the
 		// remove failed) is swept by the next write in the directory.
-		_ = os.Remove(tmp)
+		_ = f.Remove(tmp)
 		return commitLink, nil
 	}
 	if errors.Is(err, fs.ErrExist) {
@@ -72,7 +75,7 @@ func commitNoReplace(tmp, final string, nonAtomicOK bool) (how string, err error
 	if !linkUnsupported(err) {
 		return "", err
 	}
-	switch err := renameNoReplace(tmp, final); {
+	switch err := renameNoReplace(f, tmp, final); {
 	case err == nil:
 		return commitRenameNoRepl, nil
 	case errors.Is(err, fs.ErrExist):
@@ -86,12 +89,12 @@ func commitNoReplace(tmp, final string, nonAtomicOK bool) (how string, err error
 	if !nonAtomicOK {
 		return "", errNonAtomicRefused
 	}
-	if _, err := os.Lstat(final); err == nil {
+	if _, err := f.Lstat(final); err == nil {
 		return "", errExists
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	return commitCheckedRename, os.Rename(tmp, final)
+	return commitCheckedRename, f.Rename(tmp, final)
 }
 
 // linkUnsupported reports a link(2) failure that means "no hard links here".
@@ -108,8 +111,8 @@ func linkUnsupported(err error) bool {
 // write makes durable.
 var syncDir = syncDirSys
 
-func syncDirSys(dir string) (unsupported bool, err error) {
-	d, err := os.Open(dir) // #nosec G304 -- a directory below the archive's configured root
+func syncDirSys(f *fsys, dir string) (unsupported bool, err error) {
+	d, err := f.OpenDir(dir)
 	if err != nil {
 		return false, err
 	}
@@ -164,25 +167,19 @@ func Hint(err error) string {
 
 // sweepTemps removes the temporary files a crashed write of name left in dir
 // (".<name>.tmp-*"): only names this package creates.
-func sweepTemps(dir, name string) {
-	matches, _ := filepath.Glob(filepath.Join(dir, "."+globEscape(name)+tmpInfix+"*"))
-	for _, m := range matches {
-		_ = os.Remove(m)
+func sweepTemps(f *fsys, dir, name string) {
+	d, err := f.OpenDir(dir)
+	if err != nil {
+		return
 	}
-}
-
-// globEscape escapes the glob metacharacters of a file name (an archive key
-// segment has none; this keeps the sweep exact if one ever does).
-func globEscape(s string) string {
-	out := make([]rune, 0, len(s))
-	for _, r := range s {
-		switch r {
-		case '*', '?', '[', ']', '\\':
-			out = append(out, '\\')
+	ents, _ := d.ReadDir(-1)
+	d.Close()
+	prefix := "." + name + tmpInfix
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), prefix) {
+			_ = f.Remove(filepath.Join(dir, e.Name()))
 		}
-		out = append(out, r)
 	}
-	return string(out)
 }
 
 // directReader reads an O_DIRECT descriptor through a buffer aligned to

@@ -63,9 +63,14 @@ type probeResult struct {
 // bytes: a temporary file written and fsynced (timed), committed under a new
 // name, a second commit to that name refused (no overwrite), made read-only,
 // the directory fsynced, the file read back and compared (timed). Both files
-// are removed.
+// are removed. Every operation goes through a root on dir (D-10).
 func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 	var res probeResult
+	r, err := openFS(dir)
+	if err != nil {
+		return res, describe("open", dir, err)
+	}
+	defer r.Close()
 	body := make([]byte, n)
 	_, _ = rand.Read(body)
 	want := sha256.Sum256(body)
@@ -73,45 +78,45 @@ func probeWrite(ctx context.Context, dir string, n int) (probeResult, error) {
 	final := filepath.Join(dir, name)
 
 	start := time.Now()
-	tmp, _, _, err := writeTemp(ctx, dir, name, bytes.NewReader(body), int64(n))
+	tmp, _, _, err := writeTemp(ctx, r, dir, name, bytes.NewReader(body), int64(n))
 	if err != nil {
 		return res, err
 	}
 	res.write = time.Since(start)
-	defer os.Remove(tmp)
-	how, err := commitNoReplace(tmp, final, true)
+	defer r.Remove(tmp)
+	how, err := commitNoReplace(r, tmp, final, true)
 	if err != nil {
 		return res, describe("commit a test file in", dir, err)
 	}
 	res.commit = how
 	defer func() {
-		_ = os.Chmod(final, 0o600) // an SMB server refuses to delete a read-only file
-		_ = os.Remove(final)
+		_ = r.Chmod(final, 0o600) // an SMB server refuses to delete a read-only file
+		_ = r.Remove(final)
 	}()
-	tmp2, _, _, err := writeTemp(ctx, dir, name, bytes.NewReader(body[:1]), 1)
+	tmp2, _, _, err := writeTemp(ctx, r, dir, name, bytes.NewReader(body[:1]), 1)
 	if err != nil {
 		return res, err
 	}
-	defer os.Remove(tmp2)
-	switch _, err := commitNoReplace(tmp2, final, true); {
+	defer r.Remove(tmp2)
+	switch _, err := commitNoReplace(r, tmp2, final, true); {
 	case errors.Is(err, errExists):
 	case err == nil:
 		return res, fmt.Errorf("archive local: %s: a rename replaced an existing file; the archive needs a filesystem that refuses it (hard links or an atomic rename)", dir)
 	default:
 		return res, describe("commit a second test file in", dir, err)
 	}
-	if err := os.Chmod(final, objectMode); err == nil {
-		if fi, err := os.Stat(final); err == nil && fi.Mode().Perm()&0o222 == 0 {
+	if err := r.Chmod(final, objectMode); err == nil {
+		if fi, err := r.Lstat(final); err == nil && fi.Mode().Perm()&0o222 == 0 {
 			res.readOnly = true
 		}
 	}
-	unsupported, err := syncDir(dir)
+	unsupported, err := syncDir(r, dir)
 	if err != nil {
 		return res, describe("fsync directory", dir, err)
 	}
 	res.dirSyncSupported = !unsupported
 	start = time.Now()
-	got, err := os.ReadFile(final) // #nosec G304 -- the probe's own file
+	got, err := r.ReadFile(final)
 	if err != nil {
 		return res, describe("read back a test file in", dir, err)
 	}

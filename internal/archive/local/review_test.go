@@ -60,7 +60,7 @@ func TestDirs_NeverCreatesTheBase(t *testing.T) {
 	if err := os.Rename(s.base, s.base+"-away"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.dirs(filepath.Join(s.base, "syslog", "v2"), true); err == nil {
+	if err := s.dirs(testFS(t, s.dir), filepath.Join(s.base, "syslog", "v2"), true); err == nil {
 		t.Fatal("dirs created a tree under a missing base")
 	}
 	if _, err := os.Stat(s.base); !errors.Is(err, fs.ErrNotExist) {
@@ -115,7 +115,7 @@ func TestReadBack_UncachedOnNetworkShare(t *testing.T) {
 			StatFS = func(p string) (FSInfo, error) { return FSInfo{Type: typ, Device: realDev(p)}, nil }
 			orig := openUncached
 			calls := 0
-			openUncached = func(p string) (*os.File, bool, error) { calls++; return orig(p) }
+			openUncached = func(f *fsys, p string) (*os.File, bool, error) { calls++; return orig(f, p) }
 			t.Cleanup(func() { openUncached = orig })
 			body := bytes.Repeat([]byte("0123456789"), 300000) // 3 MB: several direct-I/O buffers
 			r := put(t, s, "syslog/v2/2026-10/03/device-1.ndjson.gz", body, nil)
@@ -141,7 +141,7 @@ func TestDirectReader(t *testing.T) {
 	if err := os.WriteFile(p, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f, direct, err := openUncachedSys(p)
+	f, direct, err := openUncachedSys(testFS(t, filepath.Dir(p)), p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,11 +174,11 @@ func payloadBytes(n int) []byte {
 // says which it took: the hard link, RENAME_NOREPLACE where links are
 // refused, the checked (non-atomic) rename where neither works.
 func TestCommitNoReplace_Paths(t *testing.T) {
-	noLink := func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
-	noRename := func(string, string) error { return errNoReplaceUnsupported }
+	noLink := func(*fsys, string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	noRename := func(*fsys, string, string) error { return errNoReplaceUnsupported }
 	for _, c := range []struct {
 		name         string
-		link, rename func(string, string) error
+		link, rename func(*fsys, string, string) error
 		want         string
 	}{
 		{"link", nil, nil, commitLink},
@@ -195,6 +195,7 @@ func TestCommitNoReplace_Paths(t *testing.T) {
 				renameNoReplace = c.rename
 			}
 			dir := t.TempDir()
+			r := testFS(t, dir)
 			final := filepath.Join(dir, "obj")
 			mk := func(body string) string {
 				p := filepath.Join(dir, ".obj.tmp-"+body)
@@ -203,14 +204,14 @@ func TestCommitNoReplace_Paths(t *testing.T) {
 				}
 				return p
 			}
-			how, err := commitNoReplace(mk("first"), final, true)
+			how, err := commitNoReplace(r, mk("first"), final, true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if how != c.want && !(c.name == "renameat2" && how == commitCheckedRename && renameNoReplaceSys("x", "y") == errNoReplaceUnsupported) {
+			if how != c.want && !(c.name == "renameat2" && how == commitCheckedRename && renameNoReplaceSys(r, filepath.Join(dir, "x"), filepath.Join(dir, "y")) == errNoReplaceUnsupported) {
 				t.Fatalf("committed by %q, want %q", how, c.want)
 			}
-			if _, err := commitNoReplace(mk("second"), final, true); !errors.Is(err, errExists) {
+			if _, err := commitNoReplace(r, mk("second"), final, true); !errors.Is(err, errExists) {
 				t.Fatalf("a second commit = %v, want errExists", err)
 			}
 			if b, _ := os.ReadFile(final); string(b) != "first" {
@@ -234,8 +235,8 @@ func TestCommitNoReplace_Paths(t *testing.T) {
 // RENAME_NOREPLACE, the checked-rename fallback is refused unless
 // nonAtomicOK is set.
 func TestCommitNoReplace_NonAtomicRefused(t *testing.T) {
-	noLink := func(string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
-	noRename := func(string, string) error { return errNoReplaceUnsupported }
+	noLink := func(*fsys, string, string) error { return &os.LinkError{Op: "link", Err: syscall.EPERM} }
+	noRename := func(*fsys, string, string) error { return errNoReplaceUnsupported }
 	ol, or := linkFile, renameNoReplace
 	linkFile, renameNoReplace = noLink, noRename
 	t.Cleanup(func() { linkFile, renameNoReplace = ol, or })
@@ -246,11 +247,12 @@ func TestCommitNoReplace_NonAtomicRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	final := filepath.Join(dir, "obj")
+	r := testFS(t, dir)
 
-	if _, err := commitNoReplace(tmp, final, false); !errors.Is(err, errNonAtomicRefused) {
+	if _, err := commitNoReplace(r, tmp, final, false); !errors.Is(err, errNonAtomicRefused) {
 		t.Fatalf("commitNoReplace without nonAtomicOK = %v, want errNonAtomicRefused", err)
 	}
-	if _, err := commitNoReplace(tmp, final, true); err != nil {
+	if _, err := commitNoReplace(r, tmp, final, true); err != nil {
 		t.Fatalf("commitNoReplace with nonAtomicOK = %v, want nil", err)
 	}
 }
@@ -284,7 +286,7 @@ func TestPut_ReuseIsMadeDurable(t *testing.T) {
 	put(t, s, rel, []byte("same"), nil)
 	orig := syncDir
 	var synced []string
-	syncDir = func(d string) (bool, error) { synced = append(synced, d); return orig(d) }
+	syncDir = func(f *fsys, d string) (bool, error) { synced = append(synced, d); return orig(f, d) }
 	t.Cleanup(func() { syncDir = orig })
 	if r := put(t, s, rel, []byte("same"), nil); r.VersionID != "1" {
 		t.Fatalf("version %s", r.VersionID)
