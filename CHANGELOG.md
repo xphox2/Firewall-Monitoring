@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.427] - 2026-10-24
+
+### Security — Allow-list the IRC update handlers (M-12)
+
+- `PUT /admin/api/irc/servers/:id`, `/channels/:id` and `/commands/:id` now
+  filter the request body through an explicit allow-list of client-editable
+  columns (the same `FilterAllowedFields` pattern `UpdateDevice` uses) instead
+  of deleting a few known server-owned keys. Runtime state (`status`,
+  `last_connected`, `last_error`, `joined_at`), timestamps, ids, the preloaded
+  `channels`/`server` associations and unknown keys are dropped silently, so
+  both UIs — which send the whole row back on edit — keep working.
+- Moving a channel to another server now requires that server to exist
+  (400 otherwise), and both the old and the new server's bot are restarted.
+- `server_port` must be a whole number in 1–65535, `reconnect_delay` 0–86400
+  and `status_interval` 0–604800 seconds (an emptied number field, sent as
+  `null`, means "unchanged"). An empty channel name or command trigger
+  leaves the stored value unchanged, and a body with no editable fields is a
+  400 on all three endpoints. `UpdateIRCCommand` now returns the saved row
+  instead of the pre-update one.
+
 ## [0.11.426] - 2026-10-24
 
 ### Security — Gate system-health DB internals behind admin (M-13)

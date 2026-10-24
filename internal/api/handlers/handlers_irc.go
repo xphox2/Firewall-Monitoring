@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +14,45 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// Client-editable columns for the IRC update handlers (M-12). Server-owned
+// state — id, timestamps, connection status, last_connected/last_error,
+// joined_at — is never writable through an update.
+var (
+	ircServerUpdateFields = map[string]bool{
+		"name": true, "server_host": true, "server_port": true, "use_tls": true,
+		"nick": true, "username": true, "real_name": true,
+		"server_password": true, "nickserv_password": true, "nickserv_identify": true,
+		"sasl_enabled": true, "sasl_username": true, "sasl_password": true,
+		"enabled": true, "auto_reconnect": true, "reconnect_delay": true,
+	}
+	ircChannelUpdateFields = map[string]bool{
+		"server_id": true, "channel_name": true, "channel_key": true,
+		"chanserv_name": true, "chanserv_password": true, "chan_oper_pass": true,
+		"auto_join": true, "send_alerts": true, "send_status": true,
+		"status_interval": true, "enabled": true, "admin_nicks": true,
+	}
+	ircCommandUpdateFields = map[string]bool{
+		"command": true, "description": true, "response": true,
+		"command_type": true, "enabled": true, "admin_only": true,
+	}
+)
+
+// validIntUpdate reports whether updates[field], when present, is a whole
+// number in [lo, hi] (JSON numbers decode as float64). A null value — what an
+// emptied number input serialises to — is dropped as "unchanged" first.
+func validIntUpdate(updates map[string]interface{}, field string, lo, hi float64) bool {
+	raw, has := updates[field]
+	if !has {
+		return true
+	}
+	if raw == nil {
+		delete(updates, field)
+		return true
+	}
+	f, ok := raw.(float64)
+	return ok && f >= lo && f <= hi && f == math.Trunc(f)
+}
 
 func (h *Handler) GetIRCServer(c *gin.Context) {
 	db := h.reqDB(c)
@@ -116,11 +156,11 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 		return
 	}
 
-	// Remove fields that should not be updated
-	skipFields := []string{"id", "created_at", "updated_at", "status", "last_connected", "last_error"}
-	for _, f := range skipFields {
-		delete(updates, f)
-	}
+	// M-12: allow-list, not a deny-list. Anything not named here (id,
+	// timestamps, runtime status, last_error, the preloaded channels
+	// association, unknown columns) is dropped silently — the UIs send the
+	// whole row back on edit.
+	updates = httputil.FilterAllowedFields(updates, ircServerUpdateFields)
 
 	// Skip empty strings for required fields to avoid NOT NULL constraint errors
 	if v, ok := updates["name"].(string); ok && v == "" {
@@ -138,6 +178,15 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 	// address.
 	if host, ok := updates["server_host"].(string); ok && host != "" && !isValidExternalIP(host) {
 		c.JSON(http.StatusBadRequest, response.Error("Server host resolves to a blocked address"))
+		return
+	}
+
+	if !validIntUpdate(updates, "server_port", 1, 65535) {
+		c.JSON(http.StatusBadRequest, response.Error("Server port must be between 1 and 65535"))
+		return
+	}
+	if !validIntUpdate(updates, "reconnect_delay", 0, 86400) {
+		c.JSON(http.StatusBadRequest, response.Error("Reconnect delay must be between 0 and 86400 seconds"))
 		return
 	}
 
@@ -334,8 +383,47 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 		return
 	}
 
-	delete(updates, "id")
-	delete(updates, "created_at")
+	// M-12: allow-list (see UpdateIRCServer).
+	updates = httputil.FilterAllowedFields(updates, ircChannelUpdateFields)
+	if v, ok := updates["channel_name"].(string); ok && v == "" {
+		delete(updates, "channel_name")
+	}
+
+	if !validIntUpdate(updates, "status_interval", 0, 7*86400) {
+		c.JSON(http.StatusBadRequest, response.Error("Status interval must be between 0 and 604800 seconds"))
+		return
+	}
+
+	// A channel may be moved to another server, but only to one that exists.
+	// null (an emptied select) means "unchanged", as for the number fields.
+	if raw, has := updates["server_id"]; has && raw == nil {
+		delete(updates, "server_id")
+	}
+	oldServerID := channel.ServerID
+	newServerID := oldServerID
+	if raw, has := updates["server_id"]; has {
+		f, ok := raw.(float64)
+		if !ok || f < 1 || f > math.MaxUint32 || f != math.Trunc(f) {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid server ID"))
+			return
+		}
+		newServerID = uint(f)
+		var n int64
+		if err := db.Gorm().Model(&models.IRCServer{}).Where("id = ?", newServerID).Count(&n).Error; err != nil {
+			httputil.InternalError(c, "Failed to update channel", err)
+			return
+		}
+		if n == 0 {
+			c.JSON(http.StatusBadRequest, response.Error("Server not found"))
+			return
+		}
+		updates["server_id"] = newServerID
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
+		return
+	}
 
 	// Encrypt password fields before saving. Mask == "unchanged": drop it so we
 	// never encrypt "********" over the real stored secret.
@@ -355,7 +443,10 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 	}
 
 	if mgr := h.GetIRCManager(); mgr != nil {
-		mgr.RestartBot(channel.ServerID)
+		mgr.RestartBot(newServerID)
+		if oldServerID != newServerID {
+			mgr.RestartBot(oldServerID)
+		}
 	}
 
 	// Re-fetch and mask for response.
@@ -457,8 +548,15 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 		return
 	}
 
-	delete(updates, "id")
-	delete(updates, "created_at")
+	// M-12: allow-list (see UpdateIRCServer).
+	updates = httputil.FilterAllowedFields(updates, ircCommandUpdateFields)
+	if v, ok := updates["command"].(string); ok && v == "" {
+		delete(updates, "command")
+	}
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("No valid fields to update"))
+		return
+	}
 
 	if err := db.Gorm().Model(&cmd).Updates(updates).Error; err != nil {
 		httputil.InternalError(c, "Failed to update command", err)
@@ -469,6 +567,7 @@ func (h *Handler) UpdateIRCCommand(c *gin.Context) {
 		mgr.ReloadCommands()
 	}
 
+	db.Gorm().First(&cmd, id)
 	c.JSON(http.StatusOK, response.Success(cmd))
 }
 
