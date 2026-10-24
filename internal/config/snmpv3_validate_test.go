@@ -9,6 +9,7 @@ import (
 // (noAuthNoPriv) is a fatal startup error, since it is indistinguishable from a
 // cleartext community. SNMP_V3_ALLOW_NOAUTH=true is the escape hatch.
 func TestValidate_SNMPv3RequiresAuth(t *testing.T) {
+	t.Setenv("ADMIN_USERNAME", "test-admin") // avoid the M-9 default-username fatal
 	t.Setenv("SNMP_VERSION", "3")
 	t.Setenv("SNMP_V3_AUTH_TYPE", "")
 	t.Setenv("SNMP_V3_AUTH_PASS", "")

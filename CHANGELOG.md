@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.421] - 2026-10-24
+
+### Security — Default `ADMIN_USERNAME` is now a fatal startup error
+
+- `Validate()` now fails startup when `ADMIN_USERNAME` is unset and the default
+  "admin" is in effect (the textbook brute-force target) — was a warning. Set a
+  unique `ADMIN_USERNAME`, or `ADMIN_USERNAME_ALLOW_DEFAULT=true` to keep the
+  default. An operator who explicitly sets `ADMIN_USERNAME=admin` is unchanged.
+  Documented the env var; updated the config tests.
+
 ## [0.11.420] - 2026-10-23
 
 ### Security — Refuse non-atomic archive commits unless allowed

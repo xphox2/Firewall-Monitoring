@@ -434,6 +434,10 @@ type AuthConfig struct {
 	// doing it doesn't get nagged. (They might still want to
 	// change it, but they made a conscious choice.)
 	AdminUsernameExplicit bool
+	// AdminUsernameAllowDefault is the ADMIN_USERNAME_ALLOW_DEFAULT escape
+	// hatch (M-9): when true, a deployment may keep the default "admin"
+	// username instead of failing startup. Defaults false (fail closed).
+	AdminUsernameAllowDefault bool
 	// AdminPasswordGenerated tracks whether the admin password was
 	// auto-generated (i.e. ADMIN_PASSWORD was unset OR set-but-empty
 	// in the environment — AUDIT-173 makes empty behave like unset,
@@ -674,8 +678,9 @@ func Load() *Config {
 			AuthHeader:    getEnv("THREAT_FEEDS_AUTH_HEADER", ""),
 		},
 		Auth: AuthConfig{
-			AdminUsername:         getEnv("ADMIN_USERNAME", "admin"),
-			AdminUsernameExplicit: os.Getenv("ADMIN_USERNAME") != "",
+			AdminUsername:             getEnv("ADMIN_USERNAME", "admin"),
+			AdminUsernameExplicit:     os.Getenv("ADMIN_USERNAME") != "",
+			AdminUsernameAllowDefault: getBoolEnv("ADMIN_USERNAME_ALLOW_DEFAULT", false),
 			// AUDIT-173: an EMPTY ADMIN_PASSWORD (set-but-blank, exactly what
 			// config.env.example ships and deploy.sh seeds) must behave like
 			// UNSET and take the auto-generate+persist path. The pre-fix
@@ -913,29 +918,16 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("BCRYPT_COST must be 4-31, got %d", c.Auth.BcryptCost)
 	}
 
-	// AUDIT-105: default ADMIN_USERNAME=admin is the textbook brute-
-	// force target. The pre-fix behavior was to silently ship the
-	// default. We warn loudly when the operator kept the default
-	// (i.e. didn't set ADMIN_USERNAME at all) and that default is
-	// exactly the well-known "admin" string. An operator who
-	// explicitly set ADMIN_USERNAME=admin and KNOWS they're doing
-	// it is not nagged (but they should still reconsider).
-	//
-	// The warning is intentionally not fatal — some operators run
-	// Firewall Mon behind a SSO portal / VPN that has its own
-	// brute-force protection, in which case the in-app username
-	// is unguessable to anyone who can reach the login page. But
-	// the default-exposed case is a real and common misconfig
-	// (it's the OWASP #1 for 20 years running) and the operator
-	// should be told.
+	// M-9: default ADMIN_USERNAME=admin is the textbook brute-force target.
+	// Make the inherited default FATAL (not just a warning) unless the operator
+	// explicitly set ADMIN_USERNAME (any value) or allowed the default with
+	// ADMIN_USERNAME_ALLOW_DEFAULT=true. An operator who explicitly sets
+	// ADMIN_USERNAME=admin is a conscious choice and is left alone.
 	if !c.Auth.AdminUsernameExplicit && strings.EqualFold(c.Auth.AdminUsername, "admin") {
-		log.Println("WARNING: ADMIN_USERNAME is the default 'admin'. This is the most")
-		log.Println("         brute-forced username on the internet; consider setting")
-		log.Println("         ADMIN_USERNAME to a unique value in config.env. Example:")
-		log.Println("             ADMIN_USERNAME=ops-jane")
-		log.Println("         (or any non-default value you can remember). The warning")
-		log.Println("         only fires when ADMIN_USERNAME is unset; explicitly setting")
-		log.Println("         it to 'admin' is treated as a conscious operator choice.")
+		if !c.Auth.AdminUsernameAllowDefault {
+			return fmt.Errorf("ADMIN_USERNAME is unset and defaults to the well-known 'admin' — refusing to ship the textbook brute-force target. Set a unique ADMIN_USERNAME in config.env, or set ADMIN_USERNAME_ALLOW_DEFAULT=true to override.")
+		}
+		log.Println("WARNING: ADMIN_USERNAME is the default 'admin' and ADMIN_USERNAME_ALLOW_DEFAULT=true is set — this is the most brute-forced username on the internet; set a unique ADMIN_USERNAME in config.env.")
 	}
 
 	// PostgreSQL requires DB_HOST
