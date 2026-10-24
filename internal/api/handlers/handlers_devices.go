@@ -240,6 +240,16 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 		c.JSON(http.StatusForbidden, response.Error("Only admins can change public visibility"))
 		return nil, false
 	}
+	// D-25: api_insecure_tls disables TLS verification for the vendor REST API,
+	// which would expose the API token to a MITM. Changing it is admin-only, and
+	// enabling it is audit-logged.
+	if _, has := updates["api_insecure_tls"]; has && !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		c.JSON(http.StatusForbidden, response.Error("Only admins can change API TLS verification"))
+		return nil, false
+	}
+	if v, ok := updates["api_insecure_tls"].(bool); ok && v {
+		log.Printf("device %d: api_insecure_tls enabled (TLS verification disabled for the vendor REST API)", device.ID)
+	}
 
 	allowedFields := map[string]bool{
 		"name":              true,
