@@ -1,6 +1,24 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.425] - 2026-10-24
+
+### Security — Warn when writable dirs land inside the project checkout (M-14)
+
+- All three daemons now log a startup WARNING when a writable directory they
+  use — `SECRETS_DIR` (`.jwt-secret`, `.admin-password`, `{enc}` key
+  material), `GEOIP_DB_DIR`/`GEOIP_CACHE_DIR`, or the archive
+  staging/local directories — resolves inside a git checkout (the dev
+  shortcut of pointing them at `./data`-style paths): files written there can
+  be committed to the repository — pushing the JWT secret and admin password
+  public — or silently wiped by `git checkout`/`git clean`. The warning is
+  never fatal; dev setups running from a checkout are legitimate, the point
+  is that the operator knows git can see those files. Relative paths resolve
+  against the working directory, and both checkout styles (a `.git`
+  directory, or a worktree's `.git` file) are recognized. Tests cover the
+  predicate table, the no-git case, worktree-style checkouts, and the
+  Config-level sweep.
+
 ## [0.11.424] - 2026-10-24
 
 ### Security — Topology-aware `DB_SSL_MODE` default (M-10)

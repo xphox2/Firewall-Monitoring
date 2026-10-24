@@ -2966,6 +2966,9 @@ func main() {
 	if secretsDir == "" {
 		secretsDir = "/data"
 	}
+	// M-14: warn when a writable directory resolves inside the project
+	// checkout (commit/leak and git-clean data-loss risk). Never fatal.
+	cfg.WarnProjectLocalDirs(secretsDir)
 	jwtSecret, jwtSource, err := secrets.LoadOrGenerate(cfg.Server.JWTSecretKey, secretsDir, ".jwt-secret")
 	if err != nil {
 		log.Fatalf("JWT secret: %v (set JWT_SECRET_KEY env, or ensure %s is writable)", err, secretsDir)
