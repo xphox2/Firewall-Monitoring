@@ -156,6 +156,19 @@ func New(s Settings) (*Service, error) {
 			RequireResidentKey: protocol.ResidentKeyRequired(),
 			UserVerification:   protocol.VerificationRequired,
 		},
+		// D-40: attestation "none" is a deliberate trade-off. The server does
+		// NOT learn — and so cannot enforce — which authenticator model holds
+		// a key: the AAGUID is unverified (and clients may zero it), so no
+		// allow-list (say, hardware-bound FIDO-certified keys only) is
+		// possible. What it buys: synced platform passkeys (iCloud Keychain, Google Password Manager)
+		// work, no identifying device data is collected, and there is no
+		// attestation trust store (FIDO MDS) to maintain. It does NOT weaken
+		// the ceremony itself: registration still verifies challenge, origin,
+		// RP ID hash and the UV flag (the new public key is trusted on first
+		// use, from a session that just re-authenticated), and every login
+		// assertion must still be signed by that registered key.
+		// Requiring attestation would mean "direct" plus an MDS-backed
+		// verifier, not just flipping this value.
 		AttestationPreference: protocol.PreferNoAttestation,
 		Timeouts: webauthn.TimeoutsConfig{
 			Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: CeremonyTimeout, TimeoutUVD: CeremonyTimeout},

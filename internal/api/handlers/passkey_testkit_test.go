@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -69,6 +70,9 @@ type pkEnv struct {
 	am     *auth.AuthManager
 	h      *Handler
 	router *gin.Engine
+	// plainHTTP sends requests without TLS (D-41 tests); by default every
+	// request arrives over in-process TLS, as passkey ceremonies require.
+	plainHTTP bool
 }
 
 // newPasskeyEnv builds the environment; svc == nil means passkeys disabled.
@@ -205,6 +209,9 @@ func (e *pkEnv) hasAudit(action string) bool {
 // do performs one request. cookies are sent as-is; headers applied after.
 func (e *pkEnv) do(method, path, body string, cookies []*http.Cookie, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if !e.plainHTTP {
+		req.TLS = &tls.ConnectionState{}
+	}
 	req.Header.Set("Content-Type", "application/json")
 	for _, c := range cookies {
 		req.AddCookie(c)

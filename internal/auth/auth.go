@@ -379,12 +379,17 @@ func (am *AuthManager) GenerateToken(username string, userID uint, tokenVersion 
 		tokenExpiry = am.config.Auth.TokenExpiry
 	}
 
+	jti, err := newTokenID()
+	if err != nil {
+		return "", err
+	}
 	claims := Claims{
 		Username:     username,
 		UserID:       userID,
 		TokenVersion: tokenVersion,
 		Role:         role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
@@ -402,12 +407,17 @@ func (am *AuthManager) GeneratePendingToken(username string, userID uint, tokenV
 	if am.config == nil || am.config.Server.JWTSecretKey == "" {
 		return "", ErrNoJWTSecret
 	}
+	jti, err := newTokenID()
+	if err != nil {
+		return "", err
+	}
 	claims := Claims{
 		Username:     username,
 		UserID:       userID,
 		TokenVersion: tokenVersion,
 		Stage:        StageTOTP,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(PendingTokenExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
@@ -435,6 +445,13 @@ func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		// L-7: a jti that is present must be one we could have minted. An
+		// ABSENT jti is still accepted: tokens issued before the claim existed
+		// stay valid until their own expiry (TokenExpiry, 24h by default) —
+		// revocation is the token-version check below, not the jti.
+		if claims.ID != "" && !wellFormedTokenID(claims.ID) {
+			return nil, ErrInvalidToken
+		}
 		// Check token version against DB to reject revoked tokens. Fail CLOSED:
 		// if the version lookup errors (transient DB failure, statement_timeout,
 		// or the row is gone), reject the token rather than accept it — otherwise
@@ -451,6 +468,27 @@ func (am *AuthManager) ValidateToken(tokenString string) (*Claims, error) {
 	}
 
 	return nil, ErrInvalidToken
+}
+
+// tokenIDBytes is the entropy of a JWT ID (jti): 128 random bits, so two
+// tokens never share one — even two minted for the same account in the same
+// second, which are otherwise byte-identical.
+const tokenIDBytes = 16
+
+// newTokenID returns a fresh jti: tokenIDBytes from crypto/rand, unpadded
+// base64url.
+func newTokenID() (string, error) {
+	var b [tokenIDBytes]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// wellFormedTokenID reports whether id has exactly newTokenID's shape.
+func wellFormedTokenID(id string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(id)
+	return err == nil && len(b) == tokenIDBytes
 }
 
 func GenerateSecureToken(length int) (string, error) {

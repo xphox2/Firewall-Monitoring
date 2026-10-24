@@ -420,6 +420,14 @@ func retentionEnvSet() map[string]bool {
 	return set
 }
 
+// MinPasswordLength / MaxPasswordLength bound every admin password: the
+// change-password endpoint and the ADMIN_PASSWORD bootstrap value (L-9). The
+// maximum is bcrypt's 72-byte input limit.
+const (
+	MinPasswordLength = 8
+	MaxPasswordLength = 72
+)
+
 type AuthConfig struct {
 	AdminUsername    string
 	AdminPassword    string
@@ -920,7 +928,6 @@ func (c *Config) Validate() error {
 	if c.Auth.AdminPassword == "" {
 		return fmt.Errorf("ADMIN_PASSWORD resolved empty — refusing to bootstrap an admin account with an empty password")
 	}
-
 	// Alert email config consistency
 	if c.Alerts.EmailEnabled && c.Alerts.SMTPHost == "" {
 		log.Println("WARNING: EMAIL_ENABLED=true but SMTP_HOST not set — email alerts will fail")
@@ -1205,6 +1212,22 @@ func loadEnvFile(filename string) error {
 				os.Setenv(key, value)
 			}
 		}
+	}
+	return nil
+}
+
+// ValidateBootstrapAdminPassword checks an operator-set ADMIN_PASSWORD against
+// the change-password bounds (L-9). It seeds the first admin WITHOUT a forced
+// change, so a weak value would become a live credential. The API calls it
+// only when it is about to create that first admin: on an existing install the
+// value is unused, and refusing to start over it would take a working
+// deployment down for nothing. The generated password always fits.
+func (c *Config) ValidateBootstrapAdminPassword() error {
+	if c.Auth.AdminPasswordGenerated {
+		return nil
+	}
+	if n := len(c.Auth.AdminPassword); n < MinPasswordLength || n > MaxPasswordLength {
+		return fmt.Errorf("ADMIN_PASSWORD is %d characters; it must be %d-%d (the same bounds as a password change) to create the first admin account", n, MinPasswordLength, MaxPasswordLength)
 	}
 	return nil
 }

@@ -152,24 +152,24 @@ func TestIPRateLimiter_Cleanup_RemovesStale(t *testing.T) {
 }
 
 // TestIPRateLimiter_Stop_TerminatesGoroutine — Stop closes the quit
-// channel; the cleanup goroutine sees it and returns. We assert the
-// goroutine has exited by waiting for its done-channel.
+// channel (the cleanup goroutine's exit signal), and a second Stop is a
+// no-op rather than a close-of-closed-channel panic (D-36).
 func TestIPRateLimiter_Stop_TerminatesGoroutine(t *testing.T) {
 	rl := newIPRateLimiter(rate.Limit(1000), 10)
 
-	// Wrap the existing cleanup goroutine: we can't intercept its
-	// termination directly, so we rely on the absence of channel
-	// resends. After Stop, a second Stop should panic (close of closed
-	// channel) — that's the only deterministic signal we can grab
-	// without rebuilding the limiter.
 	rl.Stop()
+	select {
+	case <-rl.quit:
+	default:
+		t.Fatal("quit channel not closed by Stop()")
+	}
 
 	defer func() {
-		if r := recover(); r == nil {
-			t.Error("second Stop() did not panic on close-of-closed-channel; quit channel was not closed by first Stop()")
+		if r := recover(); r != nil {
+			t.Errorf("second Stop() panicked: %v", r)
 		}
 	}()
-	rl.Stop() // expected to panic
+	rl.Stop()
 }
 
 // TestIPRateLimiter_Concurrent — many goroutines hammer getLimiter for the
