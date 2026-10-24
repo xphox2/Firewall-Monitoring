@@ -213,7 +213,11 @@ type DatabaseConfig struct {
 	Name     string
 	User     string
 	Password string
-	SSLMode  string
+	// SSLMode is the Postgres sslmode. The default is topology-aware (M-10):
+	// unset DB_SSL_MODE yields `disable` for loopback/unix-socket hosts and
+	// `require` for any remote host; an explicit value always wins. See
+	// dbSSLModeDefault.
+	SSLMode string
 	// AUDIT-037: per-connection statement timeout (Postgres
 	// only). Pre-fix a single slow query could hold a
 	// connection for tens of seconds, blocking other
@@ -514,6 +518,11 @@ type AlertsConfig struct {
 }
 
 func Load() *Config {
+	// M-10: DB_HOST is read first because the DB_SSL_MODE default is
+	// topology-aware (see dbSSLModeDefault) — the sslmode can't be picked
+	// until the host it applies to is known.
+	dbHost := getEnv("DB_HOST", "localhost")
+
 	// AUDIT-158: the pre-fix code had a `defer func() { defaultPassword = "" }()`
 	// here to scrub the module-level cache after Load returned. That was
 	// defense-in-depth against the module-level cache (which we've now
@@ -578,12 +587,12 @@ func Load() *Config {
 		},
 		Database: DatabaseConfig{
 			Type:     getEnv("DB_TYPE", "postgres"),
-			Host:     getEnv("DB_HOST", "localhost"),
+			Host:     dbHost,
 			Port:     getIntEnv("DB_PORT", 5432),
 			Name:     getEnv("DB_NAME", "firewall_mon"),
 			User:     getEnv("DB_USER", "firewall_mon"),
 			Password: getEnv("DB_PASSWORD", ""),
-			SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+			SSLMode:  dbSSLModeDefault(dbHost),
 			// AUDIT-037: per-connection statement timeout
 			// (Postgres only). 0 = disabled. See the field
 			// doc for the rationale.
@@ -935,6 +944,18 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("DB_HOST is required when DB_TYPE=postgres")
 	}
 
+	// M-10: reject an unknown sslmode at startup instead of letting it surface
+	// as a cryptic connect error on the first query. Load always populates
+	// SSLMode (dbSSLModeDefault never returns ""), so an empty value here means
+	// a hand-constructed Config — leave that alone for test fixtures.
+	if c.Database.Type == "postgres" && c.Database.SSLMode != "" {
+		switch c.Database.SSLMode {
+		case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		default:
+			return fmt.Errorf("DB_SSL_MODE %q is invalid; expected one of disable | allow | prefer | require | verify-ca | verify-full", c.Database.SSLMode)
+		}
+	}
+
 	if err := c.Retention.validateSyslogMonths(); err != nil {
 		return err
 	}
@@ -1012,6 +1033,31 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// dbSSLModeDefault returns the effective DB_SSL_MODE (M-10). An explicit,
+// non-empty DB_SSL_MODE always wins. Otherwise the default is topology-aware:
+// a unix-socket path (the single-container entrypoint exports DB_HOST=$PGRUN)
+// or a loopback host keeps `disable` — SSL is pointless on a connection that
+// never leaves the box — while ANY other host (a remote Postgres) defaults to
+// `require`, so DB credentials and all data can't silently cross the network
+// in cleartext. A remote Postgres without SSL then fails loudly at startup
+// instead of quietly accepting an eavesdropped link; that is the point. An
+// explicitly empty value (DB_SSL_MODE=) is treated as unset, since the
+// entrypoint heredoc pattern copies env files verbatim.
+func dbSSLModeDefault(host string) string {
+	if v, ok := os.LookupEnv("DB_SSL_MODE"); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if strings.HasPrefix(host, "/") {
+		return "disable" // unix-socket directory
+	}
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "[::1]":
+		return "disable"
+	}
+	return "require"
 }
 
 // getDefaultPassword returns a freshly-generated 16-character random
