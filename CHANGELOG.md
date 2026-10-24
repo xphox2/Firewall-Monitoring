@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.433] - 2026-10-24
+
+### Security — Private deploy staging directory; embedded-Postgres auth decision (L-17, M-8)
+
+- **L-17** `deploy.sh deploy` staged `web/` and the example config at fixed
+  names in the server's shared `/tmp` (`/tmp/web`, `/tmp/config.env.example`)
+  and then installed them with `sudo cp`. Another local user could pre-create
+  those paths (or a symlink there) and have their files installed into
+  `/opt/firewall-mon`. Staging now uses a fresh `mktemp -d` directory (0700,
+  owned by the deploy user) whose name is validated before it is used in a
+  remote command, and is removed after the install. The current example
+  config is installed root-owned at `/etc/firewall-mon/config.env.example`
+  for diffing new keys (a first install seeds `config.env` from it, mode
+  0600); the stray copy of the systemd units into `/tmp` is gone.
+  `TestDeploy_PrivateStagingDir_L17` pins it; the AUDIT-171 guardrail follows
+  the new staging path.
+- **M-8 (reviewed, no change)** The embedded PostgreSQL keeps `trust`
+  authentication: it listens on no TCP port, only on a Unix socket inside the
+  container, and every process there runs as `fwmon`, the user that owns the
+  data directory and the credential file — scram would authenticate `fwmon`
+  to itself with a password `fwmon` can read, while switching auth on an
+  existing cluster risks locking the services out. The reasoning is now
+  recorded at the `initdb` call in `entrypoint.sh`, with the conditions under
+  which it must be revisited.
+
 ## [0.11.432] - 2026-10-24
 
 ### Security — Archive local target can no longer be led out of its directory (D-10)

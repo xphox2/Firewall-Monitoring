@@ -79,6 +79,14 @@ if [ ! -f "$PGDATA/PG_VERSION" ]; then
     # -U postgres keeps the superuser ROLE named "postgres" (matching the
     # pre-non-root image and every docs/script reference to `-U postgres`);
     # without it initdb would name the superuser after the OS user (fwmon).
+    # M-8 (reviewed, kept): trust auth is deliberate here. The cluster listens
+    # on no TCP port (listen_addresses = '' below), only on the Unix socket in
+    # $PGRUN inside this container, and every process in the container runs as
+    # fwmon — the same OS user that owns $PGDATA and the credential file. scram
+    # would authenticate fwmon to itself with a password fwmon can read, so it
+    # adds no barrier, while switching auth on an existing cluster risks
+    # locking the services out of their own database. Re-evaluate if the
+    # socket is ever shared with another container or a TCP listener is added.
     initdb -D "$PGDATA" --auth=trust --no-locale --encoding=UTF8 -U postgres > /dev/null
 
     # Listen only on unix socket (localhost), no TCP needed

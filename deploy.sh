@@ -221,16 +221,28 @@ BACKUP
     ssh ${SSH_OPTS} ${USER}@${HOST} "sudo rm -rf ${REMOTE_DIR}/*"
 
     rsync -avz -e "ssh ${SSH_OPTS}" --progress bin/ ${USER}@${HOST}:${REMOTE_DIR}/
-    rsync -avz -e "ssh ${SSH_OPTS}" --progress web/ ${USER}@${HOST}:/tmp/web/
-    rsync -avz -e "ssh ${SSH_OPTS}" --progress config.env.example ${USER}@${HOST}:/tmp/config.env.example
+    # L-17: stage web/ and the example config in a private directory, not at
+    # fixed names in the shared /tmp. Another local user on the server could
+    # pre-create /tmp/web (or a symlink there) and have `sudo cp` install their
+    # files into ${REMOTE_DIR}. mktemp -d makes a fresh 0700 directory owned by
+    # the deploy user; its name is checked before it is used in a remote command.
+    STAGE=$(ssh ${SSH_OPTS} ${USER}@${HOST} "mktemp -d /tmp/fwmon-deploy.XXXXXXXX")
+    if ! [[ "$STAGE" =~ ^/tmp/fwmon-deploy\.[A-Za-z0-9]{8}$ ]]; then
+        log_error "unexpected staging directory from the remote mktemp: '${STAGE}'"
+        exit 1
+    fi
+    rsync -avz -e "ssh ${SSH_OPTS}" --progress web/ ${USER}@${HOST}:${STAGE}/web/
+    rsync -avz -e "ssh ${SSH_OPTS}" --progress config.env.example ${USER}@${HOST}:${STAGE}/config.env.example
 
     log_info "Installing files on remote..."
-    ssh ${SSH_OPTS} ${USER}@${HOST} << 'EOF'
+    ssh ${SSH_OPTS} ${USER}@${HOST} bash -s -- "${STAGE}" << 'EOF'
+        set -e
+        stage=$1
         # AUDIT-171: install web/ WITH its directory prefix — the API binary
         # resolves ./web/**/*.html against WorkingDirectory=/opt/firewall-mon
         # and panics (crash-loops) when the glob matches nothing.
         sudo rm -rf /opt/firewall-mon/web
-        sudo cp -r /tmp/web /opt/firewall-mon/web
+        sudo cp -r "$stage/web" /opt/firewall-mon/web
         # AUDIT-099: never clobber the operator's live config. The pre-fix
         # deploy unconditionally copied config.env.example over
         # /etc/firewall-mon/config.env on EVERY deploy, wiping the
@@ -238,16 +250,17 @@ BACKUP
         # silently reverting the service to placeholder defaults on restart.
         # Only seed the example config when no config exists yet (first
         # install); on every subsequent deploy the existing file is kept.
-        # The example is still staged at /tmp/config.env.example for manual
-        # diffing of new keys.
+        # The current example is kept beside it, root-owned, for diffing new
+        # keys.
+        sudo install -m 0644 "$stage/config.env.example" /etc/firewall-mon/config.env.example
         if [ ! -f /etc/firewall-mon/config.env ]; then
-            sudo cp /tmp/config.env.example /etc/firewall-mon/config.env
+            sudo install -m 0600 "$stage/config.env.example" /etc/firewall-mon/config.env
             echo "Seeded /etc/firewall-mon/config.env from the example (first install)"
         else
-            echo "Preserving existing /etc/firewall-mon/config.env (AUDIT-099); example at /tmp/config.env.example"
+            echo "Preserving existing /etc/firewall-mon/config.env (AUDIT-099); example at /etc/firewall-mon/config.env.example"
         fi
         sudo chmod +x /opt/firewall-mon/fwmon-*
-        sudo cp /etc/systemd/system/fwmon-*.service /tmp/ 2>/dev/null || true
+        rm -rf "$stage"
 EOF
 
     log_info "Deployment complete!"

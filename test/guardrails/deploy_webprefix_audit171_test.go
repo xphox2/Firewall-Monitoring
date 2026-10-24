@@ -26,11 +26,11 @@ func TestDeploy_WebCopiedWithPrefix_AUDIT171(t *testing.T) {
 		t.Error("deploy.sh local install no longer copies web/ with its prefix (`cp -r web ${INSTALL_DIR}/web`) — LoadHTMLGlob(\"./web/**/*.html\") will panic and crash-loop (AUDIT-171).")
 	}
 	// Remote install: prefix-preserving copy.
-	if !strings.Contains(body, "sudo cp -r /tmp/web /opt/firewall-mon/web") {
-		t.Error("deploy.sh remote install no longer copies web/ with its prefix (`sudo cp -r /tmp/web /opt/firewall-mon/web`) — LoadHTMLGlob(\"./web/**/*.html\") will panic and crash-loop (AUDIT-171).")
+	if !strings.Contains(body, `sudo cp -r "$stage/web" /opt/firewall-mon/web`) {
+		t.Error("deploy.sh remote install no longer copies web/ with its prefix (`sudo cp -r \"$stage/web\" /opt/firewall-mon/web`) — LoadHTMLGlob(\"./web/**/*.html\") will panic and crash-loop (AUDIT-171).")
 	}
 	// The flattened forms must not come back.
-	for _, bad := range []string{"cp -r web/* ${INSTALL_DIR}/", "cp /tmp/web/* /opt/firewall-mon/"} {
+	for _, bad := range []string{"cp -r web/* ${INSTALL_DIR}/", "cp /tmp/web/* /opt/firewall-mon/", `cp "$stage/web/"* /opt/firewall-mon/`} {
 		if strings.Contains(body, bad) {
 			t.Errorf("deploy.sh contains the flattening copy %q, which strips the web/ prefix LoadHTMLGlob depends on (AUDIT-171).", bad)
 		}
