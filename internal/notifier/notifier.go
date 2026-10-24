@@ -17,6 +17,7 @@ import (
 	"mime/quotedprintable"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/smtp"
 	"net/textproto"
 	neturl "net/url"
@@ -388,11 +389,37 @@ func splitRecipients(s string) []string {
 	return out
 }
 
+// parseRecipients is splitRecipients plus RFC 5322 validation (D-32). The
+// recipient string reaches sendEmail from several sources (smtp_to, alert
+// policy and escalation-step overrides, report recipients) and is written into
+// the To: header, so "a@example.com,\r\nBcc: b@example.org" must be rejected
+// rather than split into a bogus RCPT plus an injected header. Returns the bare
+// addr-spec of each entry: the SMTP envelope takes "user@host", never the
+// "Name <user@host>" form an operator may have typed.
+func parseRecipients(s string) ([]string, error) {
+	if strings.ContainsAny(s, "\r\n") {
+		return nil, errors.New("recipient list contains a line break")
+	}
+	parts := splitRecipients(s)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		addr, err := mail.ParseAddress(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid recipient %q: %w", p, err)
+		}
+		out = append(out, addr.Address)
+	}
+	return out, nil
+}
+
 func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 	if nc.SMTPHost == "" {
 		return nil
 	}
-	rcpts := splitRecipients(nc.SMTPTo)
+	rcpts, err := parseRecipients(nc.SMTPTo)
+	if err != nil {
+		return fmt.Errorf("failed to send email: %w", err)
+	}
 	if len(rcpts) == 0 {
 		return nil
 	}
@@ -411,10 +438,11 @@ func (n *Notifier) sendEmail(alert *models.Alert, nc NotifyConfig) error {
 
 	// The To: HEADER deliberately keeps the raw comma-separated string — a
 	// valid RFC 5322 address-list; only the ENVELOPE recipients are split.
+	// D-32: both header values are CR/LF-stripped like buildMIMEMessage's.
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-		nc.SMTPFrom, nc.SMTPTo, subject, body)
+		SanitizeHeader(nc.SMTPFrom), SanitizeHeader(nc.SMTPTo), subject, body)
 
-	err := sendMailWithDeadline(addr, nc.SMTPHost, nc.SMTPPort, auth, nc.SMTPFrom,
+	err = sendMailWithDeadline(addr, nc.SMTPHost, nc.SMTPPort, auth, nc.SMTPFrom,
 		rcpts, []byte(msg), nil)
 
 	if err != nil {
@@ -849,6 +877,12 @@ func (n *Notifier) sendHTMLEmail(subject, textBody, htmlBody string, attachments
 		return fmt.Errorf("no recipients configured")
 	}
 
+	// D-32: validate before building — same rule as the alert path.
+	recipientList, err := parseRecipients(recipients)
+	if err != nil {
+		return fmt.Errorf("failed to send HTML email: %w", err)
+	}
+
 	msg, err := buildMIMEMessage(nc.SMTPFrom, recipients, subject, textBody, htmlBody, attachments)
 	if err != nil {
 		return err
@@ -862,8 +896,6 @@ func (n *Notifier) sendHTMLEmail(subject, textBody, htmlBody string, attachments
 		// PLAIN-only and LOGIN-only submission servers.
 		auth = CompoundAuth(nc.SMTPUsername, nc.SMTPPassword, nc.SMTPHost)
 	}
-
-	recipientList := splitRecipients(recipients)
 
 	if err := sendMailWithDeadline(addr, nc.SMTPHost, nc.SMTPPort, auth, nc.SMTPFrom, recipientList, msg, dial); err != nil {
 		return fmt.Errorf("failed to send HTML email: %w", err)
