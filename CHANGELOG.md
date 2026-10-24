@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.431] - 2026-10-24
+
+### Security — Random, signed CSRF tokens (D-13)
+
+- The session CSRF token was `HMAC(JWT_SECRET, auth_token)`: a fixed,
+  deterministic value per session, MACed with the JWT signing key itself, so
+  one key served two purposes and every copy of a session's token (cookie,
+  login response, every `/admin/api/csrf-token` call) was the same string.
+- Tokens are now `<random 128-bit nonce>.<HMAC(nonce, auth_token)>` (an
+  HMAC-signed, session-bound token): every login and every
+  `/admin/api/csrf-token` call mints a fresh token, and any of them verifies
+  against the caller's own auth cookie, so there is still no server-side
+  state. The MAC key is derived from the JWT secret with a fixed label, so
+  CSRF and JWT signing no longer share a key. A CSPRNG failure is a 500,
+  never an unsigned token. A token is still valid for the life of its
+  session (logout / token-version bump ends it), as before.
+- Upgrade note: pages left open across the upgrade hold an old-format token;
+  the first write from such a page gets a 403 and succeeds after a reload
+  (ui-v2 refetches the token and retries automatically).
+  `TestGenerateCSRFToken_RandomPerCall`, `TestValidCSRFToken_Rejects` (other
+  session/secret, tampering, malformed, legacy format),
+  `TestCSRFToken_KeySeparatedFromJWT` and `TestCSRFProtection_RandomToken`
+  pin the behaviour.
+
 ## [0.11.430] - 2026-10-24
 
 ### Security — IRC/e-mail input hygiene, public settings allow-list, site validation (L-11, L-12, L-13, L-14, L-15, L-16, D-32, D-33)

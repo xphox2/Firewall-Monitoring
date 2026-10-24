@@ -259,8 +259,12 @@ func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, to
 		return false
 	}
 
-	// Generate HMAC-signed CSRF token tied to the auth token
-	csrfToken := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
+	// Random, HMAC-signed CSRF token bound to the auth token (D-13).
+	csrfToken, err := middleware.GenerateCSRFToken(token, h.config.Server.JWTSecretKey)
+	if err != nil {
+		httputil.InternalError(c, "Failed to generate CSRF token", err)
+		return false
+	}
 	cookieSecure, cookieSameSite, cookieMaxAge := h.sessionCookieParams(c)
 
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -272,6 +276,9 @@ func (h *Handler) issueSession(c *gin.Context, username string, adminID uint, to
 		HttpOnly: true,
 		SameSite: cookieSameSite,
 	})
+	// Compatibility only: CSRFProtection verifies the header against the
+	// auth_token cookie, never this cookie, and the bundled clients read the
+	// token from the JSON body or /csrf-token (D-13).
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     "csrf_token",
 		Value:    csrfToken,
@@ -335,7 +342,8 @@ func (h *Handler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Message("Logged out successfully"))
 }
 
-// GetCSRFToken returns a fresh CSRF token derived from the current auth cookie.
+// GetCSRFToken returns a fresh CSRF token bound to the current auth cookie.
+// Each call mints a new random token; all of them stay valid for the session.
 func (h *Handler) GetCSRFToken(c *gin.Context) {
 	authToken, err := c.Cookie("auth_token")
 	if err != nil || authToken == "" {
@@ -350,7 +358,11 @@ func (h *Handler) GetCSRFToken(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Server misconfiguration"})
 		return
 	}
-	token := middleware.GenerateCSRFToken(authToken, secret)
+	token, err := middleware.GenerateCSRFToken(authToken, secret)
+	if err != nil {
+		httputil.InternalError(c, "Failed to generate CSRF token", err)
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"csrf_token": token})
 }
 

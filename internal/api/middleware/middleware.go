@@ -430,11 +430,56 @@ func handleAuthFailure(c *gin.Context) {
 	c.Abort()
 }
 
-// GenerateCSRFToken creates an HMAC-signed CSRF token tied to the auth token
-func GenerateCSRFToken(authToken, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
+// csrfNonceBytes is the size of the random part of a CSRF token.
+const csrfNonceBytes = 16
+
+// csrfMAC signs nonce for the session identified by authToken. The key is
+// derived from the JWT secret with a fixed label so the CSRF MAC never shares
+// a key with JWT signing (D-13).
+func csrfMAC(authToken, nonce, secret string) []byte {
+	kdf := hmac.New(sha256.New, []byte(secret))
+	kdf.Write([]byte("fwmon-csrf-v1"))
+	mac := hmac.New(sha256.New, kdf.Sum(nil))
+	mac.Write([]byte(nonce))
+	mac.Write([]byte{0})
 	mac.Write([]byte(authToken))
-	return hex.EncodeToString(mac.Sum(nil))
+	return mac.Sum(nil)
+}
+
+// GenerateCSRFToken mints a CSRF token for the session identified by
+// authToken: "<random nonce>.<HMAC(nonce, session)>" — an HMAC-signed,
+// session-bound token (D-13). Every call returns a different token, so a
+// token seen once (a log line, a cached response) is not THE session's token,
+// and there is still no server-side state: any token whose MAC verifies
+// against the caller's own auth cookie is accepted. Fails only when the
+// system CSPRNG does.
+func GenerateCSRFToken(authToken, secret string) (string, error) {
+	if authToken == "" {
+		return "", fmt.Errorf("csrf token: empty session")
+	}
+	b := make([]byte, csrfNonceBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("csrf nonce: %w", err)
+	}
+	nonce := hex.EncodeToString(b)
+	return nonce + "." + hex.EncodeToString(csrfMAC(authToken, nonce, secret)), nil
+}
+
+// ValidCSRFToken reports whether token was minted by GenerateCSRFToken for
+// the session identified by authToken.
+func ValidCSRFToken(token, authToken, secret string) bool {
+	nonce, sig, ok := strings.Cut(token, ".")
+	if !ok || len(nonce) != 2*csrfNonceBytes || authToken == "" {
+		return false
+	}
+	got, err := hex.DecodeString(sig)
+	if err != nil {
+		return false
+	}
+	if _, err := hex.DecodeString(nonce); err != nil {
+		return false
+	}
+	return hmac.Equal(got, csrfMAC(authToken, nonce, secret))
 }
 
 // preauthCSRFCookieName is the cookie that carries the pre-auth CSRF token for
@@ -517,10 +562,9 @@ func CSRFProtection(cfg *config.Config) gin.HandlerFunc {
 				return
 			}
 
-			expected := GenerateCSRFToken(authToken, secret)
-			if !hmac.Equal([]byte(csrfToken), []byte(expected)) {
-				log.Printf("[CSRF] Token mismatch: got_len=%d expected_len=%d authToken_len=%d",
-					len(csrfToken), len(expected), len(authToken))
+			if !ValidCSRFToken(csrfToken, authToken, secret) {
+				log.Printf("[CSRF] Token mismatch: got_len=%d authToken_len=%d",
+					len(csrfToken), len(authToken))
 				c.JSON(http.StatusForbidden, gin.H{"error": "CSRF token invalid"})
 				c.Abort()
 				return
