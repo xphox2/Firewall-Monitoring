@@ -162,10 +162,10 @@
             <svg class="panel-bridge-svg" width="100%" height="80" viewBox="0 0 600 80">
                 <defs><filter id="panel-bridge-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
                 <rect x="10" y="18" width="130" height="44" rx="8" fill="#161b22" stroke="${statusColor}" stroke-width="1.5"/>
-                <text x="75" y="38" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">${window.escapeHtml((srcName||'').substring(0,16))}</text>
+                <text x="75" y="38" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">${window.svgText(srcName, 16)}</text>
                 <text x="75" y="52" text-anchor="middle" fill="#8b949e" font-size="9">Source</text>
                 <rect x="460" y="18" width="130" height="44" rx="8" fill="#161b22" stroke="${statusColor}" stroke-width="1.5"/>
-                <text x="525" y="38" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">${window.escapeHtml((dstName||'').substring(0,16))}</text>
+                <text x="525" y="38" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">${window.svgText(dstName, 16)}</text>
                 <text x="525" y="52" text-anchor="middle" fill="#8b949e" font-size="9">Destination</text>
                 <path id="panel-bridge-path" d="M140,40 Q300,8 460,40" fill="none" stroke="${pathColor}" stroke-width="${cs.width}" ${dashAttr} ${status === 'up' ? 'filter="url(#panel-bridge-glow)"' : ''}>
                     ${pulseAnim}

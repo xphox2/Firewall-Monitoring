@@ -39,6 +39,15 @@ const cspNonceKey = "csp-nonce"
 // any reasonable fleet.
 const maxRateLimiterEntries = 50000
 
+// ipRateLimiter is a per-process, in-memory token bucket per client IP (L-5).
+// Nothing is shared or persisted, which is deliberate — a database round-trip
+// per request at dashboard-polling rates is the wrong tool — but it bounds what
+// the limit means: a restart empties every bucket, an LRU eviction hands that
+// IP a fresh full burst, and with ALLOW_MULTI_API=true each API instance
+// enforces its own budget, so N instances admit up to N× the per-IP rate.
+// The single-API advisory lock (AUDIT-040) is what keeps the default
+// deployment at one bucket set; docs/OPERATIONS.md "Running a single API
+// instance" carries the operator-facing version of this.
 type ipRateLimiter struct {
 	limiters   map[string]*rateLimiterEntry
 	lru        *list.List // doubly-linked LRU: front = most recent, back = oldest
@@ -606,7 +615,12 @@ func SecureHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
+		// X-XSS-Protection is deliberately NOT sent (L-3). Chrome and Edge
+		// removed their XSS Auditor and Firefox never shipped one, so current
+		// browsers ignore it; in an old engine that still honours it,
+		// `1; mode=block` was itself an XS-Leak vector (selective blocking
+		// lets an attacker probe page content). The strict script-src nonce
+		// below is the real XSS defence.
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, private")
 		c.Header("Pragma", "no-cache")
@@ -654,6 +668,15 @@ func SecureHeaders() gin.HandlerFunc {
 				// which stays strict (nonce, no unsafe-inline) — inline <script>
 				// is still refused. CSS injection (the only thing this re-opens)
 				// can't execute JS.
+				//
+				// The accepted residual (L-2): an HTML-injection bug elsewhere
+				// could add a <style> element or style="" attribute and so
+				// restyle, hide or overlay page content (UI spoofing). CSS-based
+				// data exfiltration (attribute selectors + url()) is contained
+				// by img-src/font-src 'self' (+ data:), which refuse any
+				// off-origin fetch. Tightening this means splitting it into
+				// style-src-elem (nonce) + style-src-attr 'unsafe-inline' once
+				// every runtime-injected <style> element carries the nonce.
 				"style-src 'self' 'unsafe-inline'; "+
 				"connect-src 'self'; "+
 				"img-src 'self' data:; "+

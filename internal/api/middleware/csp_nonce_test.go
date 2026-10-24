@@ -108,7 +108,6 @@ func TestSecureHeaders_OtherHeadersPreserved_AUDIT022(t *testing.T) {
 		"X-Frame-Options":         "DENY",
 		"Referrer-Policy":         "strict-origin-when-cross-origin",
 		"Permissions-Policy":      "camera=()",
-		"X-XSS-Protection":        "1; mode=block",
 		"Content-Security-Policy": "default-src 'self'",
 	}
 	for h, want := range expectations {
@@ -116,6 +115,24 @@ func TestSecureHeaders_OtherHeadersPreserved_AUDIT022(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("header %q missing expected fragment %q; got: %q", h, want, got)
 		}
+	}
+}
+
+// TestSecureHeaders_NoXXSSProtection — L-3: X-XSS-Protection is deprecated
+// (current browsers ignore it) and `1; mode=block` was an XS-Leak vector in the
+// engines that honoured it. It must not come back; the strict script-src nonce
+// is the XSS defence.
+func TestSecureHeaders_NoXXSSProtection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(SecureHeaders())
+	r.GET("/probe", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/probe", nil))
+
+	if v := w.Header().Values("X-XSS-Protection"); len(v) > 0 {
+		t.Errorf("X-XSS-Protection must not be sent (deprecated; L-3); got %q", v)
 	}
 }
 

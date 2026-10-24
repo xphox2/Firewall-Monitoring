@@ -63,7 +63,8 @@ func (s Source) String() string {
 //  1. If envValue is non-empty → use it (Source=FromEnv, no file I/O).
 //  2. Else if baseDir/filename exists and is non-empty → use its contents
 //     (Source=FromFile, trimmed of surrounding whitespace).
-//  3. Else generate a fresh 32-byte hex token, ensure baseDir exists
+//  3. Else generate a fresh 32-character base64url token (24 random bytes,
+//     192 bits — auth.GenerateSecureToken(32)), ensure baseDir exists
 //     (chmod 0700), write the token to baseDir/filename (chmod 0600),
 //     return it (Source=Generated).
 //

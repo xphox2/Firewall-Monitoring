@@ -174,6 +174,22 @@
         return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    // Bidi embedding/override/isolate controls (U+202A–202E, U+2066–2069) and
+    // the LRM/RLM/ALM marks (U+200E/200F/061C). They are not markup, so escapeHtml lets
+    // them through — but inside an SVG <text> label they visually reorder the
+    // device name an operator reads (a "Trojan Source"-style spoof of which
+    // firewall a connection belongs to). A device name never needs them.
+    var BIDI_CONTROLS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
+
+    // svgText renders an untrusted name for an SVG <text> label: bidi controls
+    // stripped, cut to max characters, THEN escaped — truncating after escaping
+    // could split an entity (`&amp;` → `&am`).
+    function svgText(str, max) {
+        var s = (str == null ? '' : String(str)).replace(BIDI_CONTROLS, '');
+        if (max) s = s.substring(0, max);
+        return escapeHtml(s);
+    }
+
     // AUDIT-133: NaN / Infinity / non-numeric inputs used to fall
     // through to `Math.log(NaN) / Math.log(1024) = NaN`, which the
     // chart then rendered as "NaN.0 undefined" — a real failure mode
@@ -2343,6 +2359,7 @@
         setCsrfToken: setCsrfToken,
         withAuthRedirectHold: withAuthRedirectHold,
         escapeHtml: escapeHtml,
+        svgText: svgText,
         formatBytes: formatBytes,
         formatNum: formatNum,
         connStyle: connStyle,
@@ -2631,6 +2648,7 @@
     // Set globals for diagram-panels.js and other interop
     window.API_BASE = API_BASE;
     window.escapeHtml = escapeHtml;
+    window.svgText = svgText;
     window.formatBytes = formatBytes;
     window.formatNum = formatNum;
     window.connStyle = connStyle;
