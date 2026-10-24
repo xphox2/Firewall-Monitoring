@@ -22,6 +22,7 @@ func TestValidate_ShortJWTSecretFatal(t *testing.T) {
 // TestValidate_ShortJWTSecretAllowWeak pins the escape hatch: the explicit
 // JWT_SECRET_KEY_ALLOW_WEAK=1 downgrades the fatal error to a warning.
 func TestValidate_ShortJWTSecretAllowWeak(t *testing.T) {
+	t.Setenv("ADMIN_USERNAME", "test-admin") // avoid the M-9 default-username fatal
 	t.Setenv("JWT_SECRET_KEY", "too-short")
 	t.Setenv("JWT_SECRET_KEY_ALLOW_WEAK", "1")
 	cfg := Load()
