@@ -3,3 +3,8 @@
 # An early version of internal/httputil/redact.go cleared a password field
 # (`= ""`); the generic rule read the next line's field name as the value.
 18de6d19c122ff97f56cf020871c13b4b895444e:internal/httputil/redact.go:generic-api-key:10
+
+# D-13 (PR #438): test-only fixture secrets for the CSRF HMAC tests, replaced by
+# obviously fake values in the following commit.
+ca34e934ea8de0f15c62fb6c2cb373416212ec93:internal/api/handlers/csrf_token_handler_d13_test.go:generic-api-key:19
+ca34e934ea8de0f15c62fb6c2cb373416212ec93:internal/api/middleware/csrf_token_test.go:generic-api-key:17
