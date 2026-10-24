@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.424"
+const ServerVersion = "0.11.425"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -133,6 +133,10 @@ func main() {
 	if secretsDir == "" {
 		secretsDir = "/data"
 	}
+	// M-14: warn when a writable directory (secrets, GeoIP, archive) resolves
+	// inside the project checkout — files there can be committed or wiped by
+	// git. Never fatal; the operator just needs to know.
+	cfg.WarnProjectLocalDirs(secretsDir)
 	jwtSecret, jwtSource, err := secrets.LoadOrGenerate(cfg.Server.JWTSecretKey, secretsDir, ".jwt-secret")
 	if err != nil {
 		log.Fatalf("JWT secret: %v (set JWT_SECRET_KEY env, or ensure %s is writable)", err, secretsDir)
