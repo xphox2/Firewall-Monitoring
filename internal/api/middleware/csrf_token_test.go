@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const csrfTestSecret = "0123456789abcdef0123456789abcdef-test-secret"
+const csrfTestSecret = "test-only-csrf-secret-not-a-real-key-xxxxxxxxxxxx"
 
 // TestGenerateCSRFToken_RandomPerCall pins D-13: two tokens for the same
 // session differ (the pre-fix token was a pure function of the auth cookie),

@@ -16,7 +16,7 @@ import (
 // without a session.
 func TestGetCSRFToken_D13(t *testing.T) {
 	h, _ := setupTestHandler(t)
-	h.config.Server.JWTSecretKey = "0123456789abcdef0123456789abcdef-d13"
+	h.config.Server.JWTSecretKey = "test-only-jwt-secret-not-a-real-key-xxxxxxxxxxxxx"
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/admin/api/csrf-token", h.GetCSRFToken)
