@@ -219,7 +219,7 @@ To add a vendor: see [custom-vendor.md](custom-vendor.md).
 | Hardened systemd unit (`deploy.sh install` — `NoNewPrivileges`, `ProtectSystem=strict`, `RestrictAddressFamilies`, etc.) | Stable | [Server] | 0.1 (AUDIT-021) |
 | Native installer (`make install` to `/usr/local`, `make tarball` for the tarball) | Stable | [Server] | 0.1 (AUDIT-104) |
 | Reproducible builds (`-trimpath -buildvcs=false`) | Stable | [Server] | 0.10.260 (AUDIT-102/103) |
-| `deploy.sh` (build / install / deploy with `-h host -k key --dry-run` and remote backup) | Stable | [Server] | 0.1 (AUDIT-098/099) |
+| `deploy.sh` (build / install / deploy with `-h host -k key --dry-run` and a root-only, optionally age-encrypted remote backup) | Stable | [Server] | 0.1 (AUDIT-098/099) |
 | CHANGELOG-driven GitHub release workflow (`.github/workflows/release.yml`) | Stable | [Server] | 0.10.367 (AUDIT-165) |
 
 ## Coverage stats
