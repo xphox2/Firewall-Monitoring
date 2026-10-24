@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.422] - 2026-10-24
+
+### Security — Gate `api_insecure_tls` behind admin + audit-log it
+
+- `api_insecure_tls` (disables TLS verification for the vendor REST API, exposing
+  the API token to a MITM) is now admin-only in `prepareDeviceUpdates`, and
+  enabling it is audit-logged. Added a test.
+
 ## [0.11.421] - 2026-10-24
 
 ### Security — Default `ADMIN_USERNAME` is now a fatal startup error
