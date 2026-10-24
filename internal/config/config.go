@@ -901,9 +901,13 @@ func (c *Config) Validate() error {
 	} else if len(c.Server.JWTSecretKey) < 32 {
 		// M-3: HS256 with a low-entropy operator-set secret is offline
 		// brute-forceable (and it also seeds the AES key when ENCRYPTION_KEY is
-		// unset). The auto-generated key is 32 bytes; hold operator-set keys to
-		// the same floor — now FATAL (not a warning) so a weak secret can't
-		// ship, with JWT_SECRET_KEY_ALLOW_WEAK=1 as the explicit escape hatch.
+		// unset). The auto-generated key is 32 characters (base64url of 24
+		// random bytes, 192 bits); hold operator-set keys to the same 32-character
+		// floor — now FATAL (not a warning) so a short secret can't ship, with
+		// JWT_SECRET_KEY_ALLOW_WEAK=1 as the explicit escape hatch. This is a
+		// LENGTH check only: it cannot tell 32 random characters from 32 typed
+		// ones, which is why the docs say to generate the value. A value loaded
+		// from <SECRETS_DIR>/.jwt-secret is not checked here (only the env var).
 		if !c.Server.JWTSecretAllowWeak {
 			return fmt.Errorf("JWT_SECRET_KEY is only %d characters (need at least 32 random characters) — a short secret is brute-forceable and weakens token + credential security. Set JWT_SECRET_KEY_ALLOW_WEAK=1 to override.", len(c.Server.JWTSecretKey))
 		}

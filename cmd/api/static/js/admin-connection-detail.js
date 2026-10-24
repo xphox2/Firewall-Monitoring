@@ -161,10 +161,10 @@
                     '</filter>' +
                 '</defs>' +
                 '<rect x="20" y="25" width="140" height="50" rx="8" style="fill:var(--fwmon-card-bg);stroke:' + statusColor + '" stroke-width="2"/>' +
-                '<text x="90" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.escapeHtml(srcName || '').substring(0, 16) + '</text>' +
+                '<text x="90" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.svgText(srcName, 16) + '</text>' +
                 '<text x="90" y="64" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">Source</text>' +
                 '<rect x="540" y="25" width="140" height="50" rx="8" style="fill:var(--fwmon-card-bg);stroke:' + statusColor + '" stroke-width="2"/>' +
-                '<text x="610" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.escapeHtml(dstName || '').substring(0, 16) + '</text>' +
+                '<text x="610" y="48" text-anchor="middle" style="fill:var(--fwmon-text)" font-size="12" font-weight="600">' + AC.svgText(dstName, 16) + '</text>' +
                 '<text x="610" y="64" text-anchor="middle" style="fill:var(--fwmon-text-faint)" font-size="10">Destination</text>' +
                 '<path id="bridge-path" d="M160,50 Q350,10 540,50" fill="none" stroke="' + pathColor + '" stroke-width="' + cs.width + '" ' + cs.dash + filterAttr + '>' +
                     pulseAnim +

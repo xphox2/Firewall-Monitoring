@@ -68,8 +68,13 @@
         var el = document.getElementById(id);
         if (el) el.textContent = val;
     }
+    // The result is concatenated raw into class="…" markup, so only the known
+    // severities may reach it: an unexpected value (a future server enum, or a
+    // crafted `" onmouseover=…`) renders unstyled instead of breaking out of the
+    // attribute. hasOwnProperty, not SEV_RANK[sev] != null — 'constructor' and
+    // friends resolve through the prototype.
     function sevClass(sev) {
-        return sev ? ('sev-' + sev) : '';
+        return Object.prototype.hasOwnProperty.call(SEV_RANK, sev) ? ('sev-' + sev) : '';
     }
     // siteKey maps a SiteBreakdown to the token used in ?site_id=KEY: the numeric
     // site id, or 'unassigned' for the null bucket (the alerts filter understands

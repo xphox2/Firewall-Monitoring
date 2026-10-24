@@ -10,7 +10,7 @@
 > is a sibling repo, [Firewall-Collector](https://github.com/xphox2/Firewall-Collector).
 
 [![CI](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/xphox2/Firewall-Monitoring/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.11.428-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.11.429-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.26.10+-00ADD8)](go.mod)
 [![Status](https://img.shields.io/badge/status-alpha-orange)](#project-status)
@@ -487,7 +487,7 @@ semantics are all there. The probe side is intentionally simpler
 
 - JWT tokens with secure cookies; account lockout after 5 failed
   attempts; CSRF protection on admin mutations.
-- Rate limiting (per-IP LRU cap; 10 req/s baseline).
+- Rate limiting (per-IP LRU cap, per process): 30 req/s burst 60 for the API and probes, 60 req/s for public pages, 1 req/s burst 5 for login.
 - Secure HTTP headers (HSTS, CSP nonce, X-Frame-Options).
 - TLS support (in-process or via reverse proxy — `docs/nginx.conf` is
   a hardened plain-nginx config-as-code alternative to nginx-proxy-manager).

@@ -338,8 +338,11 @@ that account.
 
 1. Back up the current `/data/.jwt-secret` (in case you need to roll back).
 2. **Record every device/IRC/SMTP secret** out-of-band — you will re-enter them.
-3. Stop the app, replace `/data/.jwt-secret` with a new 32-byte base64 value
-   (or delete it to auto-generate a fresh one on next boot), restart.
+3. Stop the app, replace `/data/.jwt-secret` with a new random value — e.g.
+   `openssl rand -base64 32` (32 random bytes) — or delete it to auto-generate a
+   fresh one on next boot, then restart. The 32-character startup check applies
+   only to a `JWT_SECRET_KEY` set in the environment, not to this file, and it
+   checks length only, never randomness — so generate the value, don't type it.
 4. Re-enter all SNMP communities / v3 creds, IRC passwords, and SMTP passwords
    (the old ciphertext can no longer be decrypted; `decryptField` fails closed
    to empty — AUDIT-027).
@@ -2212,13 +2215,21 @@ operator actions.
 
 **Input validation & protection**
 - CSRF protection with token validation on admin mutations.
-- Rate limiting (per-IP LRU cap; separate login/public/probe buckets — the
-  thresholds are configurable, not fixed literals; see `config.env.example`).
+- Rate limiting (per-IP LRU cap; separate login/public/probe buckets with
+  fixed thresholds set in `internal/api/middleware`). The buckets live in the
+  API process's memory: a restart empties them, and with `ALLOW_MULTI_API=true`
+  each instance enforces its own — see
+  [Running a single API instance](#running-a-single-api-instance-audit-040).
 - Request body size limits.
 - SQL-injection prevention via parameterized queries (GORM).
 
 **Network security**
 - Secure HTTP headers (HSTS, CSP nonce, X-Frame-Options, X-Content-Type-Options).
+  The CSP `script-src` is nonce-locked; `style-src` allows `'unsafe-inline'`
+  because the dashboard's grid and chart libraries set inline styles at runtime —
+  the accepted residual is CSS injection (restyling/overlaying content), not
+  script execution. `X-XSS-Protection` is deliberately not sent (deprecated and
+  ignored by current browsers).
 - TLS support (in-process or via reverse proxy — see [`nginx.conf`](nginx.conf)).
 - CORS configuration (`CORS_ALLOWED_ORIGINS`).
 - Client-IP tracking for the audit log.
@@ -2244,6 +2255,9 @@ operator actions.
 
 1. Change the default admin password and set a non-default `ADMIN_USERNAME`.
 2. Set a strong `JWT_SECRET_KEY` (and an explicit `ENCRYPTION_KEY` — see Upgrade).
+   Startup refuses one shorter than 32 characters (unless
+   `JWT_SECRET_KEY_ALLOW_WEAK=1`), but it measures length only, not randomness:
+   generate it with `openssl rand -base64 32`.
 3. Enable TLS/SSL (in-process or via the reverse proxy).
 4. Configure host firewall rules (expose only the ports you enable).
 5. Set up log monitoring.
