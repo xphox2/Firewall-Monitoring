@@ -38,6 +38,10 @@ usage() {
     echo "  -k, --key      SSH private key file"
     echo "      --dry-run  Print what deploy would do without making any"
     echo "                 remote changes (AUDIT-098). Run this first."
+    echo "      --backup-age-recipient <age1...>"
+    echo "                 Encrypt the pre-deploy backup to this age public key"
+    echo "                 (M-11). Requires 'age' on the remote; the deploy aborts"
+    echo "                 before touching the install if it is missing."
     echo "      --insecure Disable SSH host-key verification (H-16 escape"
     echo "                 hatch). NOT recommended — only for a first deploy"
     echo "                 to a fresh host whose key is not yet in known_hosts."
@@ -86,6 +90,7 @@ deploy_remote() {
     KEY=""
     DRY_RUN=false
     INSECURE=false
+    BACKUP_AGE_RECIPIENT=""
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -95,9 +100,17 @@ deploy_remote() {
             -k|--key) KEY="$2"; shift 2 ;;
             --dry-run) DRY_RUN=true; shift ;;
             --insecure) INSECURE=true; shift ;;
+            --backup-age-recipient) BACKUP_AGE_RECIPIENT="$2"; shift 2 ;;
             *) usage ;;
         esac
     done
+
+    # M-11: the recipient is passed into a remote command, so accept only a
+    # native age public key (bech32: "age1" + 58 chars of the bech32 alphabet).
+    if [ -n "$BACKUP_AGE_RECIPIENT" ] && ! [[ "$BACKUP_AGE_RECIPIENT" =~ ^age1[02-9ac-hj-np-z]{58}$ ]]; then
+        log_error "--backup-age-recipient must be an age public key (age1...)"
+        exit 1
+    fi
 
     if [ -z "$HOST" ] || [ -z "$USER" ]; then
         log_error "Host and user are required for deploy"
@@ -137,11 +150,23 @@ deploy_remote() {
     #   2. A timestamped backup tarball of the existing install, written to
     #      ${REMOTE_DIR}-backups/ on the remote BEFORE the rm, so a bad
     #      deploy can be rolled back by extracting the latest archive.
+    #
+    # M-11: the backup is a copy of the whole install, so it gets the same
+    # protection as the install itself: the backups dir is root-only (0700),
+    # each archive is 0600 (umask 077 — the pre-fix `sudo tar` left a
+    # world-readable tarball under the default 022 umask), and archives left
+    # by older deploys are tightened too. With --backup-age-recipient the
+    # archive is also encrypted to an age public key, so a copied backups
+    # dir or a disk image reveals nothing without the private key.
     BACKUP_DIR="${REMOTE_DIR}-backups"
     STAMP="$(date +%Y%m%d-%H%M%S)"
+    BACKUP_FILE="${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz"
+    if [ -n "$BACKUP_AGE_RECIPIENT" ]; then
+        BACKUP_FILE="${BACKUP_FILE}.age"
+    fi
     if [ "$DRY_RUN" = true ]; then
         log_warn "DRY RUN — no remote changes will be made."
-        log_info "[dry-run] Would back up ${REMOTE_DIR} to ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz"
+        log_info "[dry-run] Would back up ${REMOTE_DIR} to ${BACKUP_FILE} (dir 0700, file 0600${BACKUP_AGE_RECIPIENT:+, age-encrypted})"
         log_info "[dry-run] Would clear and re-populate ${REMOTE_DIR} with bin/ and web/"
         log_info "[dry-run] Would seed /etc/${APP_NAME}/config.env only if absent (AUDIT-099)"
         log_info "[dry-run] Local build artifacts:"
@@ -151,7 +176,32 @@ deploy_remote() {
     fi
 
     log_info "Backing up existing install on remote (pre-deploy safety)..."
-    ssh ${SSH_OPTS} ${USER}@${HOST} "sudo mkdir -p ${BACKUP_DIR}; if [ -n \"\$(ls -A ${REMOTE_DIR} 2>/dev/null)\" ]; then sudo tar czf ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz -C ${REMOTE_DIR} . && echo 'Backup: ${BACKUP_DIR}/${APP_NAME}-${STAMP}.tar.gz'; else echo 'No existing install to back up (first deploy)'; fi"
+    # The script runs under `sudo bash` with pipefail, so a failed tar or age
+    # fails the ssh call and `set -e` stops the deploy before the rm below.
+    ssh ${SSH_OPTS} ${USER}@${HOST} sudo bash -s -- "${REMOTE_DIR}" "${BACKUP_DIR}" "${BACKUP_FILE}" "${BACKUP_AGE_RECIPIENT:-none}" << 'BACKUP'
+        set -euo pipefail
+        umask 077
+        remote_dir=$1 backup_dir=$2 backup_file=$3 recipient=$4
+        mkdir -p "$backup_dir"
+        chown root:root "$backup_dir"
+        chmod 0700 "$backup_dir"
+        find "$backup_dir" -maxdepth 1 -type f -name '*.tar.gz*' -exec chmod 0600 {} +
+        if [ -z "$(ls -A "$remote_dir" 2>/dev/null)" ]; then
+            echo "No existing install to back up (first deploy)"
+            exit 0
+        fi
+        if [ "$recipient" = none ]; then
+            tar czf "$backup_file" -C "$remote_dir" .
+        else
+            if ! command -v age >/dev/null 2>&1; then
+                echo "ERROR: --backup-age-recipient given but 'age' is not installed on the remote; aborting before any change to the install" >&2
+                exit 1
+            fi
+            tar czf - -C "$remote_dir" . | age -r "$recipient" -o "$backup_file"
+        fi
+        chmod 0600 "$backup_file"
+        echo "Backup: $backup_file"
+BACKUP
 
     log_info "Transferring files..."
     # AUDIT B5: never let an empty/short REMOTE_DIR turn `rm -rf ${REMOTE_DIR}/*`

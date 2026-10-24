@@ -34,6 +34,7 @@ import (
 // entry nothing in the tree references any more.
 var hygieneAllowDomains = map[string]string{
 	"github.com":                      "project host, Go module paths, Actions",
+	"age-encryption.org":              "age file-encryption tool docs (deploy.sh --backup-age-recipient)",
 	"ghcr.io":                         "image registry (CHANGELOG)",
 	"hub.docker.com":                  "image registry",
 	"golang.org":                      "Go module paths (golang.org/x, google.golang.org)",

@@ -1,6 +1,26 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.428] - 2026-10-24
+
+### Security — Protect the deploy.sh pre-deploy backup (M-11)
+
+- The AUDIT-098 backup of the existing install was written by `sudo tar czf`
+  under the default 022 umask: a world-readable tarball in a world-listable
+  `/opt/firewall-mon-backups/`. The backup now runs as a `sudo bash` script
+  with `umask 077`: the backups dir is `root:root 0700`, every archive is
+  `0600`, and archives left by older deploys are tightened on the next run.
+- New `--backup-age-recipient age1...` flag encrypts the archive to an
+  [age](https://age-encryption.org) public key (`<name>.tar.gz.age`), so a
+  copied backups dir or disk image reveals nothing without the private key.
+  The key is validated against the age bech32 alphabet before it reaches the
+  remote command line. If `age` is missing on the server the deploy aborts
+  before touching the install — it never falls back to plaintext.
+- The backup script runs with `set -euo pipefail`, so a failed `tar` or `age`
+  fails the ssh call and stops the deploy before the `rm -rf` of the install.
+  `--dry-run` shows the target file and its protection.
+  `TestDeploy_BackupProtected_M11` pins all of the above.
+
 ## [0.11.427] - 2026-10-24
 
 ### Security — Allow-list the IRC update handlers (M-12)
