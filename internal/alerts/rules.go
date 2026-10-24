@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/logfields"
@@ -571,6 +572,33 @@ func (am *AlertManager) EvaluateSyslogEvent(msg *models.SyslogMessage, siteID *u
 	return am.fireEventAlert(r, msg, fields, effSite)
 }
 
+// singleLine neutralises the control characters of a device-supplied syslog
+// field before it becomes alert text (D-38). This is the one place syslog free
+// text leaves the syslog tables: the alert row, IRC, email and the
+// Slack/Discord/webhook/incident payloads all carry Alert.Message, so a CR/LF
+// in it starts a forged second line in every one of them and an ESC reaches
+// any terminal the text is printed to. C0/C1 controls and DEL become a space (a
+// multi-line message stays readable on one line); invalid UTF-8 — the 64 KiB
+// ingest cap can split a rune — becomes U+FFFD. Clean input is returned as-is.
+//
+// The stored syslog_messages row is deliberately NOT rewritten: the normalize
+// parsers, logfields extraction, event-rule matching, the deny projection and
+// the archive export all read the device's exact bytes, and rewriting hundreds
+// of GB of stored rows is not on the table. Neutralising at this sink covers
+// every outbound notification path without changing what is stored or what
+// rules match.
+func singleLine(s string) string {
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "\uFFFD")
+	}
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+			return ' '
+		}
+		return r
+	}, s)
+}
+
 // fireEventAlert raises an alert for a matched alert-action rule, reusing the
 // full pipeline (policy resolution, cooldown w/ DB backstop, maintenance
 // suppression, notification). The rule's severity overrides the resolved
@@ -615,7 +643,7 @@ func (am *AlertManager) fireEventAlert(r *compiledRule, msg *models.SyslogMessag
 		DeviceID:   msg.DeviceID,
 		AlertType:  r.alertType,
 		Severity:   sev,
-		Message:    fmt.Sprintf("[%s] %s: %s", r.name, msg.Hostname, msg.Message),
+		Message:    fmt.Sprintf("[%s] %s: %s", r.name, singleLine(msg.Hostname), singleLine(msg.Message)),
 		MetricName: r.name,
 		PolicyID:   resolved.PolicyID,
 		Suppressed: resolved.InMaintenance,

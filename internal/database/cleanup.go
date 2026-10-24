@@ -588,6 +588,15 @@ func (d *Database) dropPartitionsOlderThanGated(table string, cutoff time.Time, 
 	}
 	var expired []childPart
 	for _, ch := range children {
+		// L-18 sibling: the name comes from the catalog and is spliced into
+		// LOCK/SELECT/DROP below. A relation created out of band with a
+		// quoted, unusual name is left alone (its rows age out through the
+		// row-delete, like a gate-kept partition) rather than failing the
+		// nightly retention pass.
+		if !safeRelName.MatchString(ch.Name) {
+			log.Printf("cleanup: partition %q of %s kept: its name is not a plain identifier, so it is never spliced into DDL", ch.Name, table)
+			continue
+		}
 		upper, ok := parsePartitionUpperBound(ch.Bound)
 		if !ok {
 			continue // unparseable (DEFAULT partition, custom bound) — leave it

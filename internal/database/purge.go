@@ -162,11 +162,7 @@ func (d *Database) purgeRelations(table string) ([]string, error) {
 	if !isPartitioned {
 		return []string{table}, nil
 	}
-	type childPart struct {
-		Name  string
-		Bound string
-	}
-	var children []childPart
+	var children []purgeChild
 	if err := d.db.Raw(`
 		SELECT c.relname AS name, pg_get_expr(c.relpartbound, c.oid) AS bound
 		FROM pg_inherits i
@@ -175,6 +171,25 @@ func (d *Database) purgeRelations(table string) ([]string, error) {
 		WHERE parent.relname = ?`, table).Scan(&children).Error; err != nil {
 		return nil, err
 	}
+	return orderPurgeChildren(table, children)
+}
+
+// purgeChild is one partition of a plan table as read from pg_inherits.
+type purgeChild struct {
+	Name  string
+	Bound string
+}
+
+// orderPurgeChildren validates and orders the children purgeRelations read:
+// oldest range first, the DEFAULT child (no parseable bound) last. Every name
+// is spliced into batchedDeleteWhere's DELETE, so it must have safeRelName's
+// shape first (L-18) — the same guard the normalize backfill applies to the
+// same catalog read. pg_inherits is not caller input, but a relation created
+// out of band (a hand-made partition, a restore) can carry any quoted name, and
+// a DELETE is the last place to find that out. Refusing fails the job with the
+// name in its message rather than skipping the child, so a purge never reports
+// done while rows of the device remain.
+func orderPurgeChildren(table string, children []purgeChild) ([]string, error) {
 	type ordered struct {
 		name  string
 		upper time.Time
@@ -182,6 +197,9 @@ func (d *Database) purgeRelations(table string) ([]string, error) {
 	}
 	list := make([]ordered, 0, len(children))
 	for _, ch := range children {
+		if !safeRelName.MatchString(ch.Name) {
+			return nil, fmt.Errorf("refusing partition name %q of %s", ch.Name, table)
+		}
 		upper, ok := parsePartitionUpperBound(ch.Bound)
 		list = append(list, ordered{name: ch.Name, upper: upper, ok: ok})
 	}

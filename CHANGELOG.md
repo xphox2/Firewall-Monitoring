@@ -1,6 +1,21 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.435] - 2026-10-24
+
+### Security — Device-string sanitising, preview block gate, purge relname guard (D-31, D-38, D-34, L-18)
+- **D-31:** the server's own SNMP path (the legacy dashboard client and the Test Connection probe) stored sysName/sysDescr/ifName/ifAlias, tunnel and sensor names exactly as the device returned them, CR/LF/ESC included. `safeString` (`internal/snmp/snmp.go`) is the single funnel for every SNMP text value. It now replaces invalid UTF-8 with U+FFFD, drops NUL padding and turns every other C0/C1 control character and DEL into a space. Clean values come back unchanged. Pinned by `TestSafeString_NeutralisesControlCharacters`, `TestSafeString_InvalidUTF8BecomesReplacementChar` and `TestParseSystemStatus_HostnameControlCharsStripped`.
+- **D-38:** when a syslog event rule fires, the device's hostname and message text were copied verbatim into `Alert.Message`, which feeds the alert row, IRC, email and the Slack/Discord/webhook/incident payloads. A CR/LF in that text could forge a second line in any of those outputs. `fireEventAlert` now passes both fields through `singleLine`, which maps control characters to a space and replaces invalid UTF-8 with U+FFFD. The stored `syslog_messages` row is not changed. Parsers, rule matching, the deny projection and the archive all depend on the exact bytes, and there is no backfill. Pinned by `TestFireEventAlert_SyslogControlCharsNeutralised` and `TestSingleLine`.
+- **D-34:** deploy refuses an IPSec intent with a blocking finding before it renders anything. The preview endpoints (`POST /ipsec/preview` and `/ipsec/tunnels/:id/preview`) rendered such an intent anyway: they passed values the linters block to the vendor drivers and returned device config text. `renderPreviewEnds` now applies the same `ipsec.HasBlock` gate. It returns the findings with no ends, and the wizard already shows "No configuration to show yet". Pinned by `TestPreviewIPSecIntent_BlockingFindingsAreNotRendered` and `TestRenderPreviewEnds_BlockingFindingSkipsRender`.
+- **L-18:** the device purge read partition names from `pg_inherits` and put them into its batched `DELETE` with no check on their shape. The new `orderPurgeChildren` helper applies the same `safeRelName` guard the normalize backfill already uses. An unsafe name fails the job, with the name in the error message, instead of reaching SQL. The child is never skipped, so a purge never reports done while rows remain. Pinned by `TestOrderPurgeChildren_RefusesUnsafeRelName` and `TestOrderPurgeChildren_OrdersSafeNames`.
+- The same guard now covers the other places that splice catalog-read
+  partition names into SQL: the nightly retention partition drop
+  (`LOCK`/`SELECT max(id)`/`DROP`) keeps — and logs — a partition whose name is
+  not a plain identifier instead of executing it (its rows still age out by
+  row-delete), the autovacuum tuning skips such leaves, and the
+  duplicate-leaf-index cleanup ignores them. `CleanupSkipsUnsafePartitionName`
+  (PostgreSQL) pins the retention case.
+
 ## [0.11.434] - 2026-10-24
 
 ### Security — auth/session hardening: jti, is_admin, ADMIN_PASSWORD bounds, limiter hygiene, passkey ceremonies (L-7, L-8, L-9, L-10, D-36, D-39, D-40, D-41)
