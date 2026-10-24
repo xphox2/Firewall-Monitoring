@@ -107,6 +107,7 @@ func TestArchiveConfig_ValidEnabled(t *testing.T) {
 // TestArchiveConfig_RequiredWhenEnabled: every connection key is required and
 // named in the error.
 func TestArchiveConfig_RequiredWhenEnabled(t *testing.T) {
+	t.Setenv("ADMIN_USERNAME", "test-admin") // avoid the M-9 default-username fatal
 	setArchiveEnv(t, map[string]string{"ARCHIVE_FLOWS_ENABLED": "true"})
 	err := Load().Archive.Validate()
 	if err == nil {
