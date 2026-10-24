@@ -56,6 +56,7 @@ type ipRateLimiter struct {
 	burst      int
 	maxEntries int
 	quit       chan struct{}
+	stopOnce   sync.Once
 }
 
 type rateLimiterEntry struct {
@@ -144,10 +145,10 @@ func (rl *ipRateLimiter) cleanup() {
 // it respects quit so tests don't leak goroutines and production can release
 // the limiter resources at graceful shutdown.
 //
-// Safe to call once. A second call panics on close-of-closed-channel — by
-// design (matches container/list's idiom of "Stop is final").
+// Idempotent (D-36): a second Stop — e.g. a deferred Stop after an explicit
+// one on a shutdown path — is a no-op, never a close-of-closed-channel panic.
 func (rl *ipRateLimiter) Stop() {
-	close(rl.quit)
+	rl.stopOnce.Do(func() { close(rl.quit) })
 }
 
 func RateLimiter(cfg *config.Config) gin.HandlerFunc {
@@ -296,7 +297,7 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 			}
 			c.Set("username", "token:"+tok.Name)
 			c.Set("user_id", tok.CreatedByID)
-			c.Set("is_admin", true)
+			c.Set("is_admin", role == auth.RoleAdmin)
 			c.Set("role", role)
 			c.Set("auth_method", "token")
 			c.Set("token_id", tok.ID)
@@ -332,7 +333,9 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
-		c.Set("is_admin", true)
+		// L-8: is_admin means the RBAC admin role, not "authenticated" — a
+		// viewer/operator session must not read as admin to any consumer.
+		c.Set("is_admin", role == auth.RoleAdmin)
 		c.Set("role", role)
 		c.Set("auth_method", "session")
 		// The session's own token version and issue time (passkeys: a
@@ -347,7 +350,9 @@ func AdminAuth(authManager *auth.AuthManager, tokens TokenAuthStore) gin.Handler
 	}
 }
 
-// CheckAdminAuth checks if user is admin but doesn't require authentication
+// CheckAdminAuth checks if user is admin but doesn't require authentication.
+// is_admin is true only for a valid full session holding the admin role;
+// role carries the session's actual role for any other signed-in user.
 func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, err := c.Cookie("auth_token")
@@ -367,10 +372,11 @@ func CheckAdminAuth(authManager *auth.AuthManager) gin.HandlerFunc {
 			return
 		}
 
+		role := claims.EffectiveRole()
 		c.Set("username", claims.Username)
 		c.Set("user_id", claims.UserID)
-		c.Set("is_admin", true)
-		c.Set("role", claims.EffectiveRole())
+		c.Set("is_admin", role == auth.RoleAdmin) // L-8: the role, not mere login
+		c.Set("role", role)
 		c.Next()
 	}
 }

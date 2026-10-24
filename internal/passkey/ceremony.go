@@ -73,13 +73,16 @@ func (s *CeremonyStore) sweepLocked(now time.Time) {
 	}
 }
 
-// Put stores c under key, replacing any existing entry with that key (a new
-// registration begin supersedes the previous one for the same account).
-func (s *CeremonyStore) Put(key string, c Ceremony) {
+// Put stores c under key, replacing any live entry with that key (a new
+// registration begin supersedes the previous one for the same account), and
+// reports whether it did — so the caller can make a supersede visible rather
+// than silent (D-39).
+func (s *CeremonyStore) Put(key string, c Ceremony) (replaced bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	s.sweepLocked(now)
+	_, replaced = s.m[key]
 	delete(s.m, key)
 	for len(s.m) >= s.cap {
 		oldestKey, oldest := "", time.Time{}
@@ -91,6 +94,7 @@ func (s *CeremonyStore) Put(key string, c Ceremony) {
 		delete(s.m, oldestKey)
 	}
 	s.m[key] = ceremonyEntry{c: c, created: now}
+	return replaced
 }
 
 // Take consumes the entry stored under key. It returns the ceremony only if

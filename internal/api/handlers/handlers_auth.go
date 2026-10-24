@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
+	"firewall-mon/internal/config"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -400,12 +402,12 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	}
 
 	// Enforce password length constraints
-	if len(req.NewPassword) < 8 {
-		c.JSON(http.StatusBadRequest, response.Error("New password must be at least 8 characters"))
+	if len(req.NewPassword) < config.MinPasswordLength {
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("New password must be at least %d characters", config.MinPasswordLength)))
 		return
 	}
-	if len(req.NewPassword) > 72 {
-		c.JSON(http.StatusBadRequest, response.Error("New password must be at most 72 characters"))
+	if len(req.NewPassword) > config.MaxPasswordLength {
+		c.JSON(http.StatusBadRequest, response.Error(fmt.Sprintf("New password must be at most %d characters", config.MaxPasswordLength)))
 		return
 	}
 

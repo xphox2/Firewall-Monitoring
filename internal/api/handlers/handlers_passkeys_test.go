@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1015,13 +1016,16 @@ func TestPasskey_RegisterFinishAfterResetRejected(t *testing.T) {
 	// The finish that was already past the middleware continues.
 	e.h.passkeys.RegisterCeremonies.Put(key, ceremony)
 	c, rec := jsonReq(http.MethodPost, "/admin/api/passkeys/register/finish", body)
+	// Over TLS, so the D-41 secure-context gate passes and the stale
+	// token_version is what refuses the finish.
+	c.Request.TLS = &tls.ConnectionState{}
 	c.Set("auth_method", "session")
 	c.Set("user_id", alice.ID)
 	c.Set("username", "alice")
 	c.Set("token_version", staleTV)
 	e.h.PasskeyRegisterFinish(c)
-	if rec.Code == http.StatusOK {
-		t.Fatalf("registration committed after the reset: %s", rec.Body.String())
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "registration failed") {
+		t.Fatalf("finish after the reset: %d %s (want 400 from the stale-version check)", rec.Code, rec.Body.String())
 	}
 	if n := len(e.passkeyRows(alice.ID)); n != 0 {
 		t.Fatalf("%d passkeys stored after the reset", n)

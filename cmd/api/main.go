@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.433"
+const ServerVersion = "0.11.434"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -301,6 +301,13 @@ func main() {
 
 	// Initialize admin in database (skips if admin already exists from migration)
 	if db != nil {
+		// L-9: the bootstrap password is checked only when it is about to
+		// become the first admin's credential.
+		if existing, err := db.GetAdmin(); err == nil && existing == nil {
+			if err := cfg.ValidateBootstrapAdminPassword(); err != nil {
+				log.Fatalf("admin bootstrap: %v", err)
+			}
+		}
 		hashedPassword, err := authManager.HashPassword(cfg.Auth.AdminPassword)
 		if err != nil {
 			log.Fatalf("Failed to hash admin password: %v", err)

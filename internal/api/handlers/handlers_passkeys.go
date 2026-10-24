@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"firewall-mon/internal/api/middleware"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/auth"
 	"firewall-mon/internal/database"
@@ -197,6 +199,35 @@ func (h *Handler) GetPasskeyConfig(c *gin.Context) {
 	}))
 }
 
+// passkeyNeedsHTTPSMsg is the refusal of a ceremony over plain HTTP.
+const passkeyNeedsHTTPSMsg = "Passkeys require HTTPS"
+
+// passkeySecureContext reports whether a WebAuthn ceremony may run on this
+// request (D-41). Browsers expose WebAuthn only in a secure context, and
+// ResolveSettings already admits only https origins (http solely for
+// localhost) — so a ceremony begun over plain HTTP elsewhere can never finish,
+// and would only put its challenge and the webauthn_login cookie (not Secure
+// over HTTP) on the wire in clear. The scheme verdict is the one the session
+// cookie's Secure flag uses (sessionCookieParams): in-process TLS or a
+// TRUSTED_PROXIES peer's X-Forwarded-Proto: https — or an explicit
+// COOKIE_SECURE=true, the operator's statement that the deployment is HTTPS.
+// The localhost exception mirrors validateOrigin; the Host header is
+// client-supplied, but a lie gains nothing — the library still requires the
+// assertion's origin to be a configured one.
+func (h *Handler) passkeySecureContext(c *gin.Context) bool {
+	if middleware.RequestOverHTTPS(c) {
+		return true
+	}
+	if h.config != nil && h.config.Server.CookieSecureExplicit && h.config.Server.CookieSecure {
+		return true
+	}
+	host := c.Request.Host
+	if hh, _, err := net.SplitHostPort(host); err == nil {
+		host = hh
+	}
+	return strings.EqualFold(host, "localhost")
+}
+
 func (h *Handler) setPasskeyLoginCookie(c *gin.Context, value string, maxAge int) {
 	secure, _, _ := h.sessionCookieParams(c)
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -217,6 +248,10 @@ func (h *Handler) setPasskeyLoginCookie(c *gin.Context, value string, maxAge int
 func (h *Handler) PasskeyLoginBegin(c *gin.Context) {
 	svc, ok := h.passkeysOr404(c)
 	if !ok {
+		return
+	}
+	if !h.passkeySecureContext(c) {
+		c.JSON(http.StatusForbidden, response.Error(passkeyNeedsHTTPSMsg))
 		return
 	}
 	assertion, session, err := svc.WebAuthn.BeginDiscoverableLogin()
@@ -276,6 +311,10 @@ func (h *Handler) PasskeyLoginFinish(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, response.Error(passkeyLoginFailedMsg))
 	}
 
+	if !h.passkeySecureContext(c) {
+		fail("request not over HTTPS")
+		return
+	}
 	ceremonyID, err := c.Cookie(passkeyLoginCookie)
 	if err != nil || ceremonyID == "" {
 		fail("no ceremony cookie")
@@ -480,7 +519,8 @@ type passkeyRegisterBeginRequest struct {
 
 // PasskeyRegisterBegin (POST /admin/api/passkeys/register/begin) re-verifies
 // the caller and starts a registration ceremony for the caller's own account
-// (at most one outstanding — a new begin supersedes the previous one). The
+// (at most one outstanding — a new begin supersedes, and audits, the previous
+// one). The
 // account's random 64-byte user handle is created on its first registration.
 func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 	svc, ok := h.passkeysOr404(c)
@@ -488,6 +528,11 @@ func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 		return
 	}
 	if _, ok := passkeySessionUser(c); !ok {
+		return
+	}
+	// Before the re-auth, so a plain-HTTP begin never spends the budget.
+	if !h.passkeySecureContext(c) {
+		c.JSON(http.StatusForbidden, response.Error(passkeyNeedsHTTPSMsg))
 		return
 	}
 	db := h.reqDB(c)
@@ -544,9 +589,21 @@ func (h *Handler) PasskeyRegisterBegin(c *gin.Context) {
 		httputil.InternalError(c, "Failed to start passkey registration", err)
 		return
 	}
-	svc.RegisterCeremonies.Put(passkey.RegistrationKey(admin.ID), passkey.Ceremony{
+	// D-39: a second begin REPLACES a pending ceremony rather than being
+	// refused. Replacing is safe — each ceremony is bound to its own random
+	// challenge, so the superseded one can no longer finish (its attestation
+	// fails against the new challenge) and nothing from it (name, session)
+	// leaks into the new one; and this begin already cost a fresh password
+	// (+ TOTP) re-auth. Refusing instead would strand a user who cancelled
+	// the browser dialog for the full ceremony timeout. What must not happen
+	// is a SILENT supersede: a begin from another session of the same
+	// account (e.g. a hijacked one) is audited, so it is visible.
+	if svc.RegisterCeremonies.Put(passkey.RegistrationKey(admin.ID), passkey.Ceremony{
 		Kind: passkey.KindRegister, AdminID: admin.ID, Name: name, Session: *session,
-	})
+	}) {
+		log.Printf("passkeys: registration begin for admin %d superseded a pending ceremony", admin.ID)
+		passkeyAudit(c, db, c.GetString("username"), admin.ID, "passkey_register_superseded", fmt.Sprintf("name=%q", name), http.StatusOK)
+	}
 	c.JSON(http.StatusOK, response.Success(creation))
 }
 
@@ -572,6 +629,10 @@ func (h *Handler) PasskeyRegisterFinish(c *gin.Context) {
 		log.Printf("passkey registration refused for admin %d: %s", adminID, reason)
 		passkeyAudit(c, db, actor, adminID, "passkey_register_failure", "reason="+reason, status)
 		c.JSON(status, response.Error(msg))
+	}
+	if !h.passkeySecureContext(c) {
+		refuse(http.StatusForbidden, passkeyNeedsHTTPSMsg, "request not over HTTPS")
+		return
 	}
 	ceremony, ok := svc.RegisterCeremonies.Take(passkey.KindRegister, passkey.RegistrationKey(adminID))
 	if !ok || ceremony.AdminID != adminID {
