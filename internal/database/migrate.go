@@ -558,6 +558,10 @@ func (d *Database) dropParentCoveredLeafIndexes(parent string, skippedSuffixes [
 	}
 	candidates := make([]string, 0, len(children)*len(skippedSuffixes))
 	for _, child := range children {
+		// L-18 sibling: the index name built from it is spliced into DROP INDEX.
+		if !safeRelName.MatchString(child) {
+			continue
+		}
 		for _, suffix := range skippedSuffixes {
 			candidates = append(candidates, fmt.Sprintf("idx_%s_%s", child, suffix))
 		}
@@ -1613,7 +1617,17 @@ func (d *Database) autovacuumTargets(table string) []string {
 		WHERE parent.relname = ?`, table).Scan(&leaves).Error; err != nil || len(leaves) == 0 {
 		return []string{table}
 	}
-	return leaves
+	// L-18 sibling: leaf names come from the catalog and are spliced into the
+	// caller's ALTER TABLE; a name that is not a plain identifier is skipped.
+	safe := leaves[:0]
+	for _, l := range leaves {
+		if safeRelName.MatchString(l) {
+			safe = append(safe, l)
+		} else {
+			log.Printf("autovacuum tuning: leaf %q of %s skipped: not a plain identifier", l, table)
+		}
+	}
+	return safe
 }
 
 // ensureInterfaceAddrUniqueIndex repairs the unique index that

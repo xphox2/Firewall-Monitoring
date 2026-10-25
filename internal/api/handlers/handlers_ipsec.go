@@ -397,7 +397,19 @@ func (h *Handler) PreviewIPSecTunnel(c *gin.Context) {
 //
 // This is preview-only. The deploy gate keeps its hard error: refusing to deploy
 // something that will not render is correct there.
+//
+// An intent validation already BLOCKS is not rendered at all (D-34). Deploy
+// refuses such an intent before its render (DeployIPSecTunnel's HasBlock gate),
+// so the preview must too: otherwise the stateless POST /ipsec/preview is a way
+// to drive the vendor drivers with values the linters exist to keep out of them
+// (reserved <uuid:> tokens, unsupported crypto, malformed identities) and to get
+// device config text back for a tunnel that can never be deployed. The blocking
+// findings still return — they are what the wizard anchors — and the client
+// already renders "no configuration yet" for empty ends.
 func renderPreviewEnds(intent *ipsec.TunnelIntent, findings []ipsec.Finding) ([]endPreview, []ipsec.Finding) {
+	if ipsec.HasBlock(findings) {
+		return nil, findings
+	}
 	previews, cfindings, rerr := renderBothEnds(intent)
 	if rerr == nil {
 		// Preview and Deploy must AGREE: the deploy path (DeployIPSecTunnel) runs
@@ -409,14 +421,12 @@ func renderPreviewEnds(intent *ipsec.TunnelIntent, findings []ipsec.Finding) ([]
 		// conformance findings here makes a green preview imply a deployable config.
 		return previews, append(findings, cfindings...)
 	}
-	if !ipsec.HasBlock(findings) {
-		findings = append(findings, ipsec.Finding{
-			Severity: ipsec.SeverityBlock,
-			Code:     "render_failed",
-			Message:  "this tunnel cannot be rendered as configuration: " + rerr.Error(),
-		})
-	}
-	return nil, findings
+	// Nothing blocked (checked above), so this is a validation gap: surface it.
+	return nil, append(findings, ipsec.Finding{
+		Severity: ipsec.SeverityBlock,
+		Code:     "render_failed",
+		Message:  "this tunnel cannot be rendered as configuration: " + rerr.Error(),
+	})
 }
 
 // renderBothEnds renders each end's redacted preview. It returns ONLY endPreview

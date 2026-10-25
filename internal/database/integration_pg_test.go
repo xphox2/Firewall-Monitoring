@@ -325,6 +325,31 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 
+	// L-18 sibling: a partition whose catalog name is not a plain identifier
+	// (created out of band, quoted) is never spliced into LOCK/DROP: retention
+	// keeps it and carries on, and still drops its well-named neighbours.
+	t.Run("CleanupSkipsUnsafePartitionName", func(t *testing.T) {
+		if err := d.Gorm().Exec(`CREATE TABLE IF NOT EXISTS "interface_stats_odd; name" PARTITION OF interface_stats FOR VALUES FROM ('1999-01-01') TO ('1999-02-01')`).Error; err != nil {
+			t.Fatalf("create oddly named partition: %v", err)
+		}
+		if err := d.Gorm().Exec(`CREATE TABLE IF NOT EXISTS interface_stats_199902 PARTITION OF interface_stats FOR VALUES FROM ('1999-02-01') TO ('1999-03-01')`).Error; err != nil {
+			t.Fatalf("create old partition: %v", err)
+		}
+		defer d.Gorm().Exec(`DROP TABLE IF EXISTS "interface_stats_odd; name"`)
+		if _, _, err := d.dropPartitionsOlderThan("interface_stats", time.Now()); err != nil {
+			t.Fatalf("dropPartitionsOlderThan failed on an unsafe name: %v", err)
+		}
+		var n int
+		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = 'interface_stats_odd; name'").Scan(&n)
+		if n != 1 {
+			t.Error("the unsafely named partition was dropped (its name reached DDL)")
+		}
+		d.Gorm().Raw("SELECT COUNT(*) FROM pg_tables WHERE tablename = 'interface_stats_199902'").Scan(&n)
+		if n != 0 {
+			t.Error("the well-named expired partition beside it was not dropped")
+		}
+	})
+
 	// v0.11.256: a partition DROP needs ACCESS EXCLUSIVE on the parent, and since
 	// retention stopped shutting out the monitoring cycle it can meet a reader.
 	// It must give up after a bounded wait (never stall inserts behind it for

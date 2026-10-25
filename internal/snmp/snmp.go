@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"firewall-mon/internal/config"
 	"firewall-mon/internal/models"
@@ -93,14 +94,42 @@ var IfTypeNames = map[int]string{
 	351: "vxlan",
 }
 
+// safeString is the one funnel every device-supplied SNMP text value
+// (sysName, sysDescr, ifDescr/ifName/ifAlias, tunnel and sensor names …) goes
+// through on the poller path, so it is where those values are made safe to
+// store, log and render (D-31). The device — or anyone who can set its
+// sysName/ifAlias — controls these bytes; a CR/LF would forge log lines and
+// an ESC would drive the terminal of whoever tails them.
 func safeString(v interface{}) string {
 	if s, ok := v.([]byte); ok {
-		return string(s)
+		return cleanDeviceString(string(s))
 	}
 	if s, ok := v.(string); ok {
-		return s
+		return cleanDeviceString(s)
 	}
 	return ""
+}
+
+// cleanDeviceString makes a device-supplied string valid UTF-8 (invalid bytes —
+// typically a Latin-1 ifAlias — become U+FFFD rather than vanishing) and
+// neutralises C0/C1 control characters and DEL. NUL is dropped (agents pad
+// fixed-width OctetStrings with it); every other control becomes a space, so a
+// multi-line sysDescr stays readable and the strings.Fields-based version
+// parsers still see the same words. Clean input is returned unchanged, without
+// allocating.
+func cleanDeviceString(s string) string {
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "\uFFFD")
+	}
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == 0:
+			return -1
+		case r < 0x20, r >= 0x7f && r <= 0x9f:
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // safeFloat coerces an SNMP PDU value to a float64. Some vendors return
