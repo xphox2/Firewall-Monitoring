@@ -1196,6 +1196,19 @@ type WebAuthnCredential struct {
 
 func (WebAuthnCredential) TableName() string { return "webauthn_credentials" }
 
+// UsedTOTPCode is one consumed TOTP code (D-14, migration v83): the replay
+// guard every TOTP consumer shares. KeyHash is sha256("totp:<admin id>:<code>")
+// — never the code itself; ExpiresAt (unix seconds) is when the code can no
+// longer validate, after which the row is swept. In the database, not process
+// memory, so a restart or a second API instance (ALLOW_MULTI_API) cannot
+// accept an intercepted code a second time.
+type UsedTOTPCode struct {
+	KeyHash   string `gorm:"primaryKey;size:64"`
+	ExpiresAt int64  `gorm:"not null;index:idx_used_totp_codes_expires_at"`
+}
+
+func (UsedTOTPCode) TableName() string { return "used_totp_codes" }
+
 // AdminRecoveryCode is a single-use 2FA fallback code (P0-3). Only the
 // sha256: hash is stored (same at-rest scheme as probe keys / API tokens);
 // consumption is an atomic UPDATE ... WHERE used_at IS NULL so two concurrent

@@ -86,6 +86,7 @@ func TestRegisteredMigrations_Tail(t *testing.T) {
 		version int
 		name    string
 	}{
+		{83, "used_totp_codes"},
 		{82, "readd_net_events_indexes"},
 		{81, "archive_lag_hours_late"},
 		{80, "drop_unused_net_events_indexes"},

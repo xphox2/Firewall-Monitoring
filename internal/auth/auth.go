@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -83,12 +84,22 @@ type Database interface {
 	IncrementAdminTokenVersion(id uint) error
 }
 
+// TOTPReplayStore is the durable TOTP replay guard (D-14): a database that
+// records consumed codes so every process and every restart sees them.
+// *database.Database implements it.
+type TOTPReplayStore interface {
+	ClaimTOTPCode(keyHash string, now time.Time, ttl time.Duration) (bool, error)
+}
+
 type AuthManager struct {
 	db            Database
 	config        *config.Config
 	loginAttempts map[string][]time.Time
 	attemptsMu    sync.RWMutex
-	// usedTOTPCodes remembers each successfully-validated TOTP code (hashed,
+	// usedTOTPCodes is the in-process fallback of the TOTP replay guard, used
+	// only when db does not implement TOTPReplayStore (a nil db in tools and
+	// unit tests); the server's database records consumed codes durably
+	// (D-14). It remembers each successfully-validated TOTP code (hashed,
 	// namespaced by user) until it can no longer be accepted — the
 	// replay guard. Keyed on the CODE, not the wall-clock slot: validateTOTPCode
 	// uses Skew:1, so a code is valid for ~90s across three 30s slots, and a
@@ -99,8 +110,8 @@ type AuthManager struct {
 	// few entries per user per window and is swept on each call. PER-PROCESS:
 	// under the AUDIT-040 singleton exactly one cmd/api serves logins, so the
 	// guard is complete; under ALLOW_MULTI_API=true a still-fresh intercepted code
-	// could be replayed once per extra instance — an accepted follower-mode
-	// divergence, documented alongside the lockout/rate-limit caveats.
+	// could be replayed once per extra instance — which is why the database
+	// store is preferred whenever there is one.
 	usedTOTPCodes map[string]int64
 
 	// dummyOnce/dummyHash back compareDummy (AUDIT-262): a fixed bcrypt hash
@@ -219,6 +230,18 @@ func (am *AuthManager) MarkTOTPSlotUsed(userID uint, code string) bool {
 	// Hash so we don't hold plaintext codes in memory; namespace by user.
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", totpReplayNamespace, userID, code)))
 	key := hex.EncodeToString(sum[:])
+
+	// D-14: the database is the replay guard when there is one, shared by
+	// every API process and surviving restarts. A failed claim refuses the
+	// code (fail closed): the user retries with the next code.
+	if store, ok := am.db.(TOTPReplayStore); ok {
+		claimed, err := store.ClaimTOTPCode(key, now, totpReplayWindow)
+		if err != nil {
+			log.Printf("TOTP replay guard: claim failed for admin %d: %v (code refused)", userID, err)
+			return false
+		}
+		return claimed
+	}
 
 	am.attemptsMu.Lock()
 	defer am.attemptsMu.Unlock()

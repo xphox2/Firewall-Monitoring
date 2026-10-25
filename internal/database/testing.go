@@ -86,6 +86,8 @@ var testModels = []interface{}{
 	&models.AdminRecoveryCode{},
 	// v70: passkeys.
 	&models.WebAuthnCredential{},
+	// v83: TOTP replay guard.
+	&models.UsedTOTPCode{},
 	&models.Incident{},
 	// v0.11.46: flow-source silencing table.
 	&models.FlowSourceSuppression{},
