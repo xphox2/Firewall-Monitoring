@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"firewall-mon/internal/database"
@@ -489,6 +490,56 @@ func TestDiscover_AResearchCompletesTheCaptureMap(t *testing.T) {
 	}
 	if st3.Ends[1].RollbackUnproven {
 		t.Error("an end whose objects are all addressable must not be unproven")
+	}
+}
+
+// The removal addresses objects the discovery does NOT search for: the
+// connection's local/remote auths and child SAs. They are removed WITH the
+// connection (OPNsense's delConnection cascades to them), which is what makes
+// an end fully accounted for when the discovery found the connection but not
+// the children.
+//
+// That coupling is load-bearing, so it is pinned here: a future remove token
+// that is neither searched nor cascade-covered must fail loudly rather than
+// silently count as absent.
+func TestOPNsenseDiscovery_CascadeCoveredTokensArePinned(t *testing.T) {
+	drv, ok := ipsec.Driver("opnsense")
+	if !ok {
+		t.Fatal("no opnsense driver registered")
+	}
+	disc, ok := drv.(ipsec.Discoverer)
+	if !ok {
+		t.Fatal("the opnsense driver must implement ipsec.Discoverer")
+	}
+	view := ipsec.ViewFor(discoveryIntent(), 1)
+	steps := disc.Discovery(view)
+	discovered := map[string]bool{}
+	for _, s := range steps {
+		discovered[s.Token] = true
+	}
+	// The cascade anchor must be searched for: it is what removes the
+	// connection's children.
+	if !discovered["conn"] {
+		t.Fatal("the discovery must search for the connection - it is the cascade anchor")
+	}
+	remove, err := drv.RenderRemove(view)
+	if err != nil {
+		t.Fatalf("render the removal: %v", err)
+	}
+	tokens := ipsecRemoveStepTokens(ipsec.DeployEndState{End: 1, Vendor: "opnsense", RemoveSteps: remove.Steps})
+	if len(tokens) == 0 {
+		t.Fatal("the removal addresses no uuid-addressed object")
+	}
+	for _, tok := range tokens {
+		if discovered[tok] {
+			continue
+		}
+		switch {
+		case tok == "local", tok == "remote":
+		case strings.HasPrefix(tok, "child_"):
+		default:
+			t.Errorf("the removal addresses %q, but the discovery neither searches for it nor the connection's cascade removes it", tok)
+		}
 	}
 }
 

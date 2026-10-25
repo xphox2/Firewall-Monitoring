@@ -3002,6 +3002,17 @@ func ipsecRemoveStepTokens(e ipsec.DeployEndState) []string {
 // a missing uuid means the SERVER does not know — the object may still be
 // there, and the removal would skip its delete step and report a false clean.
 //
+// THE CASCADE: the discovery does not search for every object the removal
+// addresses. For OPNsense it searches the connection, the pre-shared key and
+// the firewall rules; the connection's local/remote auths and child SAs are
+// NOT searched for — they are removed WITH the connection, because OPNsense's
+// delConnection cascades to them. So those tokens are accounted for through
+// the CONNECTION: if the connection is addressable the cascade removes them,
+// and if the connection is proven absent they do not exist. That coupling is
+// pinned by TestOPNsenseDiscovery_CascadeCoveredTokensArePinned, so a future
+// remove token that is neither searched nor cascade-covered fails loudly
+// instead of silently counting as absent.
+//
 // This is the rule that decides whether an end is unproven, so it must be
 // PER TOKEN: an end whose captures cover three of its four objects is not
 // fully accounted for.
