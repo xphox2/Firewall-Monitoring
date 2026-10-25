@@ -352,11 +352,16 @@ const (
 	IPSecRollbackStatusRollbackFailed = "rollback_failed"
 )
 
-// ipsecRollbackReportView is the minimal shape of the collector's apply report
-// the rollback terminal evaluation needs. It carries no secrets.
-type ipsecRollbackReportView struct {
-	Applied bool   `json:"applied"`
-	Error   string `json:"error"`
+// ipsecApplyReportView is the minimal shape of the collector's ApplyReport the
+// server needs to decide per-end success and to recover the UUIDs the device
+// assigned. It carries no secrets.
+type ipsecApplyReportView struct {
+	Applied       bool              `json:"applied"`
+	Verified      bool              `json:"verified"`
+	Aborted       bool              `json:"aborted"`
+	Conflict      bool              `json:"conflict"`
+	Error         string            `json:"error"`
+	CapturedUUIDs map[string]string `json:"captured_uuids"`
 }
 
 // ipsecFirstNonEmpty returns the first non-blank value, or "".
@@ -462,7 +467,7 @@ func (d *Database) ResolveIPSecRollback(id uint) (status, reason string, done bo
 		switch cmd.Status {
 		case ProbeCommandStatusSucceeded:
 			doneEnds++
-			var rv ipsecRollbackReportView
+			var rv ipsecApplyReportView
 			if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
 				anyFail = true
 				reasons = append(reasons, label+": rollback report unparseable")
@@ -536,4 +541,92 @@ func (d *Database) ListIPSecTunnelsByStatus(statuses []string) ([]uint, error) {
 		Order("id ASC").
 		Pluck("id", &ids).Error
 	return ids, err
+}
+
+// MergeIPSecCapturedUUIDs re-reads each end's apply command result and merges
+// the UUIDs the collector captured into the deploy state.
+//
+// WHY this exists: the captured UUIDs were merged in exactly ONE place — the
+// deploy poll. A tunnel that never reached a terminal poll (the one wedged in
+// `deploying` when its peer was decommissioned mid-deploy) therefore has NO
+// captured UUIDs in its record, even though the collector captured them and
+// the apply command's result still holds them (terminal command rows are kept
+// 30 days). The rollback then had nothing to delete by, and — correctly —
+// refused to claim a clean rollback instead of reporting a false clean.
+//
+// The apply command's result is the AUTHORITATIVE record of what the device
+// assigned; the deploy record is only a cache of it. Re-reading it here makes
+// the rollback self-sufficient: no human poll required.
+//
+// It does NOT write — the caller persists the returned state (the rollback's
+// own guarded transition, or the reconciler's banking write). Returns the
+// number of ends that gained captures.
+func (d *Database) MergeIPSecCapturedUUIDs(st *ipsec.DeployState) int {
+	if st == nil {
+		return 0
+	}
+	merged := 0
+	for i := range st.Ends {
+		e := &st.Ends[i]
+		if len(e.CapturedUUIDs) > 0 || e.CommandID == "" {
+			continue
+		}
+		cmd, err := d.GetProbeCommandByCommandID(e.CommandID)
+		if err != nil || cmd == nil || cmd.Result == "" {
+			continue
+		}
+		var rv ipsecApplyReportView
+		if json.Unmarshal([]byte(cmd.Result), &rv) != nil || len(rv.CapturedUUIDs) == 0 {
+			continue
+		}
+		captured := make(map[string]string, len(rv.CapturedUUIDs))
+		for k, v := range rv.CapturedUUIDs {
+			captured[k] = v
+		}
+		e.CapturedUUIDs = captured
+		merged++
+	}
+	return merged
+}
+
+// BankIPSecCapturedUUIDs merges the apply's captured UUIDs into a tunnel's
+// deploy record and persists it.
+//
+// WHY bank them separately from the rollback: the captured UUIDs live in the
+// apply command's result, and terminal command rows are PRUNED after 30 days.
+// The deploy record is never pruned — so once the captures are banked there,
+// they survive for the life of the tunnel and the rollback never depends on a
+// command row still existing. This is what turns "the result is gone" from a
+// permanent loss into a repairable one.
+//
+// ONE guarded write (the status is unchanged, so this is not a saga
+// transition): a concurrent poll that already merged — or already moved the
+// tunnel on — wins, the write affects 0 rows, and we skip. Benign.
+func (d *Database) BankIPSecCapturedUUIDs(id uint) (bool, error) {
+	var m models.IPSecTunnel
+	if err := d.db.First(&m, id).Error; err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(m.DeployJSON) == "" {
+		return false, nil
+	}
+	var st ipsec.DeployState
+	if err := json.Unmarshal([]byte(m.DeployJSON), &st); err != nil {
+		return false, nil // a malformed record is not ours to repair
+	}
+	if d.MergeIPSecCapturedUUIDs(&st) == 0 {
+		return false, nil
+	}
+	blob, err := json.Marshal(&st)
+	if err != nil {
+		return false, err
+	}
+	terr := d.TransitionIPSecDeploy(id, []string{m.Status}, m.Status, m.LastError, string(blob), false, nil)
+	if errors.Is(terr, ErrIPSecConcurrentDeploy) {
+		return false, nil // lost the race — the poll merged them already
+	}
+	if terr != nil {
+		return false, terr
+	}
+	return true, nil
 }

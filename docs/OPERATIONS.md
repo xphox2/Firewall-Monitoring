@@ -534,6 +534,17 @@ Now:
   the collector would report `applied: true` — a false clean. Such an end
   forces `rollback_failed` with a "verify the device manually" reason. Verify
   the device by hand; `Force reset` clears the server-side record only.
+- **The captured UUIDs are recovered, not lost (v0.11.443).** The OPNsense
+  objects can only be deleted by the device-assigned UUID, which the collector
+  captured during the apply. Those captures used to be merged into the deploy
+  record in exactly one place — the deploy poll — so a tunnel nobody polled
+  (wedged in `deploying` when its peer was decommissioned mid-deploy) had none,
+  and the rollback had nothing to delete by. The rollback now recovers them from
+  the apply command's result, and the reconciler banks them into the deploy
+  record as soon as they exist (they used to expire with the command row after
+  30 days; the deploy record is never pruned). A tunnel that landed on
+  `rollback_failed` with a "verify the device manually" reason because of a
+  *missing UUID* is therefore cleanable without a login.
 
 ### Permanently deleting a retired device (purge)
 

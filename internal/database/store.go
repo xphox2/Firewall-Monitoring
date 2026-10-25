@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"firewall-mon/internal/config"
+	"firewall-mon/internal/ipsec"
 
 	"gorm.io/gorm"
 
@@ -242,6 +243,10 @@ type IPSecStore interface {
 	// ListIPSecTunnelsByStatus returns the ids of every tunnel in one of the
 	// given statuses (focused query for the rollback reconciler).
 	ListIPSecTunnelsByStatus(statuses []string) ([]uint, error)
+	// MergeIPSecCapturedUUIDs merges the UUIDs the collector captured during an
+	// end's apply back into the deploy state (from the apply command's stored
+	// result). It does NOT write — the caller persists the state.
+	MergeIPSecCapturedUUIDs(st *ipsec.DeployState) int
 	DeleteIPSecTunnel(id uint) error
 }
 
