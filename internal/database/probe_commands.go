@@ -316,10 +316,10 @@ func ProbeCommandResultTruncated(result string) bool {
 // pre-shared-key search is the case that matters: its rows carry the key
 // itself ("Key"), alongside the key's identifiers ("ident" / "remote_ident").
 //
-// The shape is precise: an object carrying BOTH "ident" and "remote_ident" IS
-// a pre-shared key, and its "Key" field is the secret. Nothing else in an
-// OPNsense document has that shape, so the redaction cannot touch ordinary
-// device data.
+// The shape is precise: an object carrying a "Key" field BESIDE an identifier
+// ("ident" or "keyType") IS a pre-shared key, and its "Key" field is the
+// secret. Nothing else in an OPNsense document has that shape, so the
+// redaction cannot touch ordinary device data.
 //
 // Defence in depth: the redaction happens BEFORE the write, so the secret is
 // never persisted — not even briefly. A body that is not JSON, or that has no
@@ -356,12 +356,18 @@ func redactDeviceSecrets(node any) bool {
 	changed := false
 	switch v := node.(type) {
 	case map[string]any:
-		if _, hasIdent := v["ident"]; hasIdent {
-			if _, hasRemote := v["remote_ident"]; hasRemote {
-				if _, hasKey := v["Key"]; hasKey {
-					v["Key"] = ""
-					changed = true
-				}
+		// A pre-shared key is identified by its "Key" field TOGETHER with its
+		// identifiers. The trigger is deliberately loose on the identifier side:
+		// a key with no peer identifier ("matches any peer") may have no
+		// "remote_ident" at all, and missing it must not let the secret
+		// through. "keyType" is the other marker of a key row, and nothing else
+		// in an OPNsense document carries "Key" beside one of these.
+		if _, hasKey := v["Key"]; hasKey {
+			_, hasIdent := v["ident"]
+			_, hasKeyType := v["keyType"]
+			if hasIdent || hasKeyType {
+				v["Key"] = ""
+				changed = true
 			}
 		}
 		for key, child := range v {

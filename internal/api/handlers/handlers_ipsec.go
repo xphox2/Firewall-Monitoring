@@ -907,6 +907,11 @@ type ipsecDiscoveredObject struct {
 	// object was still identified by the owner tag, but the operator must see
 	// that it was NOT also confirmed by every selector.
 	Unverified []string `json:"unverified,omitempty"`
+	// Duplicate marks an object the removal will NOT address: the capture map
+	// holds one uuid per token, so a second object of the same kind stays on
+	// the device. The operator must see it — and the end stays unproven,
+	// because a leftover object means the device is not clean.
+	Duplicate bool `json:"duplicate,omitempty"`
 }
 
 // ipsecDiscoveryReport is what the operator sees before anything is deleted.
@@ -925,6 +930,10 @@ type ipsecDiscoveryReport struct {
 	// answer — their absence is NOT proven, so the removal refuses to call the
 	// device clean.
 	Unsearched []string `json:"unsearched,omitempty"`
+	// Duplicates names the capture tokens whose object the device holds more
+	// than once. The removal can address one uuid per token, so the extra
+	// object stays on the device.
+	Duplicates []string `json:"duplicates,omitempty"`
 	// Captures are the discovered uuids, keyed by capture token.
 	Captures map[string]string `json:"captures"`
 	// Note explains a failure or a partial result.
@@ -1010,6 +1019,10 @@ type ipsecDiscoveryOutcome struct {
 	// proven, so the end stays unproven and the removal refuses to call the
 	// device clean.
 	Unsearched []string
+	// Duplicates names the tokens whose object the device holds MORE THAN
+	// ONCE. The capture map holds one uuid per token, so the extra object
+	// stays on the device — the end stays unproven and the operator sees it.
+	Duplicates []string
 }
 
 // ipsecParseDiscovery turns a discovery probe's result into the objects the
@@ -1061,10 +1074,16 @@ func ipsecParseDiscovery(steps []ipsec.DiscoverStep, tunnelName string, result s
 			if !ipsecDiscoveryUUIDRe.MatchString(uuid) {
 				continue // a malformed uuid can never address an object
 			}
-			if _, dup := out.Captures[step.Token]; dup {
-				continue // the first match wins; the report lists every match
+			// EVERY match is reported. The capture map holds one uuid per token,
+			// so a second object of the same kind is reported as a duplicate:
+			// the removal cannot address it, and it would otherwise be an
+			// invisible leftover on the device.
+			_, dup := out.Captures[step.Token]
+			if !dup {
+				out.Captures[step.Token] = uuid
+			} else {
+				out.Duplicates = append(out.Duplicates, step.Token)
 			}
-			out.Captures[step.Token] = uuid
 			out.Found = append(out.Found, ipsecDiscoveredObject{
 				Token:       step.Token,
 				ObjectType:  step.ObjectType,
@@ -1072,6 +1091,7 @@ func ipsecParseDiscovery(steps []ipsec.DiscoverStep, tunnelName string, result s
 				Description: tunnelName,
 				Matched:     fields,
 				Unverified:  unverified,
+				Duplicate:   dup,
 			})
 		}
 	}
@@ -1099,6 +1119,15 @@ func ipsecParseDiscovery(steps []ipsec.DiscoverStep, tunnelName string, result s
 //
 // ONE guarded write. A concurrent poll that already merged wins benignly.
 func ipsecMergeDiscovery(db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState, outcome ipsecDiscoveryOutcome, end int) error {
+	// Merge onto the FRESHEST state: the reconciler may have banked the
+	// apply's captures into the record since this snapshot was read, and the
+	// merge must not overwrite them with a stale copy.
+	fresh, ferr := db.GetIPSecTunnel(m.ID)
+	if ferr == nil {
+		if fst, perr := parseDeployState(fresh); perr == nil && fst != nil {
+			st.Ends = fst.Ends
+		}
+	}
 	changed := false
 	for i := range st.Ends {
 		if st.Ends[i].End != end {
@@ -1112,11 +1141,34 @@ func ipsecMergeDiscovery(db database.Store, m *models.IPSecTunnel, st *ipsec.Dep
 			st.Ends[i].CapturedUUIDs = merged
 			changed = true
 		}
-		// A search the device did not answer leaves the object's absence
-		// UNPROVEN: the removal must not call the device clean on the strength
-		// of a lookup that never happened.
-		if len(outcome.Unsearched) > 0 && !st.Ends[i].RollbackUnproven {
+		// What the discovery PROVED about the device:
+		//   - a search that did not answer leaves the absence UNPROVEN, and the
+		//     end can be searched again;
+		//   - a duplicate object cannot be addressed (the capture map holds one
+		//     uuid per token), so a leftover remains and the device is not clean;
+		//   - a complete discovery that found the objects proves them, and one
+		//     that found NOTHING proves the device holds none of them.
+		state := ipsec.DiscoveryStateFound
+		switch {
+		case len(outcome.Unsearched) > 0:
+			state = ipsec.DiscoveryStatePartial
+		case len(outcome.Captures) == 0:
+			state = ipsec.DiscoveryStateClean
+		}
+		if st.Ends[i].DiscoveryState != state {
+			st.Ends[i].DiscoveryState = state
+			changed = true
+		}
+		unproven := state == ipsec.DiscoveryStatePartial || len(outcome.Duplicates) > 0
+		if unproven && !st.Ends[i].RollbackUnproven {
 			st.Ends[i].RollbackUnproven = true
+			changed = true
+		}
+		if !unproven && st.Ends[i].RollbackUnproven && state == ipsec.DiscoveryStateFound {
+			// A complete discovery located the objects: the removal can
+			// address them, so the earlier "we cannot prove it" marker no
+			// longer applies.
+			st.Ends[i].RollbackUnproven = false
 			changed = true
 		}
 	}
@@ -1175,6 +1227,7 @@ func ipsecDiscoveryReportFor(db database.Store, m *models.IPSecTunnel, st *ipsec
 	rep.Found = outcome.Found
 	rep.Unresolved = outcome.Unresolved
 	rep.Unsearched = outcome.Unsearched
+	rep.Duplicates = outcome.Duplicates
 	rep.Captures = outcome.Captures
 	if len(outcome.Found) == 0 {
 		rep.Note = "the device reports no object of this tunnel's — it may already be clean"
@@ -1182,6 +1235,10 @@ func ipsecDiscoveryReportFor(db database.Store, m *models.IPSecTunnel, st *ipsec
 	if len(outcome.Unsearched) > 0 {
 		rep.Note = "the device did not answer for: " + strings.Join(outcome.Unsearched, ", ") +
 			" — those objects were NOT looked for, so their absence is not proven"
+	}
+	if len(outcome.Duplicates) > 0 {
+		rep.Note = "the device holds more than one object for: " + strings.Join(outcome.Duplicates, ", ") +
+			" — the removal addresses one of them, so the other stays on the device"
 	}
 	// Merge the discovered uuids into the record so the removal can use them.
 	if err := ipsecMergeDiscovery(db, m, st, outcome, st.DiscoveryEnd); err != nil {
@@ -1315,12 +1372,19 @@ func (h *Handler) GetIPSecDiscovery(c *gin.Context) {
 }
 
 // ipsecDiscoveryTarget picks the end whose objects should be looked up on the
-// device: the first deployable end that still has no captured uuids and whose
-// vendor can locate its objects.
+// device: the first deployable end that does not already KNOW its objects.
+//
+// "Knows" means either the apply's captured uuids are there, or a complete
+// discovery proved the device holds none of them. An end whose last discovery
+// was PARTIAL (some searches did not answer) does NOT know — it is searched
+// again, so an object that could not be looked for can still be found later.
 func ipsecDiscoveryTarget(st *ipsec.DeployState) (int, error) {
 	for i := range st.Ends {
 		e := st.Ends[i]
-		if len(e.CapturedUUIDs) > 0 {
+		if e.DiscoveryState == ipsec.DiscoveryStateClean {
+			continue // the device provably holds none of this end's objects
+		}
+		if e.DiscoveryState != ipsec.DiscoveryStatePartial && len(e.CapturedUUIDs) > 0 {
 			continue // already known
 		}
 		drv, ok := ipsec.Driver(e.Vendor)
@@ -2496,6 +2560,16 @@ func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
 				report = append(report, rep)
 				continue
 			}
+			if drep.Status == "failed" {
+				// The probe FAILED (the device is unreachable, most likely).
+				// Re-enqueueing it on every bulk call would mint a new probe
+				// each time, so the failure is reported instead — the operator
+				// re-runs the per-tunnel discovery when the device is back.
+				rep.Action = "discovery_failed"
+				rep.Error = drep.Note
+				report = append(report, rep)
+				continue
+			}
 			rep.Discovered = drep.Found
 		}
 		// The objects on the device still have no known uuid: ask the device
@@ -2833,7 +2907,12 @@ func ipsecPlanRollbackEnd(db database.Store, m *models.IPSecTunnel, e ipsec.Depl
 	// is skipped by the collector and the report reads "applied: true". That is
 	// a false clean, so the end is marked unproven and the terminal forces
 	// rollback_failed with an explicit "verify manually" reason.
-	p.Unproven = e.Vendor == "opnsense" && len(e.CapturedUUIDs) == 0 && ipsecRemoveStepsUseUUID(e)
+	//
+	// UNLESS a complete device-side discovery PROVED the device holds none of
+	// this end's objects: then the removal is a genuine no-op and a clean
+	// rolled_back is the truth.
+	p.Unproven = e.Vendor == "opnsense" && len(e.CapturedUUIDs) == 0 &&
+		e.DiscoveryState != ipsec.DiscoveryStateClean && ipsecRemoveStepsUseUUID(e)
 	cmd, berr := ipsecBuildRemoveCmd(dev, m.ID, m.Name, e)
 	if berr != nil {
 		p.FailReason = fmt.Sprintf("end %c (%s): %v — clean it manually", 'A'+e.End, dev.Name, berr)

@@ -258,6 +258,160 @@ func TestDiscover_UnansweredSearchLeavesTheEndUnproven(t *testing.T) {
 	_ = name
 }
 
+// A discovery that finds NOTHING proves the device holds none of the tunnel's
+// objects: the removal is then a genuine no-op and a clean rolled_back is the
+// TRUTH, not a false clean.
+func TestDiscover_AnEmptyDeviceIsAProvenCleanRollback(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	deployAndSettle(t, h, db, id, "up")
+
+	if resp := discoverReq(t, h, id); resp.code != http.StatusOK {
+		t.Fatalf("discover = %d, want 200; body: %s", resp.code, resp.body)
+	}
+	st := deployStateOf(t, db, id)
+	name := id2name(t, db, id)
+	// The device holds nothing of ours: every search answers and finds nothing.
+	result, _ := json.Marshal(map[string]any{
+		"steps": []map[string]any{
+			{"path": "/api/ipsec/connections/searchConnection", "status": 200, "body": `{"total":0,"rows":[]}`},
+			{"path": "/api/ipsec/pre_shared_keys/searchItem", "status": 200, "body": `{"total":0,"rows":[]}`},
+			{"path": "/api/firewall/filter/searchRule?searchPhrase=" + name, "status": 200, "body": `{"total":0,"rows":[]}`},
+		},
+	})
+	if _, _, err := db.CompleteProbeCommand(probe.ID, st.DiscoveryCommandID, "succeeded", string(result)); err != nil {
+		t.Fatalf("complete the discovery: %v", err)
+	}
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.GetIPSecDiscovery(c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET discover = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	st2 := deployStateOf(t, db, id)
+	if st2.Ends[1].DiscoveryState != ipsec.DiscoveryStateClean {
+		t.Fatalf("the end must be marked clean, got %q", st2.Ends[1].DiscoveryState)
+	}
+	if st2.Ends[1].RollbackUnproven {
+		t.Error("an end the device provably does not hold must not be unproven")
+	}
+	// The rollback is a no-op and settles CLEANLY — the truth, not a false clean.
+	if rec := rollbackReq(t, h, id); rec.Code != http.StatusOK {
+		t.Fatalf("rollback = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	st3 := deployStateOf(t, db, id)
+	for _, e := range st3.Rollback.Ends {
+		if e.CommandID != "" {
+			_, _, _ = db.CompleteProbeCommand(probe.ID, e.CommandID, "succeeded", `{"applied":true,"verified":true}`)
+		}
+	}
+	if data := pollDeploy(t, h, id); data["status"] != "rolled_back" {
+		t.Fatalf("an empty device must settle as rolled_back, got %v (note: %v)", data["status"], data["note"])
+	}
+}
+
+// A discovery that could not ask the device about everything leaves the end
+// PARTIAL: it stays unproven AND it can be searched again — otherwise the
+// object that was never looked for could never be found.
+func TestDiscover_APartialDiscoveryCanBeSearchedAgain(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	deployAndSettle(t, h, db, id, "up")
+
+	if resp := discoverReq(t, h, id); resp.code != http.StatusOK {
+		t.Fatalf("discover = %d, want 200; body: %s", resp.code, resp.body)
+	}
+	st := deployStateOf(t, db, id)
+	// The connection search answers; the psk search does not.
+	result, _ := json.Marshal(map[string]any{
+		"steps": []map[string]any{
+			{"path": "/api/ipsec/connections/searchConnection", "status": 200, "body": `{"total":0,"rows":[]}`},
+			{"path": "/api/ipsec/pre_shared_keys/searchItem", "status": 500, "body": ""},
+		},
+	})
+	if _, _, err := db.CompleteProbeCommand(probe.ID, st.DiscoveryCommandID, "succeeded", string(result)); err != nil {
+		t.Fatalf("complete the discovery: %v", err)
+	}
+	c, _ := jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.GetIPSecDiscovery(c)
+
+	st2 := deployStateOf(t, db, id)
+	if st2.Ends[1].DiscoveryState != ipsec.DiscoveryStatePartial {
+		t.Fatalf("the end must be marked partial, got %q", st2.Ends[1].DiscoveryState)
+	}
+	if !st2.Ends[1].RollbackUnproven {
+		t.Error("a partially-searched end must stay unproven")
+	}
+	// And it can be searched AGAIN — otherwise the object that was never
+	// looked for could never be found.
+	resp := discoverReq(t, h, id)
+	if resp.code != http.StatusOK {
+		t.Fatalf("a partial discovery must be searchable again: %d, body: %s", resp.code, resp.body)
+	}
+}
+
+// The device holds MORE THAN ONE object of the same kind: the removal can
+// address one uuid per token, so the extra one is reported and the end stays
+// unproven — it would otherwise be an invisible leftover.
+func TestDiscover_ADuplicateObjectIsReportedAndKeepsTheEndUnproven(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	deployAndSettle(t, h, db, id, "up")
+
+	if resp := discoverReq(t, h, id); resp.code != http.StatusOK {
+		t.Fatalf("discover = %d, want 200; body: %s", resp.code, resp.body)
+	}
+	st := deployStateOf(t, db, id)
+	name := id2name(t, db, id)
+	intent, _ := database.IPSecModelToIntent(mustTunnel(t, db, id))
+	local := intent.Ends[1]
+	remote := intent.Ends[0]
+	// TWO connections carry our owner tag.
+	connBody := `{"total":2,"rows":[` +
+		`{"description":"` + name + `","uuid":"11111111-2222-3333-4444-555555555555","local_addrs":"` + local.PeerIP + `","remote_addrs":"` + remote.PeerIP + `","version":"2"},` +
+		`{"description":"` + name + `","uuid":"99999999-8888-7777-6666-555555555555","local_addrs":"` + local.PeerIP + `","remote_addrs":"` + remote.PeerIP + `","version":"2"}]}`
+	result, _ := json.Marshal(map[string]any{
+		"steps": []map[string]any{
+			{"path": "/api/ipsec/connections/searchConnection", "status": 200, "body": connBody},
+		},
+	})
+	if _, _, err := db.CompleteProbeCommand(probe.ID, st.DiscoveryCommandID, "succeeded", string(result)); err != nil {
+		t.Fatalf("complete the discovery: %v", err)
+	}
+	c, rec := jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.GetIPSecDiscovery(c)
+	var out struct {
+		Data ipsecDiscoveryReport `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if len(out.Data.Found) != 2 {
+		t.Fatalf("BOTH connections must be reported, got %+v", out.Data.Found)
+	}
+	if !out.Data.Found[1].Duplicate {
+		t.Error("the second connection must be marked as a duplicate")
+	}
+	if len(out.Data.Duplicates) == 0 {
+		t.Error("the duplicate must be listed")
+	}
+	st2 := deployStateOf(t, db, id)
+	if !st2.Ends[1].RollbackUnproven {
+		t.Error("a leftover object means the device is not clean — the end must stay unproven")
+	}
+}
+
 // discoverReq drives the discovery endpoint for one tunnel.
 func discoverReq(t *testing.T, h *Handler, id uint) *httptestResponse {
 	t.Helper()

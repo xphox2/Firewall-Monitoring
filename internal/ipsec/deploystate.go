@@ -55,7 +55,32 @@ type DeployEndState struct {
 	// genuinely wrote nothing. The rollback poll forces rollback_failed for a
 	// marked end ("verify device"), never a clean rolled_back.
 	RollbackUnproven bool `json:"rollback_unproven,omitempty"`
+
+	// DiscoveryState records what the DEVICE-SIDE DISCOVERY proved about this
+	// end. It is "" when no discovery has run (the apply's captures are
+	// authoritative) and one of:
+	//
+	//   "clean"   — a COMPLETE discovery ran and the device holds NONE of this
+	//                end's objects (every search answered and found nothing).
+	//                The removal is then a PROVEN no-op: a clean rolled_back
+	//                is the truth, not a false clean.
+	//   "partial" — a discovery ran but some searches did not answer, so those
+	//                objects were NOT looked for: their absence is unproven.
+	//                The end can be searched again.
+	//   "found"   — a complete discovery ran and located the objects (their
+	//                uuids are in CapturedUUIDs).
+	DiscoveryState string `json:"discovery_state,omitempty"`
 }
+
+// The discovery states a deploy end can carry.
+const (
+	// DiscoveryStateClean — the device provably holds none of the end's objects.
+	DiscoveryStateClean = "clean"
+	// DiscoveryStatePartial — some searches did not answer; absence unproven.
+	DiscoveryStatePartial = "partial"
+	// DiscoveryStateFound — the objects were located and captured.
+	DiscoveryStateFound = "found"
+)
 
 // PreflightState is the per-preflight record persisted on a tunnel row
 // (models.IPSecTunnel.PreflightJSON). Like DeployState it makes preflight status

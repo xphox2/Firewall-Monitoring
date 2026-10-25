@@ -668,6 +668,7 @@ interface IPSecDiscoveredObject {
   description: string;
   matched?: Record<string, string>;
   unverified?: string[];
+  duplicate?: boolean;
 }
 
 // The discovery report: what the device holds for this tunnel. It is the
@@ -679,6 +680,7 @@ interface IPSecDiscoveryReport {
   found: IPSecDiscoveredObject[];
   unresolved: string[];
   unsearched?: string[];
+  duplicates?: string[];
   captures: Record<string, string>;
   note?: string;
 }
@@ -957,6 +959,11 @@ function IpsecTunnelsSubTab() {
                     not confirmed by: {o.unverified.join(', ')}
                   </span>
                 )}
+                {o.duplicate && (
+                  <span className="text-sig-crit">
+                    duplicate — the removal addresses only one of them
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -970,6 +977,12 @@ function IpsecTunnelsSubTab() {
             <p className="mt-1 text-[11px] text-sig-crit">
               Not searched: {discovery.unsearched.join(', ')} — the device did not answer for those,
               so their absence is not proven.
+            </p>
+          )}
+          {discovery.duplicates && discovery.duplicates.length > 0 && (
+            <p className="mt-1 text-[11px] text-sig-crit">
+              Duplicated on the device: {discovery.duplicates.join(', ')} — the removal addresses one
+              of each, so the other stays behind.
             </p>
           )}
           {discovery.note && <p className="mt-1 text-[11px] text-text-faint">{discovery.note}</p>}
