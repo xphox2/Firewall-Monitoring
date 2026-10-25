@@ -24,8 +24,9 @@ All notable changes to this project are documented in this file.
   transition: the tunnel's status does not move, and the write is guarded, so a
   concurrent poll that already merged them wins benignly.
 - **The bulk endpoint inherits both.** `POST /admin/api/ipsec/rollback-orphaned`
-  now cleans the orphaned set for real instead of reporting `needs_manual_cleanup`
-  for tunnels whose UUIDs were merely un-banked.
+  now cleans the orphaned set for real instead of landing on `rollback_failed`
+  with a "verify the device manually" reason for tunnels whose UUIDs were
+  merely un-banked.
 
 ## [0.11.442] - 2026-10-25
 

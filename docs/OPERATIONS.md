@@ -542,9 +542,9 @@ Now:
   and the rollback had nothing to delete by. The rollback now recovers them from
   the apply command's result, and the reconciler banks them into the deploy
   record as soon as they exist (they used to expire with the command row after
-  30 days; the deploy record is never pruned). A tunnel reported
-  `needs_manual_cleanup` because of a *missing UUID* is therefore cleanable
-  without a login.
+  30 days; the deploy record is never pruned). A tunnel that landed on
+  `rollback_failed` with a "verify the device manually" reason because of a
+  *missing UUID* is therefore cleanable without a login.
 
 ### Permanently deleting a retired device (purge)
 
