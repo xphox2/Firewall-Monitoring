@@ -545,6 +545,29 @@ Now:
   30 days; the deploy record is never pruned). A tunnel that landed on
   `rollback_failed` with a "verify the device manually" reason because of a
   *missing UUID* is therefore cleanable without a login.
+- **The device can be asked where the objects are (v0.11.444).** When the
+  UUIDs are gone for good (the apply command's row was pruned), the server
+  asks the device: `POST /admin/api/ipsec/tunnels/:id/discover` runs a
+  **read-only** probe, and `GET /admin/api/ipsec/tunnels/:id/discover` reports
+  what the device holds — the objects, their UUIDs, and the fields that
+  identified them. The V2 console's **Find on device** button does this and
+  lists the result. **Nothing is deleted by the probe**: the report is the
+  review, and the removal is the separate Rollback action.
+  - The objects are matched by the **exact description** (the tunnel's name —
+    the owner tag the apply wrote) **plus the selectors** the apply used: the
+    connection's peer addresses and IKE version, the pre-shared key's
+    identities, the firewall rule's subnets. A row with a different value is
+    not ours; a selector the device does not report is shown as *not
+    confirmed by*.
+  - Deleting the connection removes its local/remote auths and child SAs with
+    it (OPNsense cascades), so locating the connection removes the whole
+    IPsec footprint. The pre-shared key and the floating firewall rules are
+    separate objects and are removed by their own UUIDs.
+  - Anything the device does not report stays where it is and is listed under
+    **Not located** — the server never invents an object.
+  - The bulk cleanup (`POST /admin/api/ipsec/rollback-orphaned`) asks the
+    device before it removes anything: an orphan whose objects are unlocated
+    is reported as `discovering`. Run it again once the device has answered.
 
 ### Permanently deleting a retired device (purge)
 

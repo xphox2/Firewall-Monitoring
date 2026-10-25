@@ -899,7 +899,10 @@ func (h *Handler) ReceiveCommandResult(c *gin.Context) {
 		return
 	}
 
-	cmd, applied, err := h.db.CompleteProbeCommand(probe.ID, req.CommandID, req.Status, req.Result)
+	// A device document can carry a SECRET: the OPNsense pre-shared-key search
+	// returns the key itself. The command result column is NOT encrypted, so
+	// such a body is redacted BEFORE it is written — never after.
+	cmd, applied, err := h.db.CompleteProbeCommand(probe.ID, req.CommandID, req.Status, database.RedactProbeCommandResult(req.Result))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, response.Error("Unknown command_id for this probe"))

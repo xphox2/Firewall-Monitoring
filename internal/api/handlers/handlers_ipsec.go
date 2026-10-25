@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -884,6 +885,601 @@ type ipsecStatusReportView struct {
 		Note   string `json:"note"`
 	} `json:"steps"`
 	Error string `json:"error"`
+}
+
+// ipsecDiscoveredObject is one object the device reported as belonging to this
+// tunnel.
+type ipsecDiscoveredObject struct {
+	// Token is the capture name the object resolves ("conn", "psk",
+	// "rule_out_0") — the same name the removal's <uuid:NAME> step uses.
+	Token string `json:"token"`
+	// ObjectType labels the object kind ("connection", "pre_shared_key",
+	// "firewall_rule").
+	ObjectType string `json:"object_type"`
+	// UUID is the device-assigned uuid the removal must address.
+	UUID string `json:"uuid"`
+	// Description is the object's owner tag — it equals the tunnel's name.
+	Description string `json:"description"`
+	// Matched are the field→value pairs that identified the object: the owner
+	// tag plus every selector that was present and equal.
+	Matched map[string]string `json:"matched,omitempty"`
+	// Unverified names the selectors the device's document did NOT carry. The
+	// object was still identified by the owner tag, but the operator must see
+	// that it was NOT also confirmed by every selector.
+	Unverified []string `json:"unverified,omitempty"`
+	// Duplicate marks an object the removal will NOT address: the capture map
+	// holds one uuid per token, so a second object of the same kind stays on
+	// the device. The operator must see it — and the end stays unproven,
+	// because a leftover object means the device is not clean.
+	Duplicate bool `json:"duplicate,omitempty"`
+}
+
+// ipsecDiscoveryReport is what the operator sees before anything is deleted.
+type ipsecDiscoveryReport struct {
+	TunnelID uint `json:"tunnel_id"`
+	// End is the deploy end the objects were looked up on.
+	End int `json:"end"`
+	// Status is "pending", "complete" or "failed".
+	Status string `json:"status"`
+	// Found are the objects the device reported as this tunnel's.
+	Found []ipsecDiscoveredObject `json:"found"`
+	// Unresolved names the capture tokens the device was searched for and did
+	// NOT report — the device does not hold those objects.
+	Unresolved []string `json:"unresolved"`
+	// Unsearched names the capture tokens whose search the device did not
+	// answer — their absence is NOT proven, so the removal refuses to call the
+	// device clean.
+	Unsearched []string `json:"unsearched,omitempty"`
+	// Duplicates names the capture tokens whose object the device holds more
+	// than once. The removal can address one uuid per token, so the extra
+	// object stays on the device.
+	Duplicates []string `json:"duplicates,omitempty"`
+	// Captures are the discovered uuids, keyed by capture token.
+	Captures map[string]string `json:"captures"`
+	// Note explains a failure or a partial result.
+	Note string `json:"note,omitempty"`
+}
+
+// ipsecDiscoveryUUIDRe validates a device-assigned uuid before it is stored.
+// It mirrors the collector's own substitution-time check (the collector drops
+// a malformed uuid, so storing one would be storing a value that can never be
+// used) — this is defence in depth, so a garbled document never becomes a
+// persisted capture.
+var ipsecDiscoveryUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// ipsecDiscoveryRows extracts the candidate rows from a device search
+// document.
+//
+// OPNsense's search endpoints answer with the standard grid shape:
+// {"total":N,"rowCount":N,"current":1,"rows":[{…,"uuid":"…"}]}. A body that
+// does not parse yields NO row: the discovery must never invent an object.
+func ipsecDiscoveryRows(body string) []map[string]any {
+	var doc struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err == nil && doc.Rows != nil {
+		return doc.Rows
+	}
+	// A bare array is accepted too: some device builds answer with the rows
+	// directly.
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(body), &rows); err == nil {
+		return rows
+	}
+	return nil
+}
+
+// ipsecMatchDiscoveryRow decides whether a device row is THIS tunnel's
+// object.
+//
+// EXACT DESCRIPTION plus the SELECTORS: the description is the owner tag the
+// apply wrote, so it must match exactly; a selector the document carries must
+// equal the value the apply used, so a row with someone else's subnets is not
+// ours. A selector the document does NOT carry is reported as unverified
+// rather than treated as a match — the operator sees it in the report instead
+// of the server quietly assuming it.
+func ipsecMatchDiscoveryRow(row map[string]any, desc string, match map[string]string) (bool, map[string]string, []string) {
+	d, _ := row["description"].(string)
+	if d != desc {
+		return false, nil, nil
+	}
+	matched := map[string]string{"description": d}
+	var unverified []string
+	for field, want := range match {
+		got, present := row[field]
+		if !present {
+			unverified = append(unverified, field)
+			continue
+		}
+		s, ok := got.(string)
+		if !ok {
+			s = fmt.Sprint(got)
+		}
+		if s != want {
+			return false, nil, nil
+		}
+		matched[field] = s
+	}
+	sort.Strings(unverified)
+	return true, matched, unverified
+}
+
+// ipsecDiscoveryOutcome is what a discovery probe found.
+type ipsecDiscoveryOutcome struct {
+	// Captures are the discovered uuids, keyed by capture token.
+	Captures map[string]string
+	// Found are the objects the device reported as this tunnel's.
+	Found []ipsecDiscoveredObject
+	// Unresolved names the tokens the device was searched for and did NOT
+	// report — the device does not hold those objects, so their absence IS
+	// proven.
+	Unresolved []string
+	// Unsearched names the tokens whose search the device did not ANSWER (the
+	// endpoint failed, or the result could not be parsed). Their absence is NOT
+	// proven, so the end stays unproven and the removal refuses to call the
+	// device clean.
+	Unsearched []string
+	// Duplicates names the tokens whose object the device holds MORE THAN
+	// ONCE. The capture map holds one uuid per token, so the extra object
+	// stays on the device — the end stays unproven and the operator sees it.
+	Duplicates []string
+}
+
+// ipsecParseDiscovery turns a discovery probe's result into the objects the
+// device holds for this tunnel.
+//
+// The steps are matched to the probe's documents by PATH — the probe asks for
+// each distinct path ONCE, so the rules (which share a path) cost one GET.
+// The report's step order follows the payload's, and a path that does not line
+// up yields NO object (the parse fails safe).
+func ipsecParseDiscovery(steps []ipsec.DiscoverStep, tunnelName string, result string) ipsecDiscoveryOutcome {
+	out := ipsecDiscoveryOutcome{Captures: map[string]string{}}
+	var rep struct {
+		Steps []struct {
+			Path   string `json:"path"`
+			Status int    `json:"status"`
+			Body   string `json:"body"`
+			Note   string `json:"note"`
+		} `json:"steps"`
+		Error string `json:"error"`
+	}
+	parsed := json.Unmarshal([]byte(result), &rep) == nil
+	bodyByPath := make(map[string]string, len(rep.Steps))
+	answered := make(map[string]bool, len(rep.Steps))
+	if parsed {
+		for _, s := range rep.Steps {
+			if s.Status < 200 || s.Status >= 300 {
+				continue
+			}
+			answered[s.Path] = true
+			if _, seen := bodyByPath[s.Path]; !seen {
+				bodyByPath[s.Path] = s.Body
+			}
+		}
+	}
+	for _, step := range steps {
+		body, ok := bodyByPath[step.Path]
+		if !ok {
+			// The device was not asked, or did not answer: the object's absence
+			// is NOT proven.
+			out.Unsearched = append(out.Unsearched, step.Token)
+			continue
+		}
+		for _, row := range ipsecDiscoveryRows(body) {
+			ok, fields, unverified := ipsecMatchDiscoveryRow(row, tunnelName, step.Match)
+			if !ok {
+				continue
+			}
+			uuid, _ := row["uuid"].(string)
+			if !ipsecDiscoveryUUIDRe.MatchString(uuid) {
+				continue // a malformed uuid can never address an object
+			}
+			// EVERY match is reported. The capture map holds one uuid per token,
+			// so a second object of the same kind is reported as a duplicate:
+			// the removal cannot address it, and it would otherwise be an
+			// invisible leftover on the device.
+			_, dup := out.Captures[step.Token]
+			if !dup {
+				out.Captures[step.Token] = uuid
+			} else {
+				out.Duplicates = append(out.Duplicates, step.Token)
+			}
+			out.Found = append(out.Found, ipsecDiscoveredObject{
+				Token:       step.Token,
+				ObjectType:  step.ObjectType,
+				UUID:        uuid,
+				Description: tunnelName,
+				Matched:     fields,
+				Unverified:  unverified,
+				Duplicate:   dup,
+			})
+		}
+	}
+	// Every token the device did not report is UNRESOLVED. An unresolved token
+	// is never invented: it means "the device does not hold it".
+	for _, step := range steps {
+		if _, ok := out.Captures[step.Token]; ok {
+			continue
+		}
+		if answered[step.Path] {
+			out.Unresolved = append(out.Unresolved, step.Token)
+			continue
+		}
+	}
+	return out
+}
+
+// ipsecMergeDiscovery merges a completed discovery probe's findings into the
+// tunnel's deploy record.
+//
+// The captured uuids go into the END the discovery targeted — each end has its
+// own capture map (the capture names are per end, so two OPNsense ends never
+// collide). A uuid that is ALREADY captured is never overwritten: the apply's
+// own record is the authoritative one.
+//
+// ONE guarded write. A concurrent poll that already merged wins benignly.
+func ipsecMergeDiscovery(db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState, outcome ipsecDiscoveryOutcome, end int) error {
+	// Merge onto the FRESHEST state: the reconciler may have banked the
+	// apply's captures into the record since this snapshot was read, and the
+	// merge must not overwrite them with a stale copy. The WHOLE state is
+	// refreshed, not just the ends — the rollback record and the discovery
+	// fields are written by other writers too.
+	fresh, ferr := db.GetIPSecTunnel(m.ID)
+	if ferr == nil {
+		if fst, perr := parseDeployState(fresh); perr == nil && fst != nil {
+			*st = *fst
+		}
+	}
+	changed := false
+	for i := range st.Ends {
+		if st.Ends[i].End != end {
+			continue
+		}
+		// PER KEY: a re-search that finds MORE objects adds them. The map is
+		// never wholesale-replaced, and a captured uuid is never overwritten —
+		// so a second search can complete a first, partial one.
+		for k, v := range outcome.Captures {
+			if _, ok := st.Ends[i].CapturedUUIDs[k]; ok {
+				continue
+			}
+			if st.Ends[i].CapturedUUIDs == nil {
+				st.Ends[i].CapturedUUIDs = map[string]string{}
+			}
+			st.Ends[i].CapturedUUIDs[k] = v
+			changed = true
+		}
+		// What the discovery PROVED about the device:
+		//   - a search that did not answer leaves the absence UNPROVEN, and the
+		//     end can be searched again;
+		//   - a duplicate object cannot be addressed (the capture map holds one
+		//     uuid per token), so a leftover remains and the device is not clean;
+		//   - a complete discovery that found the objects proves them, and one
+		//     that found NOTHING proves the device holds none of them.
+		state := ipsec.DiscoveryStateFound
+		switch {
+		case len(outcome.Unsearched) > 0:
+			state = ipsec.DiscoveryStatePartial
+		case len(outcome.Captures) == 0:
+			state = ipsec.DiscoveryStateClean
+		}
+		if st.Ends[i].DiscoveryState != state {
+			st.Ends[i].DiscoveryState = state
+			changed = true
+		}
+		if len(outcome.Unsearched) > 0 || len(outcome.Duplicates) > 0 {
+			if !st.Ends[i].RollbackUnproven {
+				st.Ends[i].RollbackUnproven = true
+				changed = true
+			}
+			continue
+		}
+		// The marker may only be cleared when EVERY object the removal
+		// addresses is accounted for — addressable (its uuid is known) or
+		// proven absent (the complete discovery did not report it). Clearing it
+		// on "the discovery found something" alone would strand an object the
+		// search never covered.
+		if st.Ends[i].RollbackUnproven && ipsecEndFullyAccounted(st.Ends[i], ipsecRemoveStepTokens(st.Ends[i])) {
+			st.Ends[i].RollbackUnproven = false
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	blob, err := json.Marshal(st)
+	if err != nil {
+		return err
+	}
+	// The status and last_error are carried through unchanged: the merge is
+	// bookkeeping, not a saga transition.
+	terr := db.TransitionIPSecDeploy(m.ID, []string{m.Status}, m.Status, m.LastError, string(blob), false, nil)
+	if errors.Is(terr, database.ErrIPSecConcurrentDeploy) {
+		return nil // lost the race — the poll merged them already
+	}
+	return terr
+}
+
+// ipsecDiscoveryReportFor renders the report for a tunnel's discovery probe.
+//
+// The probe's result is re-read on every call, so the report is always
+// available — and the merge is idempotent, so a second call changes nothing.
+func ipsecDiscoveryReportFor(db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState, intent *ipsec.TunnelIntent) (ipsecDiscoveryReport, error) {
+	rep := ipsecDiscoveryReport{TunnelID: m.ID, End: st.DiscoveryEnd, Status: "pending", Captures: map[string]string{}}
+	if st.DiscoveryCommandID == "" {
+		rep.Status = "none"
+		rep.Note = "no discovery probe has been run for this tunnel"
+		return rep, nil
+	}
+	cmd, cerr := db.GetProbeCommandByCommandID(st.DiscoveryCommandID)
+	if cerr != nil {
+		return rep, cerr
+	}
+	if cmd == nil {
+		rep.Status = "failed"
+		rep.Note = "the discovery probe's result is gone — run the discovery again"
+		return rep, nil
+	}
+	switch cmd.Status {
+	case database.ProbeCommandStatusPending, database.ProbeCommandStatusDispatched:
+		return rep, nil
+	case database.ProbeCommandStatusFailed:
+		rep.Status = "failed"
+		rep.Note = "the discovery probe failed: " + firstNonEmpty(cmd.Result, "no detail")
+		return rep, nil
+	}
+	steps, serr := ipsecDiscoverySteps(intent, st.DiscoveryEnd)
+	if serr != nil {
+		rep.Status = "failed"
+		rep.Note = serr.Error()
+		return rep, nil
+	}
+	outcome := ipsecParseDiscovery(steps, m.Name, cmd.Result)
+	rep.Status = "complete"
+	rep.Found = outcome.Found
+	rep.Unresolved = outcome.Unresolved
+	rep.Unsearched = outcome.Unsearched
+	rep.Duplicates = outcome.Duplicates
+	rep.Captures = outcome.Captures
+	if len(outcome.Found) == 0 {
+		rep.Note = "the device reports no object of this tunnel's — it may already be clean"
+	}
+	if len(outcome.Unsearched) > 0 {
+		rep.Note = "the device did not answer for: " + strings.Join(outcome.Unsearched, ", ") +
+			" — those objects were NOT looked for, so their absence is not proven"
+	}
+	if len(outcome.Duplicates) > 0 {
+		rep.Note = "the device holds more than one object for: " + strings.Join(outcome.Duplicates, ", ") +
+			" — the removal addresses one of them, so the other stays on the device"
+	}
+	// Merge the discovered uuids into the record so the removal can use them.
+	if err := ipsecMergeDiscovery(db, m, st, outcome, st.DiscoveryEnd); err != nil {
+		return rep, err
+	}
+	return rep, nil
+}
+
+// DiscoverIPSecTunnel asks the DEVICE where this tunnel's objects are.
+//
+// The OPNsense removal deletes objects by their device-assigned UUID, and
+// those UUIDs come from the apply's response. When the server has lost them
+// (the apply command's result was pruned, or the apply never reported), the
+// only way to clean the device is to ASK it.
+//
+// The probe is READ-ONLY: it changes nothing on the device. It only tells the
+// server which UUIDs the objects have, so the removal can address them.
+//
+// Nothing is deleted here. The operator reads the report (GET) and then runs
+// the rollback.
+func (h *Handler) DiscoverIPSecTunnel(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	st, perr := parseDeployState(m)
+	if perr != nil {
+		httputil.InternalError(c, "Failed to read deploy state", perr)
+		return
+	}
+	if st == nil || len(st.Ends) == 0 {
+		c.JSON(http.StatusBadRequest, response.Error("nothing to discover — no deploy record for this tunnel"))
+		return
+	}
+	intent, ierr := database.IPSecModelToIntent(m)
+	if ierr != nil {
+		c.JSON(http.StatusBadRequest, response.Error("cannot discover — the tunnel intent is malformed: "+ierr.Error()))
+		return
+	}
+	// The end to look up: the first deployable end that still has no captured
+	// uuids and whose vendor can locate its objects on the device.
+	target, terr := ipsecDiscoveryTarget(st)
+	if terr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(terr.Error()))
+		return
+	}
+	steps, serr := ipsecDiscoverySteps(intent, target)
+	if serr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(serr.Error()))
+		return
+	}
+	cmd, cerr := ipsecBuildDiscoveryCmd(db, m, intent, target, steps)
+	if cerr != nil {
+		c.JSON(http.StatusBadRequest, response.Error(cerr.Error()))
+		return
+	}
+	// Record the probe on the deploy record and enqueue it in ONE guarded
+	// write, so the poll can never see a command id whose row does not exist.
+	st.DiscoveryCommandID = cmd.CommandID
+	st.DiscoveryEnd = target
+	blob, merr := json.Marshal(st)
+	if merr != nil {
+		httputil.InternalError(c, "Failed to encode deploy state", merr)
+		return
+	}
+	werr := db.TransitionIPSecDeploy(id, []string{m.Status}, m.Status, m.LastError, string(blob), false, []*models.ProbeCommand{cmd})
+	if werr != nil {
+		if errors.Is(werr, database.ErrIPSecConcurrentDeploy) {
+			c.JSON(http.StatusConflict, response.Error("the tunnel changed while the discovery was starting — refresh and retry"))
+			return
+		}
+		httputil.InternalError(c, "Failed to start the discovery probe", werr)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnel_id":  id,
+		"status":     "discovering",
+		"end":        target,
+		"command_id": cmd.CommandID,
+		"searching":  steps,
+	}))
+}
+
+// GetIPSecDiscovery reports what the device holds for this tunnel.
+//
+// Nothing is deleted: the report is the operator's review of what the removal
+// WOULD address, before they confirm it.
+func (h *Handler) GetIPSecDiscovery(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	id, ok := httputil.ParseID(c)
+	if !ok {
+		return
+	}
+	m, err := db.GetIPSecTunnel(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, response.Error("Tunnel not found"))
+		return
+	}
+	st, perr := parseDeployState(m)
+	if perr != nil {
+		httputil.InternalError(c, "Failed to read deploy state", perr)
+		return
+	}
+	if st == nil {
+		c.JSON(http.StatusNotFound, response.Error("no deploy record for this tunnel"))
+		return
+	}
+	intent, ierr := database.IPSecModelToIntent(m)
+	if ierr != nil {
+		c.JSON(http.StatusBadRequest, response.Error("cannot report — the tunnel intent is malformed: "+ierr.Error()))
+		return
+	}
+	rep, rerr := ipsecDiscoveryReportFor(db, m, st, intent)
+	if rerr != nil {
+		httputil.InternalError(c, "Failed to read the discovery result", rerr)
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(rep))
+}
+
+// ipsecDiscoveryTarget picks the end whose objects should be looked up on the
+// device: the first deployable end that does not already KNOW its objects.
+//
+// "Knows" means either the apply's captured uuids are there, or a complete
+// discovery proved the device holds none of them. An end whose last discovery
+// was PARTIAL (some searches did not answer) does NOT know — it is searched
+// again, so an object that could not be looked for can still be found later.
+func ipsecDiscoveryTarget(st *ipsec.DeployState) (int, error) {
+	for i := range st.Ends {
+		e := st.Ends[i]
+		if e.DiscoveryState == ipsec.DiscoveryStateClean {
+			continue // the device provably holds none of this end's objects
+		}
+		if e.DiscoveryState != ipsec.DiscoveryStatePartial && len(e.CapturedUUIDs) > 0 {
+			continue // already known
+		}
+		drv, ok := ipsec.Driver(e.Vendor)
+		if !ok {
+			continue
+		}
+		if _, ok := drv.(ipsec.Discoverer); !ok {
+			continue
+		}
+		return e.End, nil
+	}
+	return 0, fmt.Errorf("every deployable end already knows its objects — there is nothing to discover")
+}
+
+// ipsecDiscoverySteps re-renders the discovery steps for one end. The render
+// is deterministic (it reads the stored intent), so the probe's steps and the
+// parse's steps always agree.
+func ipsecDiscoverySteps(intent *ipsec.TunnelIntent, end int) ([]ipsec.DiscoverStep, error) {
+	drv, ok := ipsec.Driver(intent.Ends[end].Vendor)
+	if !ok {
+		return nil, fmt.Errorf("no IPSec driver for vendor %q", intent.Ends[end].Vendor)
+	}
+	disc, ok := drv.(ipsec.Discoverer)
+	if !ok {
+		return nil, fmt.Errorf("vendor %q does not support discovery", intent.Ends[end].Vendor)
+	}
+	steps := disc.Discovery(ipsec.ViewFor(intent, end))
+	if len(steps) == 0 {
+		return nil, fmt.Errorf("vendor %q rendered no discovery steps", intent.Ends[end].Vendor)
+	}
+	return steps, nil
+}
+
+// ipsecBuildDiscoveryCmd builds the READ-ONLY discovery probe for one end.
+//
+// It rides the SAME collector mechanism as the SA-liveness probe (the
+// ipsec_status command type): the server renders the GETs, the collector runs
+// them and returns the raw documents, and the SERVER parses them. The
+// collector stays a transport and learns no vendor knowledge — and NO
+// collector release is needed, so the collectors the operator already runs
+// understand these steps.
+func ipsecBuildDiscoveryCmd(db database.Store, m *models.IPSecTunnel, intent *ipsec.TunnelIntent, end int, steps []ipsec.DiscoverStep) (*models.ProbeCommand, error) {
+	dev, derr := db.GetDevice(intent.Ends[end].DeviceID)
+	if derr != nil {
+		return nil, fmt.Errorf("end %c device (id %d) not found", 'A'+end, intent.Ends[end].DeviceID)
+	}
+	if dev.ProbeID == nil || *dev.ProbeID == 0 {
+		return nil, fmt.Errorf("end %c (%s): device has no collector assigned", 'A'+end, dev.Name)
+	}
+	port := dev.APIPort
+	if port == 0 {
+		port = 443
+	}
+	// One GET per DISTINCT path: the firewall rules share a search endpoint.
+	seen := map[string]bool{}
+	probeSteps := make([]ipsec.ProbeStep, 0, len(steps))
+	for _, s := range steps {
+		if seen[s.Path] {
+			continue
+		}
+		seen[s.Path] = true
+		probeSteps = append(probeSteps, ipsec.ProbeStep{Kind: ipsec.StepHTTPAPI, Method: http.MethodGet, Path: s.Path})
+	}
+	payload := ipsecStatusPayload{
+		Vendor:      intent.Ends[end].Vendor,
+		DeviceID:    dev.ID,
+		TunnelName:  m.Name,
+		BaseURL:     fmt.Sprintf("https://%s:%d", dev.IPAddress, port),
+		APIToken:    dev.APIToken,
+		InsecureTLS: dev.APIInsecureTLS,
+		Steps:       probeSteps,
+	}
+	// api_token marshaled intentionally (gosec G117 CI-excluded).
+	buf, merr := json.Marshal(payload)
+	if merr != nil {
+		return nil, merr
+	}
+	return &models.ProbeCommand{
+		ProbeID:   *dev.ProbeID,
+		DeviceID:  dev.ID,
+		CommandID: uuid.NewString(),
+		Type:      database.ProbeCommandTypeIPSecStatus,
+		Payload:   string(buf),
+	}, nil
 }
 
 // ipsecBuildStatusCmd builds the ipsec_status probe for one deployed end: the
@@ -1830,6 +2426,9 @@ type ipsecOrphanReport struct {
 	// SkippedEnds are the ends whose device no longer exists (retired/purged) —
 	// they were NOT cleaned and their objects may still be there.
 	SkippedEnds []ipsec.RollbackEndState `json:"skipped_ends"`
+	// Discovered are the objects the device reported as this tunnel's, when a
+	// discovery probe ran (the operator's review of what the removal addresses).
+	Discovered []ipsecDiscoveredObject `json:"discovered,omitempty"`
 	// Commands are the remove commands enqueued for this tunnel.
 	Commands []string `json:"commands"`
 	// Error explains a failure, a manual-cleanup requirement or the terminal
@@ -1885,7 +2484,7 @@ func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
 	}
 
 	report := make([]ipsecOrphanReport, 0, len(tunnels))
-	rollingBack, manual := 0, 0
+	rollingBack, manual, discovering := 0, 0, 0
 	for i := range tunnels {
 		m := tunnels[i]
 		if !ipsecTunnelHasDeadEnd(m, states) {
@@ -1946,6 +2545,94 @@ func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
 		} else if live {
 			rep.Action = "in_flight"
 			rep.Error = "a deploy or rollback command is still in flight for this tunnel — retry once it settles"
+			report = append(report, rep)
+			continue
+		}
+		// Fold in a completed discovery probe: its findings ARE the uuids the
+		// removal needs to address the objects on the device.
+		intent, ierr := database.IPSecModelToIntent(&m)
+		if ierr != nil {
+			rep.Action = "error"
+			rep.Error = "the tunnel intent is malformed: " + ierr.Error()
+			report = append(report, rep)
+			continue
+		}
+		if st.DiscoveryCommandID != "" {
+			drep, derr := ipsecDiscoveryReportFor(db, &m, st, intent)
+			if derr != nil {
+				rep.Action = "error"
+				rep.Error = "the discovery result could not be read: " + derr.Error()
+				report = append(report, rep)
+				continue
+			}
+			if drep.Status == "pending" {
+				rep.Action = "discovering"
+				rep.Error = "the device is being asked where this tunnel's objects are — run the bulk cleanup again once it has answered"
+				report = append(report, rep)
+				continue
+			}
+			if drep.Status == "failed" {
+				// The probe FAILED (the device is unreachable, most likely).
+				// Re-enqueueing it on every bulk call would mint a new probe
+				// each time, so the failure is reported instead — the operator
+				// re-runs the per-tunnel discovery when the device is back.
+				rep.Action = "discovery_failed"
+				rep.Error = drep.Note
+				report = append(report, rep)
+				continue
+			}
+			if len(drep.Unsearched) > 0 {
+				// The device did not answer for some of the searches, so those
+				// objects were never looked for. Re-enqueueing a probe on
+				// every bulk call would mint one each time, so the partial
+				// result is reported and the probe is only repeated after a
+				// cooldown.
+				if !ipsecDiscoveryCooldownElapsed(db, st) {
+					rep.Action = "discovery_partial"
+					rep.Error = "the device did not answer for: " + strings.Join(drep.Unsearched, ", ") +
+						" — those objects were NOT looked for; the search repeats after a cooldown"
+					report = append(report, rep)
+					continue
+				}
+			}
+			rep.Discovered = drep.Found
+		}
+		// The objects on the device still have no known uuid: ask the device
+		// where they are BEFORE removing anything. The probe is read-only; the
+		// removal runs once the operator has seen the report.
+		if target, terr := ipsecDiscoveryTarget(st); terr == nil {
+			steps, serr := ipsecDiscoverySteps(intent, target)
+			if serr != nil {
+				rep.Action = "error"
+				rep.Error = serr.Error()
+				report = append(report, rep)
+				continue
+			}
+			cmd, cerr := ipsecBuildDiscoveryCmd(db, &m, intent, target, steps)
+			if cerr != nil {
+				rep.Action = "error"
+				rep.Error = cerr.Error()
+				report = append(report, rep)
+				continue
+			}
+			st.DiscoveryCommandID = cmd.CommandID
+			st.DiscoveryEnd = target
+			blob, merr := json.Marshal(st)
+			if merr != nil {
+				rep.Action = "error"
+				rep.Error = "the discovery state could not be encoded: " + merr.Error()
+				report = append(report, rep)
+				continue
+			}
+			if werr := db.TransitionIPSecDeploy(m.ID, []string{m.Status}, m.Status, m.LastError, string(blob), false, []*models.ProbeCommand{cmd}); werr != nil {
+				rep.Action = "error"
+				rep.Error = "the discovery probe could not be started: " + werr.Error()
+				report = append(report, rep)
+				continue
+			}
+			rep.Action = "discovering"
+			rep.Error = "the device is being asked where this tunnel's objects are — run the bulk cleanup again once it has answered"
+			discovering++
 			report = append(report, rep)
 			continue
 		}
@@ -2013,7 +2700,7 @@ func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
 		ActorID:   userID,
 		Method:    http.MethodPost,
 		Action:    "ipsec_bulk_rollback_orphaned",
-		Target:    fmt.Sprintf("tunnels=%d rolling_back=%d needs_manual_cleanup=%d", len(report), rollingBack, manual),
+		Target:    fmt.Sprintf("tunnels=%d rolling_back=%d needs_manual_cleanup=%d discovering=%d", len(report), rollingBack, manual, discovering),
 		Status:    http.StatusOK,
 		IPAddress: c.ClientIP(),
 		UserAgent: c.Request.UserAgent(),
@@ -2027,8 +2714,30 @@ func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
 			"orphans":              len(report),
 			"rolling_back":         rollingBack,
 			"needs_manual_cleanup": manual,
+			"discovering":          discovering,
 		},
 	}))
+}
+
+// ipsecDiscoveryCooldown is how long the bulk cleanup waits before it repeats
+// a discovery whose searches did not all answer.
+//
+// Without it, an endpoint that always fails makes every bulk call mint a fresh
+// probe — the operator's own retry loop becomes a probe queue.
+const ipsecDiscoveryCooldown = 10 * time.Minute
+
+// ipsecDiscoveryCooldownElapsed reports whether enough time has passed since
+// the last discovery probe to repeat it. A probe whose row is gone counts as
+// stale (it cannot be re-read), so it repeats.
+func ipsecDiscoveryCooldownElapsed(db database.Store, st *ipsec.DeployState) bool {
+	if st.DiscoveryCommandID == "" {
+		return true
+	}
+	cmd, err := db.GetProbeCommandByCommandID(st.DiscoveryCommandID)
+	if err != nil || cmd == nil {
+		return true
+	}
+	return time.Since(cmd.UpdatedAt) >= ipsecDiscoveryCooldown
 }
 
 // ipsecTunnelHasDeadEnd reports whether either end of a tunnel points at a
@@ -2240,11 +2949,18 @@ func ipsecPlanRollbackEnd(db database.Store, m *models.IPSecTunnel, e ipsec.Depl
 		p.FailReason = fmt.Sprintf("end %c (%s): device has no collector assigned — clean it manually", 'A'+e.End, dev.Name)
 		return p
 	}
-	// A live OPNsense end with no captured UUIDs: every <uuid:NAME> delete step
-	// is skipped by the collector and the report reads "applied: true". That is
-	// a false clean, so the end is marked unproven and the terminal forces
-	// rollback_failed with an explicit "verify manually" reason.
-	p.Unproven = e.Vendor == "opnsense" && len(e.CapturedUUIDs) == 0 && ipsecRemoveStepsUseUUID(e)
+	// A live OPNsense end whose removal addresses objects the server cannot
+	// account for: every such <uuid:NAME> delete step is skipped by the
+	// collector and the report reads "applied: true". That is a false clean, so
+	// the end is marked unproven and the terminal forces rollback_failed with an
+	// explicit "verify manually" reason.
+	//
+	// "Cannot account for" is PER TOKEN: an end whose captures cover three of
+	// its four objects is NOT fully accounted for. An end is fully accounted
+	// for when every object is addressable (its uuid is known) or proven absent
+	// (a complete discovery did not report it).
+	tokens := ipsecRemoveStepTokens(e)
+	p.Unproven = e.Vendor == "opnsense" && len(tokens) > 0 && !ipsecEndFullyAccounted(e, tokens)
 	cmd, berr := ipsecBuildRemoveCmd(dev, m.ID, m.Name, e)
 	if berr != nil {
 		p.FailReason = fmt.Sprintf("end %c (%s): %v — clean it manually", 'A'+e.End, dev.Name, berr)
@@ -2254,17 +2970,64 @@ func ipsecPlanRollbackEnd(db database.Store, m *models.IPSecTunnel, e ipsec.Depl
 	return p
 }
 
-// ipsecRemoveStepsUseUUID reports whether this end's remove snapshot addresses
-// device objects by a captured <uuid:NAME> token. Only those removes depend on
-// the apply's captured UUIDs, so only those can be a false clean when the
-// captures are missing.
-func ipsecRemoveStepsUseUUID(e ipsec.DeployEndState) bool {
+// ipsecRemoveTokenRe matches the <uuid:NAME> tokens in a remove step. It
+// mirrors the collector's own token pattern (Firewall-Collector
+// internal/fwapi/apply.go).
+var ipsecRemoveTokenRe = regexp.MustCompile(`<uuid:([a-zA-Z0-9_]+)>`)
+
+// ipsecRemoveStepTokens lists the capture names a remove snapshot addresses —
+// the objects the removal would delete by uuid.
+func ipsecRemoveStepTokens(e ipsec.DeployEndState) []string {
+	seen := map[string]bool{}
+	var out []string
 	for _, s := range e.RemoveSteps {
-		if strings.Contains(s.Path, "<uuid:") || strings.Contains(s.Body, "<uuid:") {
-			return true
+		for _, field := range []string{s.Path, s.Body} {
+			for _, m := range ipsecRemoveTokenRe.FindAllStringSubmatch(field, -1) {
+				if !seen[m[1]] {
+					seen[m[1]] = true
+					out = append(out, m[1])
+				}
+			}
 		}
 	}
-	return false
+	sort.Strings(out)
+	return out
+}
+
+// ipsecEndFullyAccounted reports whether every object the removal addresses is
+// either ADDRESSABLE (its uuid is known) or PROVEN ABSENT.
+//
+// An object is proven absent when a COMPLETE discovery ran and did not report
+// it: the device was asked and does not hold it. Without a complete discovery,
+// a missing uuid means the SERVER does not know — the object may still be
+// there, and the removal would skip its delete step and report a false clean.
+//
+// THE CASCADE: the discovery does not search for every object the removal
+// addresses. For OPNsense it searches the connection, the pre-shared key and
+// the firewall rules; the connection's local/remote auths and child SAs are
+// NOT searched for — they are removed WITH the connection, because OPNsense's
+// delConnection cascades to them. So those tokens are accounted for through
+// the CONNECTION: if the connection is addressable the cascade removes them,
+// and if the connection is proven absent they do not exist. That coupling is
+// pinned by TestOPNsenseDiscovery_CascadeCoveredTokensArePinned, so a future
+// remove token that is neither searched nor cascade-covered fails loudly
+// instead of silently counting as absent.
+//
+// This is the rule that decides whether an end is unproven, so it must be
+// PER TOKEN: an end whose captures cover three of its four objects is not
+// fully accounted for.
+func ipsecEndFullyAccounted(e ipsec.DeployEndState, tokens []string) bool {
+	complete := e.DiscoveryState == ipsec.DiscoveryStateClean || e.DiscoveryState == ipsec.DiscoveryStateFound
+	for _, t := range tokens {
+		if _, ok := e.CapturedUUIDs[t]; ok {
+			continue // addressable
+		}
+		if complete {
+			continue // proven absent by the device's own answer
+		}
+		return false
+	}
+	return true
 }
 
 // ForceResetIPSecDeploy is the operator escape from a wedged deploy record: it

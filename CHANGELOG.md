@@ -1,6 +1,63 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.444] - 2026-10-25
+
+### Added — Device-side discovery: find the tunnel's objects on the firewall
+
+- **The server can now ask the device where a tunnel's objects are.** The
+  OPNsense removal deletes objects by their device-assigned UUID, and those
+  UUIDs come from the apply's response. When the server has lost them (the
+  apply command's result was pruned, or the apply never reported), the only way
+  to clean the device was to log into it. `POST /admin/api/ipsec/tunnels/:id/discover`
+  runs a **read-only** probe that asks the device, and
+  `GET /admin/api/ipsec/tunnels/:id/discover` reports what it holds. The
+  discovered UUIDs are merged into the deploy record, so the ordinary rollback
+  can address the objects it found.
+- **The objects are identified by EXACT description + selectors.** Every object
+  the deploy created carries the tunnel's name as its description (the owner
+  tag the apply wrote), and the search adds the values the apply used — the
+  connection's peer addresses and IKE version, the pre-shared key's identities,
+  the firewall rule's subnets. A row that carries a different value is NOT
+  ours; a selector the device's document does not carry is reported as
+  *unverified* rather than assumed. **Nothing is deleted by the probe** — the
+  report is the operator's review, and the removal is a separate, explicit
+  action.
+- **The bulk cleanup asks the device first.** `POST
+  /admin/api/ipsec/rollback-orphaned` now reports an orphan whose objects are
+  still unlocated as `discovering` (and enqueues the read-only probe) instead
+  of rolling it back blindly. Run it again once the device has answered and
+  the removal addresses the objects it found.
+- **The connection is the anchor.** OPNsense's `delConnection` cascades to the
+  connection's local/remote auths and child SAs, so locating the connection
+  removes the whole IPsec footprint; the driver's own per-child delete steps
+  are simply skipped.
+- **No collector release is needed.** The probe rides the same read-only
+  mechanism as the SA-liveness probe — the server renders the GETs, the
+  collector runs them and returns the raw documents, and the server parses
+  them. The collectors already deployed understand it.
+- **A device document's secrets are redacted before it is persisted.** The
+  OPNsense pre-shared-key search returns the key itself, and the command
+  result column is not encrypted — so a document carrying a pre-shared key is
+  blanked **before** it is written, never after.
+- **A device that provably holds nothing is a clean rollback.** When every
+  search answers and none of them finds an object of the tunnel's, the device
+  does not hold any — the removal is a genuine no-op and the tunnel settles on
+  `rolled_back`, which is the truth rather than a false clean.
+- **A partial search can be repeated, and a duplicate is reported.** A search
+  the device did not answer leaves the object's absence unproven, so the end
+  stays unproven *and* can be searched again — an object that was never looked
+  for can still be found. When the device holds more than one object of the
+  same kind, every one of them is reported (the removal addresses one uuid per
+  token), and the end stays unproven so the leftover is not invisible.
+- **"Unproven" is now decided per object, not per end.** An end whose captures
+  cover three of the four objects its removal addresses used to count as proven,
+  and the removal skipped the fourth delete step while reporting success. It is
+  now unproven unless **every** object the removal addresses is either
+  addressable (its uuid is known) or proven absent (a complete discovery did
+  not report it) — so a partially-known end is an honest `rollback_failed`, not
+  a false clean.
+
 ## [0.11.443] - 2026-10-25
 
 ### Fixed — Recover the captured UUIDs, so the device can be cleaned without a login (IPSec retired-peer rollback)
