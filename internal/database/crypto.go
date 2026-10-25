@@ -3,9 +3,12 @@ package database
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -13,16 +16,104 @@ import (
 	"firewall-mon/internal/models"
 )
 
-const encPrefix = "{enc}"
+// Field-encryption wire formats. Both are AES-256-GCM with a random 12-byte
+// nonce prepended to the ciphertext, base64 (std) encoded after the prefix.
+// They differ only in how the AES key is derived from the configured secret
+// (ENCRYPTION_KEY, or the JWT_SECRET_KEY fallback, or an
+// ENCRYPTION_KEY_HISTORY entry):
+//
+//   - "{enc}"  (v1, legacy): key = sha256(secret). Every value written before
+//     D-11 carries this prefix. It is DECRYPT-ONLY now — nothing new is ever
+//     written in this format except the key-check canary (crypto_canary.go).
+//   - "{enc2}" (v2): key = HKDF-SHA256(secret, salt=nil,
+//     info="fwmon-field-encryption-v2"). Every new encryption uses it (D-11):
+//     the domain-separated derivation means the AES key is never a plain hash
+//     of the secret that (on the JWT fallback) also signs login tokens.
+//
+// Decrypt picks the derivation by prefix and tries it with EVERY key in the
+// chain (current + ENCRYPTION_KEY_HISTORY), so pre-D-11 rows stay readable
+// with zero operator action and key rotation keeps working for both formats.
+// Old {enc} rows are deliberately NOT re-encrypted at startup: they migrate to
+// {enc2} only when re-saved, so rolling back to an older binary loses nothing
+// that was not re-saved since the upgrade.
+//
+// ROLLBACK HAZARD: a binary older than D-11 does not know "{enc2}". Its
+// decryptField sees no "{enc}" prefix ("{enc2}" differs from "{enc}" at the
+// 5th byte), treats the value as legacy plaintext and would hand the raw
+// "{enc2}<base64>" string to SNMP/SSH/SMTP/IRC as the credential. After a
+// rollback, every secret saved under the new binary must be re-entered.
+//
+// NOTE "{enc2}" does NOT start with "{enc}" — any "is this already
+// encrypted?" check must use IsEncryptedValue, never a bare HasPrefix on one
+// prefix.
+const (
+	encPrefix  = "{enc}"
+	enc2Prefix = "{enc2}"
 
-// deriveKey creates a 32-byte AES-256 key from the JWT secret.
-func deriveKey(secret string) []byte {
+	// encV2Info is the HKDF info (context) label of the v2 derivation.
+	// Changing it makes every {enc2} value unreadable — never edit it; add a
+	// v3 prefix instead.
+	encV2Info = "fwmon-field-encryption-v2"
+)
+
+// errNoEncryptionKey is returned when a secret would have to be stored but no
+// encryption key is configured. D-12: we refuse rather than store plaintext.
+var errNoEncryptionKey = errors.New("field encryption: no encryption key configured (ENCRYPTION_KEY / JWT_SECRET_KEY); refusing to store a secret in plaintext")
+
+// randReader is the nonce source. A package variable only so tests can force
+// the rand-failure path; production never reassigns it.
+var randReader io.Reader = rand.Reader
+
+// IsEncryptedValue reports whether s carries a field-encryption prefix of any
+// version ("{enc}" or "{enc2}"). It is the one place that answers "is this
+// value already ciphertext?" for double-encrypt guards, backfills and handler
+// checks.
+func IsEncryptedValue(s string) bool {
+	return strings.HasPrefix(s, enc2Prefix) || strings.HasPrefix(s, encPrefix)
+}
+
+// deriveLegacyKey is the pre-D-11 (v1, "{enc}") derivation: sha256(secret).
+// Decrypt-only (plus the canary); it must never change, or every {enc} row
+// becomes unreadable.
+func deriveLegacyKey(secret string) []byte {
 	h := sha256.Sum256([]byte(secret))
 	return h[:]
 }
 
+// deriveKeyV2 is the D-11 (v2, "{enc2}") derivation: HKDF-SHA256 with a fixed
+// info label. hkdf.Key only fails for an out-of-range length, which 32 is not;
+// a nil return still fails closed (encrypt refuses, decrypt skips the key).
+func deriveKeyV2(secret string) []byte {
+	k, err := hkdf.Key(sha256.New, []byte(secret), nil, encV2Info, 32)
+	if err != nil {
+		log.Printf("ERROR: field encryption: HKDF key derivation failed: %v", err)
+		return nil
+	}
+	return k
+}
+
+// fieldKey is the key material derived from ONE configured secret: the legacy
+// v1 key (decrypts "{enc}") and the v2 key (encrypts, decrypts "{enc2}").
+type fieldKey struct {
+	v1 []byte
+	v2 []byte
+}
+
+// deriveFieldKey derives both keys from secret. An empty secret yields the
+// zero fieldKey (no key).
+func deriveFieldKey(secret string) fieldKey {
+	if secret == "" {
+		return fieldKey{}
+	}
+	return fieldKey{v1: deriveLegacyKey(secret), v2: deriveKeyV2(secret)}
+}
+
+func (k fieldKey) empty() bool { return len(k.v1) == 0 && len(k.v2) == 0 }
+
 // keyChain holds the current encryption key plus any number of legacy keys
-// retained only for decryption of older ciphertext.
+// retained only for decryption of older ciphertext. Each entry carries both
+// derivations (fieldKey), so {enc} and {enc2} values written under any
+// chain key decrypt.
 //
 // AUDIT-009: pre-AUDIT the encryption layer held a single key. The first time
 // an operator rotated the JWT secret (deliberately or accidentally) every
@@ -32,23 +123,35 @@ func deriveKey(secret string) []byte {
 // history until one decrypts (or all fail and decryptField returns "" per
 // the AUDIT-027 fail-closed contract).
 //
-// To complete a rotation: after enough time has passed that every {enc} row
-// has been re-saved through the admin UI (or after running a one-shot
+// To complete a rotation: after enough time has passed that every encrypted
+// row has been re-saved through the admin UI (or after running a one-shot
 // re-encryption migration — `cmd/keyrotate` is a planned follow-up), the
 // operator drops the old key from ENCRYPTION_KEY_HISTORY.
 type keyChain struct {
-	current []byte   // used for encrypt; tried FIRST on decrypt
-	legacy  [][]byte // tried IN ORDER after current on decrypt
+	current fieldKey   // used for encrypt; tried FIRST on decrypt
+	legacy  []fieldKey // tried IN ORDER after current on decrypt
 }
 
-// all returns every candidate key for decrypt attempts, current first.
-func (k keyChain) all() [][]byte {
-	out := make([][]byte, 0, 1+len(k.legacy))
-	if len(k.current) > 0 {
+// newKeyChain derives the chain from the raw configured secrets. Empty
+// entries are skipped.
+func newKeyChain(current string, history []string) keyChain {
+	kc := keyChain{current: deriveFieldKey(current)}
+	for _, h := range history {
+		if h != "" {
+			kc.legacy = append(kc.legacy, deriveFieldKey(h))
+		}
+	}
+	return kc
+}
+
+// all returns every non-empty chain entry for decrypt attempts, current first.
+func (k keyChain) all() []fieldKey {
+	out := make([]fieldKey, 0, 1+len(k.legacy))
+	if !k.current.empty() {
 		out = append(out, k.current)
 	}
 	for _, lk := range k.legacy {
-		if len(lk) > 0 {
+		if !lk.empty() {
 			out = append(out, lk)
 		}
 	}
@@ -58,93 +161,115 @@ func (k keyChain) all() [][]byte {
 // hasAny reports whether the chain has at least one key. Used to distinguish
 // "no key configured" from "all keys failed" in decryptFieldWithChain.
 func (k keyChain) hasAny() bool {
-	if len(k.current) > 0 {
-		return true
-	}
-	for _, lk := range k.legacy {
-		if len(lk) > 0 {
-			return true
-		}
-	}
-	return false
+	return len(k.all()) > 0
 }
 
-// encryptField encrypts a plaintext string using AES-256-GCM.
-// Returns "{enc}" + base64-encoded ciphertext. Returns plaintext unchanged
-// if empty or if key is not available.
-func encryptField(plaintext string, key []byte) string {
-	if plaintext == "" || len(key) == 0 {
-		return plaintext
+// seal AES-256-GCM-encrypts plaintext under key and returns prefix +
+// base64(nonce||ciphertext). Every failure is an error — never a fallback to
+// the plaintext (D-12).
+func seal(plaintext string, key []byte, prefix string) (string, error) {
+	if len(key) == 0 {
+		return "", errNoEncryptionKey
 	}
-	// Already encrypted — don't double-encrypt
-	if strings.HasPrefix(plaintext, encPrefix) {
-		return plaintext
-	}
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return plaintext
+		return "", fmt.Errorf("field encryption: aes: %w", err)
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return plaintext
+		return "", fmt.Errorf("field encryption: gcm: %w", err)
 	}
-
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return plaintext
+	if _, err := io.ReadFull(randReader, nonce); err != nil {
+		return "", fmt.Errorf("field encryption: nonce: %w", err)
 	}
-
 	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return encPrefix + base64.StdEncoding.EncodeToString(ciphertext)
+	return prefix + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// decryptField decrypts a "{enc}"-prefixed string with a single key. Kept
-// for backward compatibility with tests; new callers should use
-// decryptFieldWithChain.
-func decryptField(ciphertext string, key []byte) string {
+// encryptField encrypts plaintext in the current format ("{enc2}", HKDF key).
+// "" stays "" and an already-encrypted value ({enc} or {enc2}) is returned
+// unchanged (no double encryption). D-12: a missing key or any cipher/rand
+// failure is an error; the plaintext is never returned in place of
+// ciphertext.
+func encryptField(plaintext string, key fieldKey) (string, error) {
+	if plaintext == "" || IsEncryptedValue(plaintext) {
+		return plaintext, nil
+	}
+	return seal(plaintext, key.v2, enc2Prefix)
+}
+
+// encryptFieldLegacy writes the v1 "{enc}" format (sha256 key). Production
+// uses it ONLY for the key-check canary, so a rollback to a pre-D-11 binary
+// still verifies its key instead of crash-looping the poller/trap daemons on
+// an {enc2} canary it cannot parse. Tests use it to build legacy rows.
+func encryptFieldLegacy(plaintext string, key fieldKey) (string, error) {
+	if plaintext == "" || IsEncryptedValue(plaintext) {
+		return plaintext, nil
+	}
+	return seal(plaintext, key.v1, encPrefix)
+}
+
+// decryptField decrypts an encrypted string with a single key entry. Kept
+// for tests; callers use decryptFieldWithChain.
+func decryptField(ciphertext string, key fieldKey) string {
 	return decryptFieldWithChain(ciphertext, keyChain{current: key})
 }
 
-// decryptFieldWithChain decrypts a "{enc}"-prefixed string trying each key
-// in the chain (current first, then legacy keys in order). Returns the
-// plaintext on first successful decrypt.
+// decryptFieldWithChain decrypts an "{enc}"- or "{enc2}"-prefixed string,
+// trying each key in the chain (current first, then legacy keys in order)
+// with the derivation the prefix names. Returns the plaintext on the first
+// successful decrypt.
 //
 // Behavior:
-//   - No "{enc}" prefix → legacy plaintext, returned unchanged (idempotent
+//   - No encryption prefix → legacy plaintext, returned unchanged (idempotent
 //     for callers that decrypt unconditionally).
-//   - Has "{enc}" prefix but decryption fails with ALL keys (no key in
-//     chain, bad base64, AES setup error, GCM auth failure on every key,
-//     short ciphertext) → returns "" and logs at error level.
+//   - Has a prefix but decryption fails with ALL keys (no key in chain, bad
+//     base64, AES setup error, GCM auth failure on every key, short
+//     ciphertext) → returns "" and logs at error level.
 //
 // AUDIT-027: any decrypt failure must return "" rather than the ciphertext
 // — see crypto.go header comment for the v0.10.226 bug class this closes.
 //
 // AUDIT-009: the chain support means rotating the encryption key no longer
-// renders every {enc} row unreadable. See keyChain doc for the operator
+// renders every encrypted row unreadable. See keyChain doc for the operator
 // workflow.
 func decryptFieldWithChain(ciphertext string, keys keyChain) string {
-	if !strings.HasPrefix(ciphertext, encPrefix) {
+	var encoded string
+	var pick func(fieldKey) []byte
+	legacy := false
+	switch {
+	case strings.HasPrefix(ciphertext, enc2Prefix):
+		encoded = ciphertext[len(enc2Prefix):]
+		pick = func(k fieldKey) []byte { return k.v2 }
+	case strings.HasPrefix(ciphertext, encPrefix):
+		encoded = ciphertext[len(encPrefix):]
+		pick = func(k fieldKey) []byte { return k.v1 }
+		legacy = true
+	default:
 		return ciphertext
 	}
 	// From here on the field IS marked as encrypted — any failure must
 	// resolve to "" so the broken ciphertext never reaches a caller.
-	if !keys.hasAny() {
+	var candidates [][]byte
+	for _, k := range keys.all() {
+		if b := pick(k); len(b) > 0 {
+			candidates = append(candidates, b)
+		}
+	}
+	if len(candidates) == 0 {
 		log.Printf("ERROR: decryptField: encrypted field present but no key available (JWT_SECRET_KEY / ENCRYPTION_KEY missing?) — returning empty")
 		return ""
 	}
 
-	encoded := ciphertext[len(encPrefix):]
 	data, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		log.Printf("ERROR: decryptField: base64 decode failed (%v) — returning empty", err)
 		return ""
 	}
 
-	candidates := keys.all()
 	var lastErr error
-	for i, key := range candidates {
+	for _, key := range candidates {
 		block, err := aes.NewCipher(key)
 		if err != nil {
 			lastErr = err
@@ -167,8 +292,15 @@ func decryptFieldWithChain(ciphertext string, keys keyChain) string {
 		if err != nil {
 			// Wrong key for THIS ciphertext; try the next one.
 			lastErr = err
-			_ = i // i kept for future log-on-success-via-legacy-key wiring
 			continue
+		}
+		// Rollback round trip: a pre-D-11 binary sees an {enc2} value as
+		// plaintext (no "{enc}" prefix) and its startup backfill wraps it as
+		// {enc}({enc2}…). Unwrap that one level so re-upgrading recovers the
+		// secret. Safe: EncryptField never encrypts a value that already
+		// carries a prefix, so no genuine secret decrypts to "{enc2}…".
+		if legacy && strings.HasPrefix(string(plaintext), enc2Prefix) {
+			return decryptFieldWithChain(string(plaintext), keys)
 		}
 		return string(plaintext)
 	}
@@ -184,18 +316,46 @@ func max0(n int) int {
 	return n
 }
 
-// EncryptField encrypts a single string value for database storage.
-func (d *Database) EncryptField(plaintext string) string {
+// EncryptField encrypts a single string value for database storage ("{enc2}"
+// format). "" and already-encrypted values pass through unchanged.
+//
+// D-12: on a missing key or any cipher failure it returns an error and the
+// caller must abort the write — a secret is never stored as plaintext. The
+// only keyless passthrough is the SQLite test harness (NewDatabaseForTesting
+// sets keylessPassthrough); a production Database always has a key (config
+// requires JWT_SECRET_KEY).
+func (d *Database) EncryptField(plaintext string) (string, error) {
+	if plaintext == "" || IsEncryptedValue(plaintext) {
+		return plaintext, nil
+	}
+	if len(d.encKeys.current.v2) == 0 && d.keylessPassthrough {
+		return plaintext, nil
+	}
 	return encryptField(plaintext, d.encKeys.current)
 }
 
-// EncryptDeviceSecrets encrypts SNMP credential fields on a device.
-func (d *Database) EncryptDeviceSecrets(dev *models.Device) {
-	dev.SNMPCommunity = encryptField(dev.SNMPCommunity, d.encKeys.current)
-	dev.SNMPV3AuthPass = encryptField(dev.SNMPV3AuthPass, d.encKeys.current)
-	dev.SNMPV3PrivPass = encryptField(dev.SNMPV3PrivPass, d.encKeys.current)
-	dev.SSHPassword = encryptField(dev.SSHPassword, d.encKeys.current)
-	dev.APIToken = encryptField(dev.APIToken, d.encKeys.current)
+// encryptInPlace encrypts every field or none: all ciphertexts are computed
+// first and assigned only when every one succeeded, so a failure never leaves
+// a struct half-encrypted.
+func (d *Database) encryptInPlace(fields ...*string) error {
+	out := make([]string, len(fields))
+	for i, f := range fields {
+		v, err := d.EncryptField(*f)
+		if err != nil {
+			return err
+		}
+		out[i] = v
+	}
+	for i, f := range fields {
+		*f = out[i]
+	}
+	return nil
+}
+
+// EncryptDeviceSecrets encrypts SNMP/SSH/API credential fields on a device.
+// On error the device is left unchanged and must not be written.
+func (d *Database) EncryptDeviceSecrets(dev *models.Device) error {
+	return d.encryptInPlace(&dev.SNMPCommunity, &dev.SNMPV3AuthPass, &dev.SNMPV3PrivPass, &dev.SSHPassword, &dev.APIToken)
 }
 
 // DecryptDeviceSecrets decrypts SNMP credential fields on a device.
@@ -212,11 +372,10 @@ func (d *Database) DecryptField(ciphertext string) string {
 	return decryptFieldWithChain(ciphertext, d.encKeys)
 }
 
-// EncryptIRCServerSecrets encrypts IRC credential fields on a server.
-func (d *Database) EncryptIRCServerSecrets(s *models.IRCServer) {
-	s.ServerPassword = encryptField(s.ServerPassword, d.encKeys.current)
-	s.NickServPassword = encryptField(s.NickServPassword, d.encKeys.current)
-	s.SASLPassword = encryptField(s.SASLPassword, d.encKeys.current)
+// EncryptIRCServerSecrets encrypts IRC credential fields on a server. On
+// error the server is left unchanged and must not be written.
+func (d *Database) EncryptIRCServerSecrets(s *models.IRCServer) error {
+	return d.encryptInPlace(&s.ServerPassword, &s.NickServPassword, &s.SASLPassword)
 }
 
 // DecryptIRCServerSecrets decrypts IRC credential fields on a server.
@@ -226,11 +385,10 @@ func (d *Database) DecryptIRCServerSecrets(s *models.IRCServer) {
 	s.SASLPassword = decryptFieldWithChain(s.SASLPassword, d.encKeys)
 }
 
-// EncryptIRCChannelSecrets encrypts IRC channel credential fields.
-func (d *Database) EncryptIRCChannelSecrets(ch *models.IRCChannel) {
-	ch.ChanServPass = encryptField(ch.ChanServPass, d.encKeys.current)
-	ch.ChanOperPass = encryptField(ch.ChanOperPass, d.encKeys.current)
-	ch.ChannelKey = encryptField(ch.ChannelKey, d.encKeys.current)
+// EncryptIRCChannelSecrets encrypts IRC channel credential fields. On error
+// the channel is left unchanged and must not be written.
+func (d *Database) EncryptIRCChannelSecrets(ch *models.IRCChannel) error {
+	return d.encryptInPlace(&ch.ChanServPass, &ch.ChanOperPass, &ch.ChannelKey)
 }
 
 // DecryptIRCChannelSecrets decrypts IRC channel credential fields.
@@ -259,36 +417,44 @@ var SecretSettingKeys = map[string]bool{
 	ArchiveSecretSettingKey: true,
 }
 
-// migrateEncryptSecrets encrypts any plaintext SNMP credentials in the database.
-// This is idempotent — already encrypted values (with {enc} prefix) are skipped.
+// backfillColumns encrypts the plaintext (non-empty, not yet encrypted)
+// values among cols and returns the column→ciphertext updates to write. Any
+// encryption failure skips the whole row (nil, logged): the backfill must
+// never write a value it could not encrypt (D-12). The log names the row and
+// column only — never the value.
+func (d *Database) backfillColumns(row string, cols map[string]string) map[string]interface{} {
+	updates := map[string]interface{}{}
+	for col, v := range cols {
+		if v == "" || IsEncryptedValue(v) {
+			continue
+		}
+		ct, err := encryptField(v, d.encKeys.current)
+		if err != nil {
+			log.Printf("ERROR: encrypt-secrets backfill: skipping %s (column %s left as-is): %v", row, col, err)
+			return nil
+		}
+		updates[col] = ct
+	}
+	return updates
+}
+
+// migrateEncryptSecrets encrypts any plaintext credentials in the database.
+// Idempotent — already encrypted values ({enc} or {enc2}) are skipped; it
+// never re-encrypts {enc} rows to {enc2} (rollback safety, see the header).
 func (d *Database) migrateEncryptSecrets() {
-	if len(d.encKeys.current) == 0 {
+	if len(d.encKeys.current.v2) == 0 {
 		return
 	}
 
 	var devices []models.Device
 	d.db.Find(&devices)
-
 	for _, dev := range devices {
-		changed := false
-		if dev.SNMPCommunity != "" && !strings.HasPrefix(dev.SNMPCommunity, encPrefix) {
-			dev.SNMPCommunity = encryptField(dev.SNMPCommunity, d.encKeys.current)
-			changed = true
-		}
-		if dev.SNMPV3AuthPass != "" && !strings.HasPrefix(dev.SNMPV3AuthPass, encPrefix) {
-			dev.SNMPV3AuthPass = encryptField(dev.SNMPV3AuthPass, d.encKeys.current)
-			changed = true
-		}
-		if dev.SNMPV3PrivPass != "" && !strings.HasPrefix(dev.SNMPV3PrivPass, encPrefix) {
-			dev.SNMPV3PrivPass = encryptField(dev.SNMPV3PrivPass, d.encKeys.current)
-			changed = true
-		}
-		if changed {
-			d.db.Model(&dev).Updates(map[string]interface{}{
-				"snmp_community":   dev.SNMPCommunity,
-				"snmpv3_auth_pass": dev.SNMPV3AuthPass,
-				"snmpv3_priv_pass": dev.SNMPV3PrivPass,
-			})
+		if u := d.backfillColumns(fmt.Sprintf("device %d", dev.ID), map[string]string{
+			"snmp_community":   dev.SNMPCommunity,
+			"snmpv3_auth_pass": dev.SNMPV3AuthPass,
+			"snmpv3_priv_pass": dev.SNMPV3PrivPass,
+		}); len(u) > 0 {
+			d.db.Model(&dev).Updates(u)
 		}
 	}
 
@@ -296,25 +462,12 @@ func (d *Database) migrateEncryptSecrets() {
 	var servers []models.IRCServer
 	d.db.Find(&servers)
 	for _, srv := range servers {
-		changed := false
-		if srv.ServerPassword != "" && !strings.HasPrefix(srv.ServerPassword, encPrefix) {
-			srv.ServerPassword = encryptField(srv.ServerPassword, d.encKeys.current)
-			changed = true
-		}
-		if srv.NickServPassword != "" && !strings.HasPrefix(srv.NickServPassword, encPrefix) {
-			srv.NickServPassword = encryptField(srv.NickServPassword, d.encKeys.current)
-			changed = true
-		}
-		if srv.SASLPassword != "" && !strings.HasPrefix(srv.SASLPassword, encPrefix) {
-			srv.SASLPassword = encryptField(srv.SASLPassword, d.encKeys.current)
-			changed = true
-		}
-		if changed {
-			d.db.Model(&srv).Updates(map[string]interface{}{
-				"server_password":   srv.ServerPassword,
-				"nickserv_password": srv.NickServPassword,
-				"sasl_password":     srv.SASLPassword,
-			})
+		if u := d.backfillColumns(fmt.Sprintf("irc server %d", srv.ID), map[string]string{
+			"server_password":   srv.ServerPassword,
+			"nickserv_password": srv.NickServPassword,
+			"sasl_password":     srv.SASLPassword,
+		}); len(u) > 0 {
+			d.db.Model(&srv).Updates(u)
 		}
 	}
 
@@ -322,25 +475,12 @@ func (d *Database) migrateEncryptSecrets() {
 	var channels []models.IRCChannel
 	d.db.Find(&channels)
 	for _, ch := range channels {
-		changed := false
-		if ch.ChanServPass != "" && !strings.HasPrefix(ch.ChanServPass, encPrefix) {
-			ch.ChanServPass = encryptField(ch.ChanServPass, d.encKeys.current)
-			changed = true
-		}
-		if ch.ChanOperPass != "" && !strings.HasPrefix(ch.ChanOperPass, encPrefix) {
-			ch.ChanOperPass = encryptField(ch.ChanOperPass, d.encKeys.current)
-			changed = true
-		}
-		if ch.ChannelKey != "" && !strings.HasPrefix(ch.ChannelKey, encPrefix) {
-			ch.ChannelKey = encryptField(ch.ChannelKey, d.encKeys.current)
-			changed = true
-		}
-		if changed {
-			d.db.Model(&ch).Updates(map[string]interface{}{
-				"chanserv_password": ch.ChanServPass,
-				"chan_oper_pass":    ch.ChanOperPass,
-				"channel_key":       ch.ChannelKey,
-			})
+		if u := d.backfillColumns(fmt.Sprintf("irc channel %d", ch.ID), map[string]string{
+			"chanserv_password": ch.ChanServPass,
+			"chan_oper_pass":    ch.ChanOperPass,
+			"channel_key":       ch.ChannelKey,
+		}); len(u) > 0 {
+			d.db.Model(&ch).Updates(u)
 		}
 	}
 
@@ -349,7 +489,7 @@ func (d *Database) migrateEncryptSecrets() {
 	// pagerduty_routing_key, opsgenie_api_key) were persisted plaintext
 	// because UpdateSettings only encrypted inside its smtp_password case.
 	// The write path is fixed; this backfill upgrades rows that predate the
-	// fix. Idempotent via the {enc}-prefix skip, like the loops above.
+	// fix. Idempotent via the encrypted-prefix skip, like the loops above.
 	keys := make([]string, 0, len(SecretSettingKeys))
 	for k := range SecretSettingKeys {
 		keys = append(keys, k)
@@ -357,9 +497,6 @@ func (d *Database) migrateEncryptSecrets() {
 	var secretSettings []models.SystemSetting
 	d.db.Where("key IN ?", keys).Find(&secretSettings)
 	for _, s := range secretSettings {
-		if s.Value == "" || strings.HasPrefix(s.Value, encPrefix) {
-			continue
-		}
 		// Rows corrupted by the pre-fix mask writeback (LC-37) hold the
 		// literal redaction mask (httputil.RedactedMask), not a real secret.
 		// Encrypting the mask would only disguise the corruption — leave it
@@ -367,10 +504,11 @@ func (d *Database) migrateEncryptSecrets() {
 		if s.Value == "********" {
 			continue
 		}
-		d.db.Model(&models.SystemSetting{}).Where("key = ?", s.Key).
-			Updates(map[string]interface{}{
-				"value":     encryptField(s.Value, d.encKeys.current),
-				"is_secret": true,
-			})
+		u := d.backfillColumns("setting "+s.Key, map[string]string{"value": s.Value})
+		if len(u) == 0 {
+			continue
+		}
+		u["is_secret"] = true
+		d.db.Model(&models.SystemSetting{}).Where("key = ?", s.Key).Updates(u)
 	}
 }

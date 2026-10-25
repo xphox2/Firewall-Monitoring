@@ -69,7 +69,11 @@ func IPSecModelToIntent(m *models.IPSecTunnel) (*ipsec.TunnelIntent, error) {
 
 // CreateIPSecTunnel persists a new tunnel row, encrypting the PSK at rest.
 func (d *Database) CreateIPSecTunnel(m *models.IPSecTunnel) error {
-	m.PSK = d.EncryptField(m.PSK)
+	psk, err := d.EncryptField(m.PSK)
+	if err != nil {
+		return fmt.Errorf("create ipsec tunnel: %w", err)
+	}
+	m.PSK = psk
 	if m.Status == "" {
 		m.Status = "draft"
 	}
@@ -240,7 +244,11 @@ func (d *Database) UpdateIPSecTunnel(m *models.IPSecTunnel) error {
 		"intent_json": m.IntentJSON,
 	}
 	if m.PSK != "" && m.PSK != redactedMask {
-		fields["psk"] = d.EncryptField(m.PSK)
+		psk, err := d.EncryptField(m.PSK)
+		if err != nil {
+			return fmt.Errorf("update ipsec tunnel: %w", err)
+		}
+		fields["psk"] = psk
 	}
 	return d.db.Model(&models.IPSecTunnel{}).Where("id = ?", m.ID).Updates(fields).Error
 }

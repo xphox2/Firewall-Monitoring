@@ -15,15 +15,19 @@ import (
 // to the literal redaction mask are left untouched.
 func TestMigrateEncryptSecrets_UpgradesPlaintextSecretSettings(t *testing.T) {
 	d := NewDatabaseForTesting(t)
-	d.encKeys = keyChain{current: deriveKey("backfill-test-key")}
+	d.encKeys = newKeyChain("backfill-test-key", nil)
 
-	alreadyEncrypted := encryptField("already-encrypted-pass", d.encKeys.current)
+	alreadyEncrypted := mustEncrypt(t, "already-encrypted-pass", d.encKeys.current)
+	// A pre-D-11 {enc} row: must be left exactly as-is (no startup
+	// re-encryption to {enc2} — rollback safety).
+	legacyEncrypted := legacyEncryptIndependently(t, "legacy-archive-secret", "backfill-test-key")
 	seed := []models.SystemSetting{
 		{Key: "webhook_secret", Value: "legacy-wh-secret"},
 		{Key: "pagerduty_routing_key", Value: "legacy-pd-key"},
 		{Key: "opsgenie_api_key", Value: "legacy-og-key"},
 		// Already migrated — must not be double-encrypted or otherwise touched.
 		{Key: "smtp_password", Value: alreadyEncrypted, IsSecret: true},
+		{Key: ArchiveSecretSettingKey, Value: legacyEncrypted, IsSecret: true},
 		// Non-secret — must stay plaintext (AUDIT-026).
 		{Key: "slack_webhook", Value: "https://hooks.slack.com/services/T000/B000/x"},
 	}
@@ -50,8 +54,8 @@ func TestMigrateEncryptSecrets_UpgradesPlaintextSecretSettings(t *testing.T) {
 	}
 	for key, plain := range upgraded {
 		row := load(key)
-		if !strings.HasPrefix(row.Value, encPrefix) {
-			t.Errorf("%s not upgraded: value %q lacks the %s prefix", key, row.Value, encPrefix)
+		if !strings.HasPrefix(row.Value, enc2Prefix) {
+			t.Errorf("%s not upgraded: value %q lacks the %s prefix", key, row.Value, enc2Prefix)
 		}
 		if !row.IsSecret {
 			t.Errorf("%s upgraded without is_secret=true", key)
@@ -63,6 +67,9 @@ func TestMigrateEncryptSecrets_UpgradesPlaintextSecretSettings(t *testing.T) {
 
 	if row := load("smtp_password"); row.Value != alreadyEncrypted {
 		t.Errorf("already-encrypted smtp_password was modified:\n got  %q\n want %q", row.Value, alreadyEncrypted)
+	}
+	if row := load(ArchiveSecretSettingKey); row.Value != legacyEncrypted {
+		t.Errorf("legacy {enc} row was rewritten (startup re-encryption breaks rollback):\n got  %q\n want %q", row.Value, legacyEncrypted)
 	}
 	if row := load("slack_webhook"); row.Value != "https://hooks.slack.com/services/T000/B000/x" {
 		t.Errorf("non-secret slack_webhook was modified to %q — the backfill must only touch SecretSettingKeys", row.Value)
@@ -76,7 +83,7 @@ func TestMigrateEncryptSecrets_UpgradesPlaintextSecretSettings(t *testing.T) {
 // plausible-looking {enc} blob.
 func TestMigrateEncryptSecrets_SkipsMaskCorruptedRows(t *testing.T) {
 	d := NewDatabaseForTesting(t)
-	d.encKeys = keyChain{current: deriveKey("backfill-mask-key")}
+	d.encKeys = newKeyChain("backfill-mask-key", nil)
 
 	if err := d.db.Create(&models.SystemSetting{Key: "pagerduty_routing_key", Value: "********"}).Error; err != nil {
 		t.Fatalf("seed masked row: %v", err)

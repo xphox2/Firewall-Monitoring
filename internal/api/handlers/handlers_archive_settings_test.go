@@ -220,7 +220,7 @@ func TestArchiveSettings_SecretNeverReturned(t *testing.T) {
 	if !strings.Contains(bodies["audit archive_settings_update"], "changed=ARCHIVE_S3_SECRET_ACCESS_KEY") {
 		t.Errorf("audit target %q does not name the field", bodies["audit archive_settings_update"])
 	}
-	if !strings.HasPrefix(row.Value, "{enc}") {
+	if !strings.HasPrefix(row.Value, "{enc2}") {
 		t.Errorf("the secret is stored as %q, want encrypted", row.Value)
 	}
 	s := fieldOf(f.view(t), "ARCHIVE_S3_SECRET_ACCESS_KEY")
@@ -251,6 +251,8 @@ func TestSaveArchiveSettings_ChecksInOrder(t *testing.T) {
 		`{"set":{"ARCHIVE_SYSLOG_ENABLED":""},"password":"WRONG"}`:                                                                           http.StatusBadRequest,
 		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"********"},"password":"WRONG"}`:                                                             http.StatusBadRequest,
 		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":""},"password":"WRONG"}`:                                                                     http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"{enc}AAAAAAAA"},"password":"WRONG"}`:                                                        http.StatusBadRequest,
+		`{"set":{"ARCHIVE_S3_SECRET_ACCESS_KEY":"{enc2}AAAAAAAA"},"password":"WRONG"}`:                                                       http.StatusBadRequest,
 		`{"set":{"ARCHIVE_S3_BUCKET":"x"},"revert":["ARCHIVE_S3_BUCKET"],"password":"WRONG"}`:                                                http.StatusBadRequest,
 		`{"set":{"ARCHIVE_S3_ENDPOINT":"https://user:pw@s3.example.com"},"password":"WRONG"}`:                                                http.StatusBadRequest,
 		`{"set":{"ARCHIVE_FLOWS_ENABLED":"true","ARCHIVE_STAGING_DIR":"rel"},"password":"WRONG"}`:                                            http.StatusBadRequest,

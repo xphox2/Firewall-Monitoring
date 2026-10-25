@@ -174,16 +174,23 @@ func NewDatabaseForTesting(t interface {
 	// The ingest meter is real here: SaveSyslogMessages must count on the test
 	// backend exactly as it does in production, and the meter is the only
 	// producer of syslog_ingest_hourly.
-	return &Database{db: db, dialect: sqliteDialect{}, ingest: newSyslogIngestMeter(time.Now), connSkips: newAutoConnSkipLog(), archiveHold: &archiveHoldState{}}
+	return &Database{db: db, keylessPassthrough: true, dialect: sqliteDialect{}, ingest: newSyslogIngestMeter(time.Now), connSkips: newAutoConnSkipLog(), archiveHold: &archiveHoldState{}}
 }
 
-// SetEncryptionKeyForTesting installs an AES key derived from secret so that
-// tests outside this package (e.g. the API handlers) can assert real
-// encrypted-at-rest behavior ({enc} prefix in stored rows) instead of the
+// SetEncryptionKeyForTesting installs the key chain derived from secret so
+// that tests outside this package (e.g. the API handlers) can assert real
+// encrypted-at-rest behavior ({enc2} prefix in stored rows) instead of the
 // plaintext passthrough a keyless test Database gives. Test-only — this file
 // is build-tagged !production alongside NewDatabaseForTesting.
 func (d *Database) SetEncryptionKeyForTesting(secret string) {
-	d.encKeys = keyChain{current: deriveKey(secret)}
+	d.encKeys = newKeyChain(secret, nil)
+}
+
+// RequireEncryptionKeyForTesting turns off the harness's keyless plaintext
+// passthrough, so a keyless test Database behaves like a production one: an
+// EncryptField with no key is an error (D-12) instead of an identity no-op.
+func (d *Database) RequireEncryptionKeyForTesting() {
+	d.keylessPassthrough = false
 }
 
 // SetArchiveRestoreBatchForTesting sets the restore load batch size (lines

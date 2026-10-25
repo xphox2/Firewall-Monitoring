@@ -371,8 +371,11 @@ that account.
 > ⚠ **Key continuity — the #1 upgrade hazard.** Two secrets MUST survive every
 > upgrade, host move, or repo-directory relocation **unchanged**:
 >
-> - **`ENCRYPTION_KEY`** — derives the AES-256 key (`sha256(value)`) for every
->   secret stored at rest (SNMP communities, SMTP/IRC passwords). If it changes,
+> - **`ENCRYPTION_KEY`** — derives the AES-256 key for every secret stored at
+>   rest (SNMP communities, SMTP/IRC passwords): `HKDF-SHA256(value)` for new
+>   `{enc2}` values, `sha256(value)` for legacy `{enc}` values (still read, never
+>   written). A binary older than the `{enc2}` change cannot read `{enc2}` values:
+>   after a rollback, re-enter every secret saved since the upgrade. If it changes,
 >   `decryptField` fails closed (AUDIT-027) and **every stored secret becomes
 >   unreadable** — devices stop polling and email/IRC alerts fail (`535`) until
 >   you re-enter them all by hand. There is no recovery without the original value.

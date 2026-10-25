@@ -25,7 +25,7 @@ func TestIPSecTunnel_CRUDRoundTrip(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	// Configure an encryption key so the PSK is actually encrypted at rest
 	// (without a key, EncryptField is an identity no-op).
-	d.encKeys = keyChain{current: deriveKey("ipsec-test-encryption-key-32bytes!!")}
+	d.encKeys = newKeyChain("ipsec-test-encryption-key-32bytes!!", nil)
 
 	in := sampleIntent()
 	m, err := IPSecIntentToModel(in)
@@ -47,7 +47,7 @@ func TestIPSecTunnel_CRUDRoundTrip(t *testing.T) {
 	// Stored PSK is encrypted at rest.
 	var raw models.IPSecTunnel
 	d.Gorm().First(&raw, m.ID)
-	if raw.PSK == in.PSK || !strings.HasPrefix(raw.PSK, "{enc}") {
+	if raw.PSK == in.PSK || !strings.HasPrefix(raw.PSK, enc2Prefix) {
 		t.Fatalf("PSK not encrypted at rest: %q", raw.PSK)
 	}
 

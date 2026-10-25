@@ -58,7 +58,16 @@ func (d *Database) VerifyEncryptionKey() error {
 			return nil
 		}
 		// First run with a key: establish the KCV for every future startup.
-		ct := encryptField(encKeyCanaryPlaintext, d.encKeys.current)
+		// Written in the legacy {enc} format on purpose (encryptFieldLegacy):
+		// a pre-D-11 binary can verify it after a rollback, where an {enc2}
+		// canary would read as a key mismatch and crash-loop poller/trap.
+		// Both formats derive from the same secret, so verifying the legacy
+		// derivation verifies the key chain the {enc2} values use.
+		ct, err := encryptFieldLegacy(encKeyCanaryPlaintext, d.encKeys.current)
+		if err != nil {
+			d.setEncStatus(false, fmt.Sprintf("encryption canary check skipped: %v", err))
+			return fmt.Errorf("write encryption canary: %w", err)
+		}
 		if err := d.UpsertSetting(&models.SystemSetting{
 			Key:      encKeyCanaryKey,
 			Value:    ct,

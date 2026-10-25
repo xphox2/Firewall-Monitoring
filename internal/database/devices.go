@@ -140,7 +140,9 @@ func (d *Database) ResolveDevicesByIPs(ips []string) map[string]uint {
 }
 
 func (d *Database) CreateDevice(device *models.Device) error {
-	d.EncryptDeviceSecrets(device)
+	if err := d.EncryptDeviceSecrets(device); err != nil {
+		return fmt.Errorf("create device: %w", err)
+	}
 	err := d.db.Create(device).Error
 	// Decrypt back so the caller sees plaintext
 	d.DecryptDeviceSecrets(device)
@@ -159,7 +161,15 @@ func (d *Database) UpdateDevice(device *models.Device) error {
 	if device.ID == 0 {
 		return errors.New("update device: id required")
 	}
-	return d.db.Omit("uuid").Save(device).Error
+	// Save writes every column, so the credential fields must be encrypted
+	// like CreateDevice does (a device loaded via GetDevice carries
+	// plaintext); D-12: an encryption failure aborts the write.
+	if err := d.EncryptDeviceSecrets(device); err != nil {
+		return fmt.Errorf("update device: %w", err)
+	}
+	err := d.db.Omit("uuid").Save(device).Error
+	d.DecryptDeviceSecrets(device)
+	return err
 }
 
 // UpdateDeviceStatus performs a targeted update of only status and last_polled fields.

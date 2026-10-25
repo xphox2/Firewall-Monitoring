@@ -214,7 +214,13 @@ func (h *Handler) Setup2FA(c *gin.Context) {
 		httputil.InternalError(c, "Failed to generate TOTP secret", err)
 		return
 	}
-	if err := db.SetAdminTOTP(admin.ID, db.EncryptField(key.Secret()), false); err != nil {
+	encSecret, err := db.EncryptField(key.Secret())
+	if err != nil {
+		// D-12: never persist the TOTP shared secret as plaintext.
+		httputil.InternalError(c, "Failed to store TOTP secret", err)
+		return
+	}
+	if err := db.SetAdminTOTP(admin.ID, encSecret, false); err != nil {
 		httputil.InternalError(c, "Failed to store TOTP secret", err)
 		return
 	}

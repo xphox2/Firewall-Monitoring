@@ -46,7 +46,7 @@ func TestResolveArchiveConfig_Precedence(t *testing.T) {
 	if err := d.db.Where("\"key\" = ?", ArchiveSecretSettingKey).First(&row).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(row.Value, "{enc}") || !row.IsSecret || strings.Contains(row.Value, "fake-ui-secret") {
+	if !strings.HasPrefix(row.Value, enc2Prefix) || !row.IsSecret || strings.Contains(row.Value, "fake-ui-secret") {
 		t.Fatalf("secret stored as %q (is_secret %v), want encrypted", row.Value, row.IsSecret)
 	}
 	res, err = d.ResolveArchiveConfig(ctx, env)

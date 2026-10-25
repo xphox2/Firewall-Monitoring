@@ -80,7 +80,7 @@ func TestUpdateSettings_MaskedSecretsNotWrittenBack_LC37(t *testing.T) {
 
 	storedBefore := map[string]string{}
 	for k, v := range real {
-		row := models.SystemSetting{Key: k, Value: db.EncryptField(v), IsSecret: true}
+		row := models.SystemSetting{Key: k, Value: mustEncryptField(t, db, v), IsSecret: true}
 		if err := db.Gorm().Create(&row).Error; err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
@@ -158,8 +158,8 @@ func TestUpdateSettings_SecretsEncryptedAtRest_LC38(t *testing.T) {
 		if err := db.Gorm().Where("\"key\" = ?", k).First(&row).Error; err != nil {
 			t.Fatalf("reload %s: %v", k, err)
 		}
-		if !strings.HasPrefix(row.Value, "{enc}") {
-			t.Errorf("%s stored WITHOUT the {enc} prefix (value %q) — secret persisted plaintext", k, row.Value)
+		if !strings.HasPrefix(row.Value, "{enc2}") {
+			t.Errorf("%s stored WITHOUT the {enc2} prefix (value %q) — secret persisted plaintext", k, row.Value)
 		}
 		if !row.IsSecret {
 			t.Errorf("%s stored with is_secret=false", k)
@@ -180,7 +180,7 @@ func TestGetSettings_MasksEverySecretKey_LC37(t *testing.T) {
 	real := settingsSecretFixtures(t)
 
 	for k, v := range real {
-		row := models.SystemSetting{Key: k, Value: db.EncryptField(v), IsSecret: true}
+		row := models.SystemSetting{Key: k, Value: mustEncryptField(t, db, v), IsSecret: true}
 		if err := db.Gorm().Create(&row).Error; err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
@@ -246,7 +246,7 @@ func TestGetNotificationSetting_EnvFallback_LC39(t *testing.T) {
 	// resolution order AlertManager.RefreshThresholds applies for delivery,
 	// so test and delivery can never disagree.
 	if err := db.Gorm().Create(&models.SystemSetting{
-		Key: "pagerduty_routing_key", Value: db.EncryptField("db-pd-key"), IsSecret: true,
+		Key: "pagerduty_routing_key", Value: mustEncryptField(t, db, "db-pd-key"), IsSecret: true,
 	}).Error; err != nil {
 		t.Fatalf("seed pagerduty_routing_key: %v", err)
 	}

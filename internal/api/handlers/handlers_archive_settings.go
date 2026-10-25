@@ -289,7 +289,7 @@ func (h *Handler) draft(ctx context.Context, db database.Store, req archiveSetti
 			return nil, bad("%s needs a value (revert it to use the environment's)", k)
 		case f.Kind == config.ArchiveKindSecret && v == "":
 			return nil, bad("%s cannot be empty: revert it to use the environment's, or enter the key", k)
-		case f.Kind == config.ArchiveKindSecret && (v == httputil.RedactedMask || strings.HasPrefix(v, "{enc}")):
+		case f.Kind == config.ArchiveKindSecret && (v == httputil.RedactedMask || database.IsEncryptedValue(v)):
 			return nil, bad("%s is not a secret access key", k)
 		}
 		d.set[k] = v

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestProbeCommandPayloadEncryptedAtRest(t *testing.T) {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	d.encKeys = keyChain{current: key}
+	d.encKeys = keyChain{current: fieldKey{v2: key}}
 
 	const secret = `{"psk":"super-secret-psk"}`
 	cmd := seedCommand(t, d, 3, func(c *models.ProbeCommand) { c.Payload = secret })
@@ -84,8 +85,8 @@ func TestProbeCommandPayloadEncryptedAtRest(t *testing.T) {
 	if raw == secret {
 		t.Fatal("payload stored as PLAINTEXT — must be encrypted at rest")
 	}
-	if len(raw) < len(encPrefix) || raw[:len(encPrefix)] != encPrefix {
-		t.Fatalf("payload %q lacks the %q encryption prefix", raw, encPrefix)
+	if !strings.HasPrefix(raw, enc2Prefix) {
+		t.Fatalf("payload %q lacks the %q encryption prefix", raw, enc2Prefix)
 	}
 
 	claimed, err := d.ClaimProbeCommands(3)
