@@ -50,7 +50,7 @@ export function SlideOverDrawer({
         <Dialog.Content
           data-testid="slide-over-drawer"
           className={cn(
-            'fixed inset-y-0 right-0 z-50 flex flex-col bg-bg-card border-l border-border shadow-2xl focus:outline-none',
+            'fixed inset-y-0 right-0 z-50 flex flex-col bg-bg-card border-l border-border shadow-2xl focus:outline-hidden',
             SIZE_CLASSES[size],
           )}
         >

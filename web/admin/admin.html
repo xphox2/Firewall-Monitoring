@@ -1112,7 +1112,7 @@
                         </div>
                         <div class="text-[0.82rem] text-[#8b949e] mb-3" id="alerts-bulk-ack-count">Acknowledging N alerts</div>
                         <label for="alerts-bulk-ack-notes" class="block mb-1 text-[#8b949e] text-sm">Notes (optional)</label>
-                        <textarea id="alerts-bulk-ack-notes" rows="3" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none" placeholder="Same notes will be applied to all selected alerts"></textarea>
+                        <textarea id="alerts-bulk-ack-notes" rows="3" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden" placeholder="Same notes will be applied to all selected alerts"></textarea>
                         <div class="flex justify-end gap-2 mt-4">
                             <button type="button" class="btn secondary sm" data-action="close-bulk-ack">Cancel</button>
                             <button type="button" class="btn sm" id="alerts-bulk-ack-confirm" data-action="confirm-bulk-ack" data-min-role="operator">Acknowledge</button>
@@ -2024,19 +2024,19 @@
                 <h2 class="text-base font-semibold text-[#e6edf3] mb-4 flex justify-between items-center" style="font-family: 'Outfit', sans-serif; font-size: 1.1rem; font-weight: 700;">Send IRC Message</h2>
                 <div class="mb-3">
                     <label for="sendServerSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
-                    <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <select id="sendServerSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="sendChannelSelect" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel</label>
-                    <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <select id="sendChannelSelect" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                         <option value="">Select a channel...</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="sendMessage" class="block mb-1 text-[#8b949e] text-xs font-medium">Message</label>
-                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
+                    <textarea id="sendMessage" rows="4" placeholder="Enter your message..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden"></textarea>
                 </div>
                 <button class="btn" data-action="send-message" data-min-role="operator">Send Message</button>
             </div>
@@ -2056,21 +2056,21 @@
                 <input type="hidden" id="probe-id">
                 <div class="mb-3">
                     <label for="probe-name" class="block mb-1 text-[#8b949e] text-sm font-medium">Probe Name</label>
-                    <input type="text" id="probe-name" required placeholder="e.g. nyc-office-probe" autocomplete="one-time-code" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="probe-name" required placeholder="e.g. nyc-office-probe" autocomplete="one-time-code" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label for="probe-site" class="block mb-1 text-[#8b949e] text-sm font-medium">Site</label>
-                    <select id="probe-site" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <select id="probe-site" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                         <option value="">Select a site</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="probe-description" class="block mb-1 text-[#8b949e] text-sm font-medium">Description</label>
-                    <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
+                    <textarea id="probe-description" rows="3" placeholder="Optional description of this probe's purpose" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden"></textarea>
                 </div>
                 <div class="mb-3">
                     <label for="probe-tftp-server-ip" class="block mb-1 text-[#8b949e] text-sm font-medium">TFTP Server IP</label>
-                    <input type="text" id="probe-tftp-server-ip" placeholder="e.g. 192.168.1.10 (IP firewalls use to reach this collector)" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="probe-tftp-server-ip" placeholder="e.g. 192.168.1.10 (IP firewalls use to reach this collector)" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     <p class="text-xs text-[#8b949e] mt-1">Used as the TFTP server argument when triggering FortiGate config backups. Leave blank to fall back to per-device auto-detection.</p>
                 </div>
                 <div class="flex justify-end gap-2 mt-4">
@@ -2127,7 +2127,7 @@
                 <input type="hidden" id="reject-probe-id">
                 <div class="mb-3">
                     <label for="reject-reason" class="block mb-1 text-[#8b949e] text-sm font-medium">Reason for rejection *</label>
-                    <textarea id="reject-reason" rows="4" required placeholder="Enter reason..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
+                    <textarea id="reject-reason" rows="4" required placeholder="Enter reason..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden"></textarea>
                 </div>
                 <div class="flex justify-end gap-2 mt-4">
                     <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] py-1.5 px-3.5 rounded-md cursor-pointer text-sm hover:bg-[#30363d]" data-action="close-reject-modal">Cancel</button>
@@ -2150,11 +2150,11 @@
                 <input type="hidden" id="csrf-token" name="csrf_token">
                 <div class="mb-3">
                     <label for="site-name" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Site Name *</label>
-                    <input class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" type="text" id="site-name" required autocomplete="one-time-code">
+                    <input class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" type="text" id="site-name" required autocomplete="one-time-code">
                 </div>
                 <div class="mb-3">
                     <label for="site-country" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Country</label>
-                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" id="site-country">
+                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" id="site-country">
                         <option value="">Select Country</option>
                         <optgroup label="North America">
                             <option value="USA">United States</option>
@@ -2355,7 +2355,7 @@
                 </div>
                 <div class="mb-3">
                     <label for="site-region" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Region</label>
-                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" id="site-region">
+                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" id="site-region">
                         <option value="">Select Region</option>
                         <optgroup label="Americas">
                             <option value="US-East">US East</option>
@@ -2400,7 +2400,7 @@
                 </div>
                 <div class="mb-3">
                     <label for="site-timezone" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Timezone</label>
-                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" id="site-timezone">
+                    <select class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" id="site-timezone">
                         <option value="">Select Timezone</option>
                         <optgroup label="UTC">
                             <option value="UTC">UTC (Coordinated Universal Time)</option>
@@ -2570,11 +2570,11 @@
                 </div>
                 <div class="mb-3">
                     <label for="site-address" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Address</label>
-                    <textarea class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" id="site-address" rows="2" placeholder="Physical address"></textarea>
+                    <textarea class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" id="site-address" rows="2" placeholder="Physical address"></textarea>
                 </div>
                 <div class="mb-3">
                     <label for="site-description" class="block mb-1 text-[#8b949e] text-[0.82rem] font-medium">Description</label>
-                    <textarea class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-none" id="site-description" rows="2"></textarea>
+                    <textarea class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded text-[#c9d1d9] text-[0.88rem] focus:border-[#58a6ff] focus:outline-hidden" id="site-description" rows="2"></textarea>
                 </div>
                 <div class="flex justify-end gap-2 mt-4">
                     <button type="button" class="bg-[#21262d] border border-[#30363d] text-[#c9d1d9] px-3 py-1.5 rounded cursor-pointer text-[0.82rem] font-medium hover:bg-[#30363d] transition-colors duration-150" data-action="close-modal">Cancel</button>
@@ -2595,40 +2595,40 @@
                 <input type="hidden" id="serverId">
                 <div class="mb-3">
                     <label for="serverName" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Name</label>
-                    <input type="text" id="serverName" required placeholder="e.g., My IRC Server" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="serverName" required placeholder="e.g., My IRC Server" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label for="serverHost" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Host</label>
-                        <input type="text" id="serverHost" required placeholder="e.g., irc.example.com" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="text" id="serverHost" required placeholder="e.g., irc.example.com" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                     <div>
                         <label for="serverPort" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Port</label>
-                        <input type="number" id="serverPort" value="6667" min="1" max="65535" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="number" id="serverPort" value="6667" min="1" max="65535" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label for="serverNick" class="block mb-1 text-[#8b949e] text-xs font-medium">Nick</label>
-                        <input type="text" id="serverNick" required placeholder="BotNick" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="text" id="serverNick" required placeholder="BotNick" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                     <div>
                         <label for="serverUsername" class="block mb-1 text-[#8b949e] text-xs font-medium">Username</label>
-                        <input type="text" id="serverUsername" placeholder="username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="text" id="serverUsername" placeholder="username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                 </div>
                 <div class="mb-3">
                     <label for="serverRealName" class="block mb-1 text-[#8b949e] text-xs font-medium">Real Name</label>
-                    <input type="text" id="serverRealName" placeholder="Real Name" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="serverRealName" placeholder="Real Name" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label for="serverPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">Server Password (optional)</label>
-                    <input type="password" id="serverPassword" placeholder="Server password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="password" id="serverPassword" placeholder="Server password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label for="serverNickServPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">NickServ Password (optional)</label>
-                        <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="password" id="serverNickServPassword" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                     <div>
                         <label class="flex items-center gap-2 cursor-pointer">
@@ -2657,11 +2657,11 @@
                         <div class="grid grid-cols-2 gap-3">
                             <div>
                                 <label for="serverSASLUsername" class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Username</label>
-                                <input type="text" id="serverSASLUsername" placeholder="SASL username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                                <input type="text" id="serverSASLUsername" placeholder="SASL username" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                             </div>
                             <div>
                                 <label for="serverSASLPassword" class="block mb-1 text-[#8b949e] text-xs font-medium">SASL Password</label>
-                                <input type="password" id="serverSASLPassword" placeholder="SASL password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                                <input type="password" id="serverSASLPassword" placeholder="SASL password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                             </div>
                         </div>
                     </div>
@@ -2697,26 +2697,26 @@
                 <input type="hidden" id="channelId">
                 <div class="mb-3">
                     <label for="channelServerId" class="block mb-1 text-[#8b949e] text-xs font-medium">Server</label>
-                    <select id="channelServerId" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <select id="channelServerId" required class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                         <option value="">Select a server...</option>
                     </select>
                 </div>
                 <div class="mb-3">
                     <label for="channelName" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Name</label>
-                    <input type="text" id="channelName" required placeholder="e.g., #mychannel" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="channelName" required placeholder="e.g., #mychannel" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label for="channelKey" class="block mb-1 text-[#8b949e] text-xs font-medium">Channel Key (optional)</label>
-                    <input type="password" id="channelKey" placeholder="Channel password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="password" id="channelKey" placeholder="Channel password" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label for="channelChanServName" class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Name (optional)</label>
-                        <input type="text" id="channelChanServName" placeholder="NickServ" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="text" id="channelChanServName" placeholder="NickServ" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                     <div>
                         <label for="channelChanServPass" class="block mb-1 text-[#8b949e] text-xs font-medium">ChanServ Password</label>
-                        <input type="password" id="channelChanServPass" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                        <input type="password" id="channelChanServPass" placeholder="For IDENTIFY" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                     </div>
                 </div>
                 <div class="mb-3">
@@ -2739,7 +2739,7 @@
                 </div>
                 <div class="mb-3 hidden" id="statusIntervalGroup">
                     <label for="channelStatusInterval" class="block mb-1 text-[#8b949e] text-xs font-medium">Status Interval (minutes)</label>
-                    <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="number" id="channelStatusInterval" min="1" max="1440" value="5" placeholder="Interval in minutes" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label class="flex items-center gap-2 cursor-pointer">
@@ -2765,15 +2765,15 @@
                 <input type="hidden" id="commandId">
                 <div class="mb-3">
                     <label for="commandCmd" class="block mb-1 text-[#8b949e] text-xs font-medium">Command</label>
-                    <input type="text" id="commandCmd" required placeholder="e.g., !status" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="commandCmd" required placeholder="e.g., !status" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label for="commandDescription" class="block mb-1 text-[#8b949e] text-xs font-medium">Description</label>
-                    <input type="text" id="commandDescription" placeholder="What this command does" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <input type="text" id="commandDescription" placeholder="What this command does" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                 </div>
                 <div class="mb-3">
                     <label for="commandType" class="block mb-1 text-[#8b949e] text-xs font-medium">Command Type</label>
-                    <select id="commandType" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none">
+                    <select id="commandType" class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden">
                         <option value="static">Static Response</option>
                         <option value="status">System Status</option>
                         <option value="stats">System Stats</option>
@@ -2782,7 +2782,7 @@
                 </div>
                 <div class="mb-3" id="responseField">
                     <label for="commandResponse" class="block mb-1 text-[#8b949e] text-xs font-medium">Response</label>
-                    <textarea id="commandResponse" rows="4" placeholder="Response text or script..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-none"></textarea>
+                    <textarea id="commandResponse" rows="4" placeholder="Response text or script..." class="w-full p-2 bg-[#0d1117] border border-[#30363d] rounded-md text-[#c9d1d9] text-sm focus:border-[#58a6ff] focus:outline-hidden"></textarea>
                 </div>
                 <div class="mb-3">
                     <label class="flex items-center gap-2 cursor-pointer">

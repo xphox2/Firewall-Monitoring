@@ -254,7 +254,7 @@ export function ConfigDiffDrawer({
                 placeholder={
                   tab === 'objects' ? 'Filter objects or attributes…' : 'Filter diff lines…'
                 }
-                className="w-full rounded border border-border bg-bg-panel py-1.5 pl-8 pr-3 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                className="w-full rounded border border-border bg-bg-panel py-1.5 pl-8 pr-3 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
               />
             </div>
             {tab === 'objects' ? (
@@ -287,7 +287,7 @@ export function ConfigDiffDrawer({
                       onClick={() => setLineView(mode)}
                       className={cn(
                         'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                        lineView === mode ? 'bg-bg-card text-text shadow-sm' : 'text-text-dim',
+                        lineView === mode ? 'bg-bg-card text-text shadow-xs' : 'text-text-dim',
                       )}
                     >
                       {mode}

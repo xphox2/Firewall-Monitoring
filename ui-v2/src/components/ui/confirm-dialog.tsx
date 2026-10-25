@@ -35,7 +35,7 @@ export function ConfirmDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-[1px]" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-[60] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-card p-5 shadow-2xl focus:outline-none"
+          className="fixed left-1/2 top-1/2 z-[60] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-card p-5 shadow-2xl focus:outline-hidden"
           onOpenAutoFocus={(event) => {
             // Default focus lands on the destructive button; send it to the
             // dialog itself so Enter cannot delete anything by reflex.

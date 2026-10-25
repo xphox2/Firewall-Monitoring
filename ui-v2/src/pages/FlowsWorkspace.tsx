@@ -228,7 +228,7 @@ export function FlowsWorkspace() {
               className={cn(
                 'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                 activeTab === t.id
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text',
               )}
             >

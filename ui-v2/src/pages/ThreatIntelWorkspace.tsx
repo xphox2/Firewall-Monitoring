@@ -109,7 +109,7 @@ export function ThreatIntelWorkspace() {
               className={cn(
                 'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                 activeTab === t.id
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text',
               )}
             >
@@ -168,7 +168,7 @@ function LookupTab() {
                 if (e.key === 'Enter') void run();
               }}
               placeholder="IPv4, IPv6 or AS number (e.g. 203.0.113.9, AS64500)"
-              className="w-full rounded-md border border-border bg-bg-panel py-2 pl-8 pr-3 font-mono text-xs text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel py-2 pl-8 pr-3 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
             />
           </div>
           <button

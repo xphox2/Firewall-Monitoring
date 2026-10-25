@@ -113,7 +113,7 @@ export function SystemWorkspace() {
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
                   activeTab === t.id
-                    ? 'bg-bg-card text-text shadow-sm border border-border'
+                    ? 'bg-bg-card text-text shadow-xs border border-border'
                     : 'text-text-dim hover:text-text'
                 )}
               >
@@ -1056,7 +1056,7 @@ function DisplayAndFlowsSubTab() {
             value={draft.flow_internal_networks ?? ''}
             onChange={(e) => setDraft((p) => ({ ...p, flow_internal_networks: e.target.value }))}
             placeholder="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
-            className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+            className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
         </div>
 

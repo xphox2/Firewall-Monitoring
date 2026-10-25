@@ -82,7 +82,7 @@ export function StickySaveBar({
           onClick={onSave}
           disabled={isSaving}
           data-testid="sticky-save-btn"
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-60 transition-colors shadow-sm"
+          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-60 transition-colors shadow-xs"
         >
           {isSaving ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

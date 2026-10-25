@@ -78,7 +78,7 @@ export function OverviewWorkspace() {
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                 activeTab === 'health'
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -91,7 +91,7 @@ export function OverviewWorkspace() {
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                 activeTab === 'noc'
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -809,7 +809,7 @@ function LiveNocWallboard() {
                 onClick={() => setView(mode)}
                 className={cn(
                   'rounded px-2.5 py-1 text-[11px] font-medium',
-                  view === mode ? 'bg-bg-card text-text shadow-sm' : 'text-text-dim hover:text-text',
+                  view === mode ? 'bg-bg-card text-text shadow-xs' : 'text-text-dim hover:text-text',
                 )}
               >
                 By {mode}
@@ -916,7 +916,7 @@ function LiveNocWallboard() {
                 {devices.map((d) => (
                   <tr
                     key={`${d.site_name}-${d.id}`}
-                    className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-none"
+                    className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-hidden"
                     tabIndex={0}
                     role="button"
                     onClick={() => navigate(`/devices/${d.id}`)}
@@ -1216,7 +1216,7 @@ function SiteDrilldown({
                       key={device.id}
                       role="button"
                       tabIndex={0}
-                      className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-none"
+                      className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-hidden"
                       onClick={() => onOpenDevice(device.id)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {

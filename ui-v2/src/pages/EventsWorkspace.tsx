@@ -251,7 +251,7 @@ export function EventsWorkspace() {
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'stream'
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -264,7 +264,7 @@ export function EventsWorkspace() {
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'analytics'
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -277,7 +277,7 @@ export function EventsWorkspace() {
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'security'
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -445,7 +445,7 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Filter by exact source IP or CIDR..."
-            className="w-full rounded border border-border bg-bg-panel pl-8 pr-3 py-1 text-xs font-mono text-text focus:border-accent focus:outline-none"
+            className="w-full rounded border border-border bg-bg-panel pl-8 pr-3 py-1 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
         </div>
       </div>

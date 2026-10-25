@@ -92,7 +92,7 @@
                     <div>
                         <div class="flex items-center gap-3 flex-wrap">
                             <h1 id="deviceName" class="text-[1.6rem] font-bold text-[#e6edf3] leading-none m-0"></h1>
-                            <span id="deviceStatus" class="badge inline-block px-3 py-1 rounded-full text-[0.75rem] font-semibold uppercase tracking-[0.5px] shadow-sm"></span>
+                            <span id="deviceStatus" class="badge inline-block px-3 py-1 rounded-full text-[0.75rem] font-semibold uppercase tracking-[0.5px] shadow-xs"></span>
                             <span id="deviceSshLaunch"></span>
                         </div>
                         <div class="device-meta flex gap-4 items-center flex-wrap mt-2 text-[#8b949e] text-[0.82rem]">
@@ -242,7 +242,7 @@
                     <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
                         <div class="filters flex gap-1.5 items-center flex-wrap" id="ifaceFilters"></div>
                         <div class="flex gap-2 items-center">
-                            <input type="text" id="ifaceSearch" placeholder="Filter interfaces by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                            <input type="text" id="ifaceSearch" placeholder="Filter interfaces by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-hidden w-full md:w-64">
                         </div>
                     </div>
 
@@ -293,7 +293,7 @@
                             <button class="filter-btn" data-vpn-filter="down" style="background:transparent;border:1px solid var(--fwmon-border);color:var(--fwmon-text-faint);padding:4px 10px;border-radius:4px;font-size:0.78rem;cursor:pointer;">Down</button>
                         </div>
                         <div class="flex gap-2 items-center">
-                            <input type="text" id="vpnSearch" placeholder="Filter tunnels by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                            <input type="text" id="vpnSearch" placeholder="Filter tunnels by name..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-hidden w-full md:w-64">
                         </div>
                     </div>
 
@@ -626,7 +626,7 @@
                     <div class="mb-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-[#0d1117] p-3 rounded-lg border border-[#30363d]">
                         <div class="flex gap-2 items-center flex-wrap">
                             <label class="text-[0.82rem] text-[#8b949e]">Severity:</label>
-                            <select id="alertsSeverityFilter" class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none">
+                            <select id="alertsSeverityFilter" class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-hidden">
                                 <option value="all">All Severities</option>
                                 <option value="critical">Critical</option>
                                 <option value="high">High</option>
@@ -635,7 +635,7 @@
                             </select>
                         </div>
                         <div class="flex gap-2 items-center">
-                            <input type="text" id="alertsSearch" placeholder="Search alert logs..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-none w-full md:w-64">
+                            <input type="text" id="alertsSearch" placeholder="Search alert logs..." class="bg-[#21262d] border border-[#30363d] rounded-md px-3 py-1.5 text-sm text-[#e6edf3] focus:border-[#58a6ff] focus:outline-hidden w-full md:w-64">
                         </div>
                     </div>
 
