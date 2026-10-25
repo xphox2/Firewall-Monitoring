@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.445] - 2026-10-25
+
+### Added — Delete a tunnel from the V2 console
+
+- **The V2 IPSec tab can now delete a tunnel.** The legacy console has had a
+  Delete button for the tunnel intent; the V2 tab did not, so a tunnel could be
+  rolled back but never removed from the list.
+- **The gate is the server's, not a new one.** The intent row may only be
+  removed once the tunnel carries no deployment — a rollback clears the deploy
+  record, and the server refuses the delete with *"roll back before deleting"*
+  otherwise. The button is therefore shown **disabled with that reason** rather
+  than hidden, so the operator can see what a delete needs first.
+
 ## [0.11.444] - 2026-10-25
 
 ### Added — Device-side discovery: find the tunnel's objects on the firewall

@@ -659,6 +659,15 @@ const IPSEC_ROLLBACKABLE = new Set([
 // IPSEC_ROLLBACK_TERMINAL: the two statuses a rollback can settle on.
 const IPSEC_ROLLBACK_TERMINAL = new Set(['rolled_back', 'rollback_failed']);
 
+// IPSEC_DELETABLE mirrors the legacy console's delete rule (admin-ipsec.js
+// canDelete): the intent row can only be removed once the tunnel carries no
+// deployment — a rollback clears the deploy record, and the server refuses the
+// delete with "roll back before deleting" otherwise.
+//
+// The button is shown disabled (with the reason) rather than hidden, so the
+// operator can see there IS a delete and what it needs first.
+const IPSEC_DELETABLE = new Set(['draft', 'rolled_back', 'error']);
+
 // A discovered object: one of the tunnel's objects the DEVICE reported, with
 // the uuid the removal will address it by.
 interface IPSecDiscoveredObject {
@@ -704,6 +713,7 @@ function IpsecTunnelsSubTab() {
   const [selectedTunnel, setSelectedTunnel] = useState<IPSecTunnelIntent | null>(null);
   const [tunnelToDeploy, setTunnelToDeploy] = useState<IPSecTunnelIntent | null>(null);
   const [tunnelToRollback, setTunnelToRollback] = useState<IPSecTunnelIntent | null>(null);
+  const [tunnelToDelete, setTunnelToDelete] = useState<IPSecTunnelIntent | null>(null);
   const [previewText, setPreviewText] = useState<IpsecPreview | null>(null);
 
   const actionMutation = useMutation({
@@ -813,6 +823,22 @@ function IpsecTunnelsSubTab() {
     },
   });
 
+  // Delete removes the tunnel INTENT from Firewall-Mon. It never touches the
+  // devices — the rollback does that — which is why the server refuses the
+  // delete while a deployment is still recorded.
+  const deleteTunnelMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/admin/api/ipsec/tunnels/${id}`, { method: 'DELETE' }),
+    onSuccess: (_res, id) => {
+      const name = tunnels.find((t) => t.id === id)?.name;
+      toast({ title: `Tunnel deleted${name ? `: ${name}` : ''}`, variant: 'info' });
+      setTunnelToDelete(null);
+      queryClient.invalidateQueries({ queryKey: ['ipsec-tunnels'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'Delete failed', description: err.message, variant: 'error' });
+    },
+  });
+
   const loadPreview = async (tunnel: IPSecTunnelIntent) => {
     setSelectedTunnel(tunnel);
     // Clear the previous tunnel's render so the drawer cannot show it under the
@@ -903,6 +929,24 @@ function IpsecTunnelsSubTab() {
                 <Undo2 className="h-3 w-3" /> Rollback
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setTunnelToDelete(row.original)}
+              disabled={!IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))}
+              className={cn(
+                'flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px]',
+                IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))
+                  ? 'text-sig-crit hover:bg-sig-crit/10'
+                  : 'cursor-not-allowed text-text-faint opacity-60',
+              )}
+              title={
+                IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))
+                  ? 'Delete this tunnel intent'
+                  : 'Roll back before deleting — the tunnel still has a deployment recorded'
+              }
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </button>
           </div>
         ),
       },
@@ -1030,6 +1074,19 @@ function IpsecTunnelsSubTab() {
           rollbackMutation.mutate(tunnelToRollback);
           setTunnelToRollback(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={!!tunnelToDelete}
+        onOpenChange={(open) => {
+          if (!open) setTunnelToDelete(null);
+        }}
+        title={`Delete ${tunnelToDelete?.name ?? 'this tunnel'}?`}
+        description="This removes the tunnel intent from Firewall-Mon. It does not touch the devices — roll the tunnel back first so its configuration is removed there too. This cannot be undone."
+        confirmLabel="Delete tunnel"
+        destructive
+        pending={deleteTunnelMutation.isPending}
+        onConfirm={() => tunnelToDelete && deleteTunnelMutation.mutate(tunnelToDelete.id)}
       />
     </div>
   );
