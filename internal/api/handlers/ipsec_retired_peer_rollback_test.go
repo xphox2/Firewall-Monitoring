@@ -338,7 +338,10 @@ func TestRollback_Still409_WhenCommandLive(t *testing.T) {
 }
 
 // A deploy record written BEFORE the per-end rollback format carries only the
-// index-aligned CommandIDs. It must still resolve.
+// index-aligned CommandIDs. It must still resolve — and it must resolve to a
+// CLEAN rollback when its commands are real and clean, which is the actual
+// backward-compatibility guarantee. (A legacy record whose commands are lost
+// must fail honestly; that is the second half of this test.)
 func TestRollback_LegacyRecordWithoutEnds_StillPolls(t *testing.T) {
 	h, db := setupTestHandler(t)
 	probe, _ := setupProbeAndDevice(t, db)
@@ -346,8 +349,57 @@ func TestRollback_LegacyRecordWithoutEnds_StillPolls(t *testing.T) {
 	b := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", a.ID, b.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
+	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
 
-	// Rewrite the deploy record in the LEGACY shape: Rollback.CommandIDs only.
+	// Start a rollback so REAL remove commands exist.
+	rec := rollbackReq(t, h, id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	st := deployStateOf(t, db, id)
+	if st.Rollback == nil || len(st.Rollback.Ends) != 2 {
+		t.Fatalf("want 2 per-end rollback states, got %+v", st.Rollback)
+	}
+	legacyIDs := []string{st.Rollback.Ends[0].CommandID, st.Rollback.Ends[1].CommandID}
+
+	// Rewrite the deploy record in the LEGACY shape: Rollback.CommandIDs only,
+	// no Ends — exactly what a pre-change server wrote.
+	legacy := ipsec.DeployState{DeployedAt: st.DeployedAt, Ends: st.Ends}
+	legacy.Rollback = &ipsec.RollbackState{CommandIDs: legacyIDs}
+	blob, err := json.Marshal(&legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy state: %v", err)
+	}
+	if err := db.Gorm().Model(&models.IPSecTunnel{}).Where("id = ?", id).
+		Update("deploy_json", string(blob)).Error; err != nil {
+		t.Fatalf("write legacy record: %v", err)
+	}
+
+	// The legacy commands resolve cleanly → the legacy fallback must produce a
+	// CLEAN rollback. A broken fallback (cid empty) would land on
+	// rollback_failed, so this distinguishes the two.
+	completeRemove(t, db, probe.ID, legacyIDs[0])
+	completeRemove(t, db, probe.ID, legacyIDs[1])
+	data := pollDeploy(t, h, id)
+	if data["status"] != "rolled_back" {
+		t.Fatalf("a legacy record with clean commands must roll back cleanly, got %v (note: %v)", data["status"], data["note"])
+	}
+	row, _ := db.GetIPSecTunnel(id)
+	if row.DeployJSON != "" {
+		t.Error("a clean rollback must clear the deploy record")
+	}
+}
+
+// A legacy record whose rollback commands are GONE (pruned) must fail
+// honestly — never a silent clean.
+func TestRollback_LegacyRecordWithLostCommands_FailsHonestly(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	a := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	b := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", a.ID, b.ID, 1)
+	deployAndSettle(t, h, db, id, "up")
+
 	st := deployStateOf(t, db, id)
 	legacy := ipsec.DeployState{DeployedAt: st.DeployedAt, Ends: st.Ends}
 	legacy.Rollback = &ipsec.RollbackState{CommandIDs: []string{"legacy-cmd-1", "legacy-cmd-2"}}
