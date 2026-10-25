@@ -3,6 +3,7 @@ package ipsectelemetry
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -91,22 +92,75 @@ func Ingest(db database.Store, deviceID uint, result string, now time.Time) ([]m
 // already filters to enabled pairs and already orients local/remote for the
 // reporting device, which also disposes of the which-end question.
 //
+// DEAD PEERS ARE EXCLUDED: a tunnel whose far end was retired or purged can
+// never come up, so expecting its children manufactures an outage — the parser
+// synthesises a "down" row for every expected child the box is not carrying,
+// on EVERY telemetry cycle, for as long as the tunnel stays "provisioned". That
+// is exactly how a decommissioned FortiGate keeps re-appearing as a phantom
+// peer on the topology map.
+//
+// Deliberately scoped HERE, not in GetProvisionedTunnelPairs: changing the
+// shared pair set would make the connection map's provisionedPeer fall back to
+// remote-IP matching, which is structurally wrong for a NAT'd dialup peer.
+//
 // Best-effort: a device with no provisioned tunnels yields nil, and the parser
-// then reports only what it can see.
+// then reports only what it can see. A lifecycle-lookup failure also fails
+// OPEN (keeps the pre-change expectation) — an unknown peer state must never
+// hide a real outage.
 func expectedFor(db database.Store, deviceID uint) []vpnsession.ExpectedChild {
 	pairs, err := db.GetProvisionedTunnelPairs()
 	if err != nil || len(pairs) == 0 {
 		return nil
 	}
-	var out []vpnsession.ExpectedChild
+	// Resolve the far-end device of every pair this device is an endpoint of.
+	type pairPeer struct {
+		pp   database.ProvisionedTunnelPair
+		peer uint
+	}
+	entries := make([]pairPeer, 0, len(pairs))
+	peerIDs := make([]uint, 0, len(pairs))
 	for _, pp := range pairs {
-		paths, ok := pp.PathsFor(deviceID)
-		if !ok {
+		if _, ok := pp.PathsFor(deviceID); !ok {
 			continue // not an endpoint, or no pair-level detail (route-based)
+		}
+		var peer uint
+		switch deviceID {
+		case pp.A:
+			peer = pp.B
+		case pp.B:
+			peer = pp.A
+		default:
+			continue
+		}
+		entries = append(entries, pairPeer{pp: pp, peer: peer})
+		peerIDs = append(peerIDs, peer)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	// ONE query for every peer: active / retired / purged.
+	states, serr := db.GetDeviceLifecycleStates(peerIDs)
+	lifecycleKnown := serr == nil
+	if !lifecycleKnown {
+		log.Printf("ipsectelemetry: device lifecycle lookup failed for device %d (%v) — expecting every provisioned child", deviceID, serr)
+	}
+
+	var out []vpnsession.ExpectedChild
+	for _, ent := range entries {
+		if lifecycleKnown {
+			// Only an ACTIVE peer is expected to come up. A retired peer and a
+			// purged peer (absent from the map) are both dead ends.
+			if states[ent.peer] != database.DeviceActive {
+				continue
+			}
+		}
+		paths, ok := ent.pp.PathsFor(deviceID)
+		if !ok {
+			continue
 		}
 		for _, p := range paths {
 			out = append(out, vpnsession.ExpectedChild{
-				TunnelName: pp.Name,
+				TunnelName: ent.pp.Name,
 				Local:      p[0],
 				Remote:     p[1],
 			})

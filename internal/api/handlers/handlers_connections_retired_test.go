@@ -171,6 +171,8 @@ func TestGetVPNMapData_RetiredProvisionedPeerIsUnmatched(t *testing.T) {
 			Tunnels []struct {
 				TunnelName   string `json:"tunnel_name"`
 				MatchedDevID uint   `json:"matched_device_id"`
+				PeerState    string `json:"peer_state"`
+				PeerName     string `json:"peer_name"`
 			} `json:"tunnels"`
 		} `json:"data"`
 	}
@@ -186,6 +188,17 @@ func TestGetVPNMapData_RetiredProvisionedPeerIsUnmatched(t *testing.T) {
 			found = true
 			if tun.MatchedDevID != 0 {
 				t.Errorf("tunnel matched to device %d; a retired provisioned peer must be unmatched (and never an IP fallback)", tun.MatchedDevID)
+			}
+			// The peer_state is what lets the map tell a DECOMMISSIONED peer
+			// from an unknown one: without it the UI invented a phantom
+			// external node for the dead peer's IP.
+			if tun.PeerState != "retired" {
+				t.Errorf("peer_state = %q, want retired", tun.PeerState)
+			}
+			// The retired device's NAME is still recoverable (the row is kept) —
+			// the map can name the dead peer instead of drawing a blank branch.
+			if tun.PeerName != gone.Name {
+				t.Errorf("peer_name = %q, want %q", tun.PeerName, gone.Name)
 			}
 		}
 	}

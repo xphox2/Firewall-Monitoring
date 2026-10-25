@@ -11,6 +11,7 @@ import {
   Eye,
   CheckCircle2,
   ArrowRight,
+  Undo2,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -224,7 +225,7 @@ function NetworkMapSubTab({
   // Rebuild the graph only when the underlying data changes: a refetch that
   // returns structurally identical JSON keeps these references stable (React
   // Query structural sharing), so pan/zoom and selection survive the poll.
-  const { nodes, edges, mapSites } = useMemo(() => {
+  const { nodes, edges, mapSites, deadPeers } = useMemo(() => {
     const devices = deviceList ?? [];
     const sites = siteList ?? [];
     const connections = connList ?? [];
@@ -239,6 +240,10 @@ function NetworkMapSubTab({
           matched_name?: string;
           matched_device_id?: number;
           tunnel_group?: string;
+          // peer_state: "active" | "retired" | "removed" (the far end's
+          // lifecycle). peer_name: the far end's device name.
+          peer_state?: string;
+          peer_name?: string;
         }>;
       }
     >;
@@ -260,6 +265,15 @@ function NetworkMapSubTab({
 
     const links: MapEdge[] = [];
     const external = new Map<string, MapNode>();
+    // Tunnels whose far end is a decommissioned device. They are NOT drawn as a
+    // phantom branch, but they are listed so the operator can see that a
+    // cleanup is outstanding.
+    const deadPeers: Array<{
+      deviceName: string;
+      tunnelName: string;
+      peerName: string;
+      peerState: string;
+    }> = [];
 
     for (const connection of connections) {
       const source = String(connection.source_device_id);
@@ -282,6 +296,23 @@ function NetworkMapSubTab({
     for (const [deviceId, vpn] of Object.entries(vpnMap)) {
       if (!deviceById.has(deviceId)) continue;
       for (const [idx, tunnel] of (vpn.tunnels ?? []).entries()) {
+        // A retired or REMOVED peer is dead: the tunnel can never come up, and
+        // the device it pointed at is decommissioned. Drawing it produced a
+        // PHANTOM external node — the dead peer's IP, status down, edged from
+        // the live firewall. Both the node and the edge are skipped: skipping
+        // only one leaves either an orphan node or a dangling edge. The tunnel
+        // is listed below the map instead, so the information is not lost — it
+        // just stops being a branch on the graph.
+        const peerState = tunnel.peer_state;
+        if (peerState === 'retired' || peerState === 'removed') {
+          deadPeers.push({
+            deviceName: deviceById.get(deviceId)?.name ?? deviceId,
+            tunnelName: tunnel.tunnel_name,
+            peerName: tunnel.peer_name || '(device removed)',
+            peerState,
+          });
+          continue;
+        }
         // matched_device_id is the backend's authoritative peer resolution
         // (provisioned peer wins; a dialup remote_ip is a NAT gateway, not the
         // peer). Re-deriving it from remote_ip picks the wrong device.
@@ -318,6 +349,7 @@ function NetworkMapSubTab({
       nodes: [...deviceNodes, ...external.values()],
       edges: links,
       mapSites: siteNodes,
+      deadPeers,
     };
   }, [deviceList, siteList, connList, mapData]);
 
@@ -369,6 +401,28 @@ function NetworkMapSubTab({
             onSelectConnection={onOpenConnection}
           />
         </Suspense>
+      )}
+
+      {deadPeers.length > 0 && (
+        <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/5 p-3.5">
+          <div className="text-[11px] uppercase tracking-wide text-sig-warn">
+            {deadPeers.length} tunnel{deadPeers.length === 1 ? '' : 's'} point at a decommissioned peer
+          </div>
+          <ul className="mt-1.5 space-y-0.5 text-[11px] text-text-dim">
+            {deadPeers.map((d, i) => (
+              <li key={`${d.deviceName}-${d.tunnelName}-${i}`}>
+                <span className="font-mono text-text">{d.deviceName}</span> →{' '}
+                <span className="font-mono">{d.tunnelName}</span> · peer{' '}
+                <span className="font-mono">{d.peerName}</span>{' '}
+                <span className="text-text-faint">({d.peerState})</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-text-faint">
+            These tunnels are not drawn: the peer can never come up. Roll the tunnel back from the
+            IPSec Tunnels tab to remove its configuration from the live device.
+          </p>
+        </div>
       )}
 
       <p className="text-[11px] text-text-faint">
@@ -588,6 +642,26 @@ function ConnectionsSubTab() {
 // ============================================================================
 // SUB-TAB 3: IPSEC TUNNEL WIZARD & DEPLOY SAGA
 // ============================================================================
+
+// IPSEC_ROLLBACKABLE mirrors the server's rollback fromStatuses (degraded, up,
+// down, error, rollback_failed, deploying). The Rollback button is offered only
+// for those, so the UI never shows an action the server would refuse.
+const IPSEC_ROLLBACKABLE = new Set([
+  'degraded',
+  'up',
+  'down',
+  'error',
+  'rollback_failed',
+  'deploying',
+]);
+
+// IPSEC_ROLLBACK_TERMINAL: the two statuses a rollback can settle on.
+const IPSEC_ROLLBACK_TERMINAL = new Set(['rolled_back', 'rollback_failed']);
+
+function ipsecTunnelStatus(t: IPSecTunnelIntent): string {
+  return (t.status || t.deploy_state || 'draft').toLowerCase();
+}
+
 function IpsecTunnelsSubTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -602,6 +676,7 @@ function IpsecTunnelsSubTab() {
 
   const [selectedTunnel, setSelectedTunnel] = useState<IPSecTunnelIntent | null>(null);
   const [tunnelToDeploy, setTunnelToDeploy] = useState<IPSecTunnelIntent | null>(null);
+  const [tunnelToRollback, setTunnelToRollback] = useState<IPSecTunnelIntent | null>(null);
   const [previewText, setPreviewText] = useState<IpsecPreview | null>(null);
 
   const actionMutation = useMutation({
@@ -613,6 +688,52 @@ function IpsecTunnelsSubTab() {
     },
     onError: (err: Error) => {
       toast({ title: 'IPSec action failed', description: err.message, variant: 'error' });
+    },
+  });
+
+  // Rollback reverses the deployed configuration on the devices. The POST only
+  // STARTS the saga — the terminal status is poll-driven, so the UI polls the
+  // deploy endpoint until the rollback settles (the legacy admin console does
+  // the same). Without this the operator had no way to run a rollback from the
+  // V2 console at all.
+  const rollbackMutation = useMutation({
+    mutationFn: async (tunnel: IPSecTunnelIntent) => {
+      await apiFetch(`/admin/api/ipsec/tunnels/${tunnel.id}/rollback`, { method: 'POST' });
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const res = await apiFetch<{ status?: string; note?: string }>(
+          `/admin/api/ipsec/tunnels/${tunnel.id}/deploy`,
+        );
+        const status = (res?.status || '').toLowerCase();
+        if (IPSEC_ROLLBACK_TERMINAL.has(status)) return res;
+      }
+      return null;
+    },
+    onSuccess: (res, tunnel) => {
+      const status = (res?.status || '').toLowerCase();
+      if (status === 'rolled_back') {
+        toast({
+          title: `IPSec rollback complete: ${tunnel.name}`,
+          description: res?.note,
+          variant: 'success',
+        });
+      } else if (status) {
+        toast({
+          title: `IPSec rollback ended as ${status}: ${tunnel.name}`,
+          description: res?.note,
+          variant: 'error',
+        });
+      } else {
+        toast({
+          title: `IPSec rollback still in progress: ${tunnel.name}`,
+          description: 'The rollback has not reached a terminal state yet — refresh to check again.',
+          variant: 'warning',
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['ipsec-tunnels'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'IPSec rollback failed', description: err.message, variant: 'error' });
     },
   });
 
@@ -686,6 +807,16 @@ function IpsecTunnelsSubTab() {
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </button>
+            {IPSEC_ROLLBACKABLE.has(ipsecTunnelStatus(row.original)) && (
+              <button
+                type="button"
+                onClick={() => setTunnelToRollback(row.original)}
+                className="flex items-center gap-1 rounded border border-sig-warn/40 bg-sig-warn/10 px-2 py-1 text-[11px] font-semibold text-sig-warn"
+                title="Remove the deployed configuration from the devices"
+              >
+                <Undo2 className="h-3 w-3" /> Rollback
+              </button>
+            )}
           </div>
         ),
       },
@@ -745,6 +876,22 @@ function IpsecTunnelsSubTab() {
           if (!tunnelToDeploy) return;
           actionMutation.mutate({ id: tunnelToDeploy.id, action: 'deploy' });
           setTunnelToDeploy(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!tunnelToRollback}
+        onOpenChange={(open) => {
+          if (!open) setTunnelToRollback(null);
+        }}
+        title={`Roll back ${tunnelToRollback?.name ?? 'this tunnel'}?`}
+        description="Rollback removes this tunnel's Phase 1/Phase 2 configuration from every endpoint it was deployed to (connection, local/remote auth, child SAs, PSK and the floating firewall rules). Traffic on the tunnel stops. An endpoint that has been retired or removed is skipped — its objects, if any, must be cleaned by hand."
+        confirmLabel="Roll back tunnel"
+        pending={rollbackMutation.isPending}
+        onConfirm={() => {
+          if (!tunnelToRollback) return;
+          rollbackMutation.mutate(tunnelToRollback);
+          setTunnelToRollback(null);
         }}
       />
     </div>

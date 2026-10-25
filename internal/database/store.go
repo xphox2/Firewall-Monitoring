@@ -235,6 +235,13 @@ type IPSecStore interface {
 	SetIPSecRollbackState(id uint, status, deployJSON string) error
 	SetIPSecPreflightState(id uint, preflightJSON string) error
 	TransitionIPSecDeploy(id uint, fromStatuses []string, toStatus, lastErr, deployJSON string, setDeployedAt bool, cmds []*models.ProbeCommand) error
+	// ResolveIPSecRollback advances a rolling_back tunnel to its terminal state
+	// (one guarded write). Shared by the deploy poll, the bulk orphaned-rollback
+	// endpoint and the background reconciler so all three agree on the rules.
+	ResolveIPSecRollback(id uint) (status, reason string, done bool, err error)
+	// ListIPSecTunnelsByStatus returns the ids of every tunnel in one of the
+	// given statuses (focused query for the rollback reconciler).
+	ListIPSecTunnelsByStatus(statuses []string) ([]uint, error)
 	DeleteIPSecTunnel(id uint) error
 }
 
@@ -249,6 +256,9 @@ type DeviceStore interface {
 	RestoreDevice(id uint, updates map[string]interface{}) error
 	GetDeviceIDsByProbe(probeID uint) ([]uint, error)
 	GetDevicesByProbe(probeID uint) ([]models.Device, error)
+	// GetDeviceLifecycleStates resolves active / retired / missing for a set of
+	// device ids in one query (missing = absent from the returned map).
+	GetDeviceLifecycleStates(ids []uint) (map[uint]DeviceLifecycle, error)
 	GetDeviceStatuses() ([]map[string]interface{}, error)
 	ResolveDevicesByIPs(ips []string) map[string]uint
 }

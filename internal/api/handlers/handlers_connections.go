@@ -604,12 +604,27 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 	db.ResolveTunnelGroups(vpnStatuses)
 
 	type tunnelInfo struct {
-		TunnelName    string `json:"tunnel_name"`
-		TunnelType    string `json:"tunnel_type"`
-		Status        string `json:"status"`
-		RemoteIP      string `json:"remote_ip"`
-		MatchedDevID  uint   `json:"matched_device_id"`
-		MatchedName   string `json:"matched_name"`
+		TunnelName   string `json:"tunnel_name"`
+		TunnelType   string `json:"tunnel_type"`
+		Status       string `json:"status"`
+		RemoteIP     string `json:"remote_ip"`
+		MatchedDevID uint   `json:"matched_device_id"`
+		MatchedName  string `json:"matched_name"`
+		// PeerState is the lifecycle of the tunnel's FAR END, when the peer is
+		// known from a provisioned pair: "active", "retired" or "removed"
+		// (purged — the row is gone). Empty when the peer was not resolved from
+		// a provisioned pair (the remote-IP fallback says nothing about a peer's
+		// lifecycle).
+		//
+		// It exists because a retired peer used to be indistinguishable from an
+		// unknown one: the map could not name it, so the UI invented a phantom
+		// external node for its IP — a dead peer drawn as a live branch.
+		PeerState string `json:"peer_state,omitempty"`
+		// PeerName is the far end's device name. For a retired peer this is the
+		// name from the (unscoped) device lookup — the name IS recoverable even
+		// though the device is gone from the live fleet. Empty for a purged peer:
+		// the row is gone and the name is unrecoverable.
+		PeerName      string `json:"peer_name,omitempty"`
 		Phase1Name    string `json:"phase1_name"`
 		TunnelGroup   string `json:"tunnel_group"`
 		LocalSubnet   string `json:"local_subnet"`
@@ -629,6 +644,10 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 
 	result := make(map[string]*deviceVPN)
 
+	// Peer lifecycle cache: a peer shared by several tunnels is resolved ONCE
+	// per request, not once per tunnel row.
+	peerCache := make(map[uint]peerLifecycleInfo, 4)
+
 	for _, vpn := range vpnStatuses {
 		key := fmt.Sprintf("%d", vpn.DeviceID)
 		dv, ok := result[key]
@@ -646,11 +665,20 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 		// peer — two answers to the same question on one screen.
 		var matchID uint
 		var matchName string
+		var peerState, peerName string
 		if peer, found := provisionedPeer(provPairs, vpn); found {
 			// The provisioned record keeps a retired endpoint (its other readers
 			// need it). A peer that is not an active device is shown unmatched —
 			// never a link to the retired device — and there is still no fallback
 			// to the remote IP, for the NAT reason above.
+			//
+			// The peer's LIFECYCLE is resolved separately, and only ONCE per
+			// peer per request (a small cache, built lazily): a retired peer is
+			// still a device row (GetDevice is deliberately unscoped), so its
+			// NAME is recoverable even though it is gone from the live fleet.
+			// A purged peer's row is gone — the name is unrecoverable.
+			pi := peerLifecycle(db, peer, peerCache)
+			peerState, peerName = pi.state, pi.name
 			if d, ok := deviceByID[peer]; ok {
 				matchID, matchName = peer, d.Name
 			}
@@ -674,6 +702,8 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 			RemoteIP:      vpn.RemoteIP,
 			MatchedDevID:  matchID,
 			MatchedName:   matchName,
+			PeerState:     peerState,
+			PeerName:      peerName,
 			Phase1Name:    vpn.Phase1Name,
 			TunnelGroup:   vpn.TunnelGroup,
 			LocalSubnet:   vpn.LocalSubnet,
@@ -687,6 +717,44 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(result))
+}
+
+// peerLifecycleInfo is a resolved peer lifecycle for the VPN map.
+type peerLifecycleInfo struct {
+	// state is "active", "retired" or "removed".
+	state string
+	// name is the peer's device name — recoverable for a retired peer (its row
+	// is kept) but NOT for a purged one (the row is gone).
+	name string
+}
+
+// peerLifecycle resolves a provisioned peer's lifecycle and name, memoised per
+// request.
+//
+// GetDevice is deliberately UNSCOPED, so a retired device is still found — and
+// so is its NAME. That is what lets the map say "this tunnel points at the
+// retired FORTIGATE-01" instead of inventing a phantom external node for the
+// dead peer's IP. A purged device's row is gone: the state is "removed" and
+// the name is unrecoverable.
+func peerLifecycle(db database.Store, peer uint, cache map[uint]peerLifecycleInfo) peerLifecycleInfo {
+	if pi, ok := cache[peer]; ok {
+		return pi
+	}
+	pi := peerLifecycleInfo{state: "active"}
+	if peer != 0 {
+		dev, derr := db.GetDevice(peer)
+		switch {
+		case derr != nil:
+			pi.state = "removed"
+		case dev.RetiredAt != nil:
+			pi.state = "retired"
+			pi.name = dev.Name
+		default:
+			pi.name = dev.Name
+		}
+	}
+	cache[peer] = pi
+	return pi
 }
 
 // provisionedPeer returns the far-end device of the tunnel this row belongs to,
