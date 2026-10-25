@@ -1,6 +1,31 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.441] - 2026-10-24
+
+### Security — Durable, shared TOTP replay guard (D-14)
+
+- The guard that makes a valid 2FA code single-use for its ~90 s validity
+  window lived in the API process's memory. A restart forgot every spent
+  code, and with `ALLOW_MULTI_API=true` each instance had its own set — so an
+  intercepted still-fresh code could be accepted a second time after a
+  restart or on another instance.
+- Accepted codes are now recorded in a new `used_totp_codes` table
+  (migration v83): the key is `sha256("totp:<admin id>:<code>")` — never the
+  code — and the expiry is unix seconds. The claim is one
+  `INSERT … ON CONFLICT DO NOTHING`, so of two concurrent uses of one code,
+  across any number of processes, exactly one wins; expired rows are swept on
+  each claim (a handful of rows per 2FA user at most, ~100 bytes each). The
+  guard still covers every TOTP consumer (login, enrolment, disable-2FA,
+  secret reveal, purge) through one namespace. A database error refuses the
+  code — it never falls back to "accept".
+- The in-process guard remains only as the fallback for code paths without a
+  database (CLI tools, unit tests). `docs/OPERATIONS.md` no longer lists TOTP
+  replay among the follower-mode divergences. `TestClaimTOTPCode` (SQLite) and
+  `TestClaimTOTPCode_PG` (PostgreSQL, via the registered migrations) pin the
+  claim contract including concurrent claims; `TestMarkTOTPSlotUsed_SharedStore`
+  and `TestMarkTOTPSlotUsed_StoreErrorFailsClosed` pin the AuthManager side.
+
 ## [0.11.440] - 2026-10-24
 
 ### Security — Fail-closed field encryption and HKDF key derivation (D-12, D-11)

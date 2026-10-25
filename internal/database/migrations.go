@@ -134,6 +134,7 @@ var registeredMigrations = []migration{
 	{version: 80, name: "drop_unused_net_events_indexes", run: (*Database).migrateDropUnusedNetEventIndexes},
 	{version: 81, name: "archive_lag_hours_late", run: (*Database).migrateArchiveLagHoursLate},
 	{version: 82, name: "readd_net_events_indexes", run: (*Database).migrateReaddNetEventIndexes},
+	{version: 83, name: "used_totp_codes", run: (*Database).migrateUsedTOTPCodes},
 }
 
 // RunMigrations applies every registered migration not yet recorded in

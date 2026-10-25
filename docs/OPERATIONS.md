@@ -2171,11 +2171,13 @@ actionable error. This is the default and recommended behavior.
   done here — a Postgres round-trip per request at dashboard-polling rates is the
   wrong tool for rate-limiting.
 - The **TOTP replay guard** (a valid 2FA code is single-use for its full ~90s
-  validity window — the guard remembers each accepted code, hashed, until it can
-  no longer pass validation) is also per-instance: each API process keeps its own
-  used-code set, so an intercepted still-fresh code could be replayed **once per
-  extra instance**. With followers serving logins this weakens the single-use
-  property accordingly — one more reason follower mode is not recommended.
+  validity window) is **shared**: since 0.11.441 (D-14) each accepted code is
+  recorded, hashed, in the `used_totp_codes` table until it can no longer pass
+  validation, so a code spent on one instance is refused by every other
+  instance and after a restart. (A login is a rare request, so one round-trip
+  per accepted code costs nothing — unlike rate limiting.) The guard fails
+  closed: while the database is unreachable a valid 2FA code is refused
+  (2FA logins and TOTP-confirmed actions wait for the database to recover).
 - Edge case: a follower's admin **Connect** action on an IRC server can still
   start a single bot for that server (best-effort; the background reconnect/
   status loops don't run on a follower). Don't connect IRC servers from a

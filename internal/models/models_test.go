@@ -48,7 +48,7 @@ func allTablers() []tabler {
 		ServerMetric{}, EventRule{}, EventRuleProfile{}, EventRuleProfileToggle{},
 		Incident{}, DiskUsage{}, LoadAverage{}, TopologyEntry{}, TopologyNeighbor{},
 		AdminRecoveryCode{}, ApiToken{}, ProbeCommand{}, IPSecTunnel{}, DeniedEvent{}, DevicePurgeJob{},
-		WebAuthnCredential{},
+		WebAuthnCredential{}, UsedTOTPCode{},
 		ThreatIntel{}, ThreatFeedStatus{}, FlowSourceSuppression{}, FlowInterfaceCounter{},
 		AgentDrops{}, FlowDetection{},
 		// v72 normalized event tables; v73 the backfill job queue; v75 the
