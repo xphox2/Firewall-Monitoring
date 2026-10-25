@@ -8,11 +8,20 @@ All notable changes to this project are documented in this file.
 - **The V2 IPSec tab can now delete a tunnel.** The legacy console has had a
   Delete button for the tunnel intent; the V2 tab did not, so a tunnel could be
   rolled back but never removed from the list.
-- **The gate is the server's, not a new one.** The intent row may only be
-  removed once the tunnel carries no deployment — a rollback clears the deploy
-  record, and the server refuses the delete with *"roll back before deleting"*
-  otherwise. The button is therefore shown **disabled with that reason** rather
-  than hidden, so the operator can see what a delete needs first.
+- **The button follows the server's own rule, not a status approximation.**
+  The intent row may only be removed once the tunnel carries no deployment — a
+  rollback clears the deploy record, and the server refuses the delete with
+  *"roll back before deleting"* otherwise. The list response now states that
+  rule per row (`deletable`), because the deploy record is never serialized and
+  the status alone cannot tell a `draft` from a partially-deployed `error` —
+  the latter still carries its record, so the server would refuse a delete the
+  status says is allowed. An enabled button that always answers 409 is a lie
+  the operator would have to learn the hard way.
+- **It is shown disabled with the reason** rather than hidden, so the operator
+  can see what a delete needs first — and the reason is status-aware (a deploy
+  or rollback in flight says so, rather than "roll back first").
+- **It sits behind the same confirm dialog** the other destructive actions use,
+  and says plainly that it does not touch the devices.
 
 ## [0.11.444] - 2026-10-25
 

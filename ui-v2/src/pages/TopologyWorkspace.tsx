@@ -85,6 +85,11 @@ interface IPSecTunnelIntent {
   deploy_state?: string;
   status?: string;
   updated_at?: string;
+  // deletable is the SERVER's rule (the tunnel carries no deployment), not a
+  // status approximation — the deploy record is never serialized, so the
+  // client cannot work it out for itself.
+  deletable?: boolean;
+  editable?: boolean;
 }
 
 export function TopologyWorkspace() {
@@ -664,9 +669,30 @@ const IPSEC_ROLLBACK_TERMINAL = new Set(['rolled_back', 'rollback_failed']);
 // deployment — a rollback clears the deploy record, and the server refuses the
 // delete with "roll back before deleting" otherwise.
 //
-// The button is shown disabled (with the reason) rather than hidden, so the
-// operator can see there IS a delete and what it needs first.
+// The server states the rule directly on each row (`deletable`), so the button
+// follows THAT rather than guessing from the status: a partially-deployed
+// `error` tunnel still carries its record, and the server would refuse the
+// delete even though the status says it is allowed.
 const IPSEC_DELETABLE = new Set(['draft', 'rolled_back', 'error']);
+
+// ipsecTunnelDeletable reports whether the tunnel intent may be deleted.
+//
+// The server states its own rule on each row (`deletable` = the tunnel carries
+// no deployment). The status set is only the fallback for a server that
+// predates the field — the same approximation the legacy console makes.
+function ipsecTunnelDeletable(t: IPSecTunnelIntent): boolean {
+  if (typeof t.deletable === 'boolean') return t.deletable;
+  return IPSEC_DELETABLE.has(ipsecTunnelStatus(t));
+}
+
+// ipsecDeleteDisabledReason explains, per status, what a delete is waiting for.
+function ipsecDeleteDisabledReason(t: IPSecTunnelIntent): string {
+  const status = ipsecTunnelStatus(t);
+  if (status === 'deploying' || status === 'rolling_back') {
+    return 'A deploy or rollback is in flight — wait for it to settle';
+  }
+  return 'Roll back before deleting — the tunnel still has a deployment recorded';
+}
 
 // A discovered object: one of the tunnel's objects the DEVICE reported, with
 // the uuid the removal will address it by.
@@ -932,17 +958,17 @@ function IpsecTunnelsSubTab() {
             <button
               type="button"
               onClick={() => setTunnelToDelete(row.original)}
-              disabled={!IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))}
+              disabled={!ipsecTunnelDeletable(row.original)}
               className={cn(
                 'flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px]',
-                IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))
+                ipsecTunnelDeletable(row.original)
                   ? 'text-sig-crit hover:bg-sig-crit/10'
                   : 'cursor-not-allowed text-text-faint opacity-60',
               )}
               title={
-                IPSEC_DELETABLE.has(ipsecTunnelStatus(row.original))
+                ipsecTunnelDeletable(row.original)
                   ? 'Delete this tunnel intent'
-                  : 'Roll back before deleting — the tunnel still has a deployment recorded'
+                  : ipsecDeleteDisabledReason(row.original)
               }
             >
               <Trash2 className="h-3 w-3" /> Delete
