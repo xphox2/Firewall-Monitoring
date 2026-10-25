@@ -596,29 +596,87 @@ func (h *Handler) RegisterProbe(c *gin.Context) {
 		return
 	}
 
-	// Link the remote probe: set online, auto-approve (admin created it
-	// explicitly). schema_version persists the NEGOTIATED wire version — the
-	// heartbeat handler reads it to decide whether this probe may receive
-	// schema-v4 pending_commands.
+	// D-26: a probe an admin already approved re-links without a new
+	// approval (and keeps its original approved_at). A never-approved probe
+	// is auto-approved only inside probeAutoApproveWindow of its creation —
+	// the admin who just created it is installing the collector. Outside the
+	// window the registration key alone is not enough: the probe registers as
+	// pending and waits for an admin to approve it in the UI (the collector
+	// keeps retrying and picks up the approval on its next registration).
+	// schema_version persists the NEGOTIATED wire version — the heartbeat
+	// handler reads it to decide whether this probe may receive schema-v4
+	// pending_commands.
 	now := time.Now()
-	if err := h.db.Gorm().Model(existingProbe).Updates(map[string]interface{}{
-		"status":          "online",
-		"approval_status": "approved",
-		"approved_at":     now,
-		"last_seen":       now,
-		"schema_version":  selectedVersion,
-	}).Error; err != nil {
+	approved := existingProbe.ApprovalStatus == "approved"
+	// A probe that has been live before (it heartbeated or sent data) was
+	// working under the pre-D-26 rules, which approved on every registration;
+	// a row left 'pending' by those rules (e.g. the column default from before
+	// the approval workflow) must not be locked out by the upgrade. A probe
+	// left pending by the window below never gets last_seen, so it does not
+	// qualify.
+	wasLive := !existingProbe.LastSeen.IsZero() || !existingProbe.LastDataReceived.IsZero()
+	autoApproved := !approved && (now.Sub(existingProbe.CreatedAt) <= probeAutoApproveWindow || wasLive)
+	upd := map[string]interface{}{
+		"schema_version": selectedVersion,
+	}
+	if req.AgentVersion != "" {
+		upd["agent_version"] = clampAgentVersion(req.AgentVersion)
+	}
+	// A probe left pending is not live: last_seen stays untouched (the audit
+	// row records the attempt).
+	if approved || autoApproved {
+		upd["status"] = "online"
+		upd["last_seen"] = now
+	}
+	if autoApproved {
+		upd["approval_status"] = "approved"
+		upd["approved_at"] = now
+	}
+	if err := h.db.Gorm().Model(existingProbe).Updates(upd).Error; err != nil {
 		httputil.InternalError(c, "Failed to update probe status", err)
 		return
+	}
+
+	switch {
+	case autoApproved:
+		log.Printf("probe %d (%s) auto-approved on registration from %s (within %v of creation, or previously live: %v)",
+			existingProbe.ID, existingProbe.Name, c.ClientIP(), probeAutoApproveWindow, wasLive)
+		h.probeRegistrationAudit(c, existingProbe, "probe_auto_approved")
+	case !approved:
+		log.Printf("probe %d (%s) registered from %s after the %v auto-approve window; pending admin approval",
+			existingProbe.ID, existingProbe.Name, c.ClientIP(), probeAutoApproveWindow)
+		h.probeRegistrationAudit(c, existingProbe, "probe_registration_pending")
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":        true,
 		"probe_id":       existingProbe.ID,
 		"probe_name":     existingProbe.Name,
-		"approved":       true,
+		"approved":       approved || autoApproved,
 		"schema_version": selectedVersion,
 	})
+}
+
+// probeAutoApproveWindow is how long after an admin creates a probe its
+// first registration is approved automatically (D-26).
+const probeAutoApproveWindow = 24 * time.Hour
+
+// probeRegistrationAudit records an approval decision the registration
+// endpoint made without an admin in the loop. Best effort: an audit write
+// failure never fails the registration.
+func (h *Handler) probeRegistrationAudit(c *gin.Context, probe *models.Probe, action string) {
+	if err := h.db.SaveAuditLog(&models.AuditLog{
+		CreatedAt: time.Now(),
+		Actor:     "probe:" + probe.Name,
+		Method:    http.MethodPost,
+		Action:    action,
+		Target:    fmt.Sprintf("probe_id=%d", probe.ID),
+		Status:    http.StatusOK,
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}); err != nil {
+		log.Printf("%s: audit log write failed for probe %d: %v", action, probe.ID, err)
+	}
 }
 
 func (h *Handler) RegenerateProbeKey(c *gin.Context) {
@@ -739,6 +797,15 @@ func (h *Handler) ProbeHeartbeat(c *gin.Context) {
 	// on purpose (non-retryable), not that its auth is transiently broken.
 	if probe.ApprovalStatus == "rejected" || probe.DecommissionedAt != nil || !probe.Enabled {
 		probeErr(c, http.StatusGone, "Probe is rejected or decommissioned — heartbeat refused")
+		return
+	}
+	// D-26: a probe still pending approval (registered after the
+	// auto-approve window) must not look live, refresh last_seen or receive
+	// pending commands. 403 is the collector's "re-register" signal, which is
+	// how it picks up the approval once an admin grants it — the same
+	// contract validateProbe applies to the data plane.
+	if probe.ApprovalStatus != "approved" {
+		probeErr(c, http.StatusForbidden, "Probe is pending approval — heartbeat refused")
 		return
 	}
 

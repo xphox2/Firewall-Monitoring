@@ -1,6 +1,39 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.437] - 2026-10-24
+
+### Security — Probe registration approval window (D-26)
+
+- `POST /api/probes/register` approved any never-approved probe that
+  presented its registration key, at any time — so a key leaked months after
+  the probe was created (an old install script, a backup, a shared config)
+  was enough to bring a pending probe online and start feeding telemetry.
+- A never-approved probe is now auto-approved only within **24 hours of its
+  creation** — the admin who just created it is installing the collector.
+  After that window the registration succeeds as **pending**
+  (`approved:false`); the collector keeps retrying and comes online once an
+  admin clicks Approve on the Collectors page (both UIs already show the
+  button for pending probes).
+- Upgrade safety: a never-approved probe that has been live before (it has
+  a `last_seen` or `last_data_received`, so it was working under the old
+  approve-on-every-registration rule — e.g. a row whose `approval_status`
+  kept the column default) is re-approved on its next registration instead
+  of being locked out; one that was never live still waits for an admin.
+- A pending probe's heartbeat is now refused (403, the collector's
+  re-register signal) — before, `POST /api/probes/heartbeat` checked only
+  rejected/decommissioned, so a never-approved probe could still mark itself
+  online, refresh `last_seen` and receive queued commands.
+- A probe an admin already approved re-links after an outage without a new
+  approval, and its original `approved_at` is no longer overwritten on every
+  re-registration. The collector's reported `agent_version` is now recorded on
+  this path too.
+- Every approval decision the endpoint makes without an admin is written to
+  the audit log (`probe_auto_approved` / `probe_registration_pending`, actor
+  `probe:<name>`, client IP) and to the server log.
+  `TestRegisterProbe_AutoApproveWindow_D26` pins the three registration cases
+  and `TestProbeHeartbeat_PendingRefused_D26` the heartbeat gate.
+
 ## [0.11.436] - 2026-10-24
 
 ### Changed — Tailwind CSS 4 (N-1)
