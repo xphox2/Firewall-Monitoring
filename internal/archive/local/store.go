@@ -706,6 +706,11 @@ func version(f *fsys, p, versionID string) (int, error) {
 	return v, nil
 }
 
+// sidecarlessHashLimit bounds the bytes Head hashes for an object without a
+// sidecar (D-37): the largest single-part S3 object, 5 GiB. A variable so
+// tests can lower it.
+var sidecarlessHashLimit int64 = 5 << 30
+
 // Head reports an object (a version, or the latest when versionID is "").
 func (s *Store) Head(ctx context.Context, rel, versionID string) (objstore.ObjectInfo, error) {
 	key, err := s.Key(rel)
@@ -741,7 +746,15 @@ func (s *Store) Head(ctx context.Context, rel, versionID string) (objstore.Objec
 		info.ETag, info.Metadata = sc.MD5, sc.Metadata
 	case errors.Is(err, fs.ErrNotExist):
 		// No sidecar (an object copied in by hand): its ETag is the MD5 of
-		// its bytes, and it has no metadata.
+		// its bytes, and it has no metadata. D-37: a Head must not be made to
+		// read unbounded bytes — whoever can write the share could leave a
+		// huge sidecarless file and every Head of it would hash it again. No
+		// object this archive writes can be larger than a single-part S3
+		// object (whose ETag is that MD5), so anything bigger is refused.
+		if fi.Size() > sidecarlessHashLimit {
+			return objstore.ObjectInfo{}, fmt.Errorf("%w: archive local: %s has no sidecar and is %d bytes, more than the %d an object without one may be; its ETag is not computed",
+				objstore.ErrMismatch, vp, fi.Size(), sidecarlessHashLimit)
+		}
 		if info.ETag, err = s.hashFile(ctx, r, vp, md5.New(), nil); err != nil { // #nosec G401 -- the S3-compatible ETag
 			return objstore.ObjectInfo{}, err
 		}
