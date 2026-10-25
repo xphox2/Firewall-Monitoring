@@ -160,6 +160,21 @@ func (h *Handler) CreateIPSecTunnel(c *gin.Context) {
 	c.JSON(http.StatusCreated, response.Success(tunnelResponse{Intent: &intent, Status: "draft", Validation: findings}))
 }
 
+// ipsecTunnelListItem is a tunnel in the LIST response: the row plus the two
+// lifecycle facts the UI cannot derive from the status alone.
+//
+// `deletable` is the SERVER'S rule (no deploy record), not a status
+// approximation: a partially-deployed `error` tunnel still carries its record,
+// so the server refuses the delete even though the status would allow it. The
+// deploy record is the removal snapshot and is never serialized, so the UI has
+// no other way to know — and a delete button that is enabled but always
+// answers 409 is a lie the operator has to learn the hard way.
+type ipsecTunnelListItem struct {
+	models.IPSecTunnel
+	Deletable bool `json:"deletable"`
+	Editable  bool `json:"editable"`
+}
+
 // ListIPSecTunnels returns all tunnels (no intent/PSK detail).
 func (h *Handler) ListIPSecTunnels(c *gin.Context) {
 	db := h.reqDB(c)
@@ -171,7 +186,15 @@ func (h *Handler) ListIPSecTunnels(c *gin.Context) {
 		httputil.InternalError(c, "Failed to list tunnels", err)
 		return
 	}
-	c.JSON(http.StatusOK, response.Success(list))
+	items := make([]ipsecTunnelListItem, 0, len(list))
+	for i := range list {
+		items = append(items, ipsecTunnelListItem{
+			IPSecTunnel: list[i],
+			Deletable:   ipsecDeletable(&list[i]),
+			Editable:    ipsecEditable(&list[i]),
+		})
+	}
+	c.JSON(http.StatusOK, response.Success(items))
 }
 
 // GetIPSecTunnel returns one tunnel's intent (PSK masked) + current validation.
