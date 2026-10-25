@@ -671,7 +671,7 @@ export function StorageWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap',
               activeTab === 'retention'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -692,7 +692,7 @@ export function StorageWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap',
               activeTab === 'archive-status'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -721,7 +721,7 @@ export function StorageWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap',
               activeTab === 'archive-config'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -806,7 +806,7 @@ export function StorageWorkspace() {
                     onChange={(e) => setRetSearch(e.target.value)}
                     placeholder="Filter tables or ENV..."
                     aria-label="Filter retention tables"
-                    className="w-full rounded-md border border-border bg-bg-card pl-8 pr-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-full rounded-md border border-border bg-bg-card pl-8 pr-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
 
@@ -814,7 +814,7 @@ export function StorageWorkspace() {
                   value={retCategory}
                   onChange={(e) => setRetCategory(e.target.value)}
                   aria-label="Filter by retention category"
-                  className="rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+                  className="rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
                 >
                   <option value="ALL">All Categories</option>
                   <option value="Device Telemetry">Device Telemetry</option>
@@ -911,7 +911,7 @@ export function StorageWorkspace() {
                                   }
                                   placeholder={`inherit (${f.env_value} ${f.unit})`}
                                   className={cn(
-                                    'w-36 rounded-md border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-none tabular-nums',
+                                    'w-36 rounded-md border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
                                     isEdited ? 'border-accent' : 'border-border',
                                   )}
                                 />
@@ -1018,7 +1018,7 @@ export function StorageWorkspace() {
                       }))
                     }
                     placeholder={syslogRetention?.default_set ? '' : 'not set'}
-                    className="w-24 rounded-md border border-border bg-bg-card px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-24 rounded-md border border-border bg-bg-card px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -1041,7 +1041,7 @@ export function StorageWorkspace() {
                       }))
                     }
                     placeholder="365"
-                    className="w-24 rounded-md border border-border bg-bg-card px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-24 rounded-md border border-border bg-bg-card px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -1092,7 +1092,7 @@ export function StorageWorkspace() {
                                 setRetEdits((prev) => ({ ...prev, [key]: e.target.value }))
                               }
                               placeholder="inherit"
-                              className="w-24 rounded-md border border-border bg-bg-panel px-2 py-1 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                              className="w-24 rounded-md border border-border bg-bg-panel px-2 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                             />
                           </td>
                           <td className="px-3 py-2 font-mono text-xs text-text whitespace-nowrap">
@@ -1553,7 +1553,7 @@ export function StorageWorkspace() {
                                 onChange={(e) =>
                                   setArchEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
                                 }
-                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
                               >
                                 <option value="s3">s3 — S3-Compatible Object Storage</option>
                                 <option value="local">
@@ -1567,7 +1567,7 @@ export function StorageWorkspace() {
                                 onChange={(e) =>
                                   setArchEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
                                 }
-                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
                               >
                                 <option value="">(none)</option>
                                 <option value="GOVERNANCE">GOVERNANCE (Recommended)</option>
@@ -1596,7 +1596,7 @@ export function StorageWorkspace() {
                                         : 'Not set'
                                       : ''
                                   }
-                                  className="flex-1 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                                  className="flex-1 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                                 />
                                 {canBrowse && (
                                   <button

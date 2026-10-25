@@ -193,7 +193,7 @@ export function TrapsWorkspace() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter by OID or trap type..."
-              className="w-full rounded border border-border bg-bg-card pl-8 pr-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded border border-border bg-bg-card pl-8 pr-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
         </div>

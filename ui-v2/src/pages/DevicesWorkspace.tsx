@@ -365,7 +365,7 @@ function DeviceInventoryView() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter by hostname, IP, vendor, or model..."
-            className="w-full rounded-md border border-border bg-bg-card pl-8 pr-3 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+            className="w-full rounded-md border border-border bg-bg-card pl-8 pr-3 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
           />
         </div>
 
@@ -378,7 +378,7 @@ function DeviceInventoryView() {
               className={cn(
                 'rounded-md px-3 py-1 text-xs font-medium capitalize transition-colors',
                 lifecycleFilter === mode
-                  ? 'bg-bg-card text-text shadow-sm border border-border'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
               )}
             >
@@ -1097,7 +1097,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 className={cn(
                   'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
                   activeTab === t.id
-                    ? 'bg-bg-card text-text shadow-sm border border-border'
+                    ? 'bg-bg-card text-text shadow-xs border border-border'
                     : 'text-text-dim hover:text-text'
                 )}
               >

@@ -86,7 +86,7 @@ export function CollectorsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'probes'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text'
             )}
           >
@@ -99,7 +99,7 @@ export function CollectorsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'sites'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text'
             )}
           >

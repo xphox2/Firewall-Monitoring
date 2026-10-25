@@ -71,7 +71,7 @@ export function StepUpAuthDialog({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70 backdrop-blur-[1px]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-bg-card p-5 shadow-2xl focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-bg-card p-5 shadow-2xl focus:outline-hidden">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2.5">
               <div className="rounded-md bg-accent/15 p-2 text-accent">
@@ -111,7 +111,7 @@ export function StepUpAuthDialog({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
-                  className="w-full rounded-md border border-border bg-bg-panel pl-8 pr-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                  className="w-full rounded-md border border-border bg-bg-panel pl-8 pr-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                   required
                 />
               </div>
@@ -135,7 +135,7 @@ export function StepUpAuthDialog({
                     value={totpCode}
                     onChange={(e) => setTotpCode(e.target.value)}
                     placeholder="6-digit code"
-                    className="w-full rounded-md border border-border bg-bg-panel pl-8 pr-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-full rounded-md border border-border bg-bg-panel pl-8 pr-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -226,8 +226,8 @@ export function ForcedPasswordChangeModal({
   return (
     <Dialog.Root open={open}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-sig-warn/50 bg-bg-card p-6 shadow-2xl focus:outline-none">
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-sig-warn/50 bg-bg-card p-6 shadow-2xl focus:outline-hidden">
           <Dialog.Title className="font-display text-base font-bold text-text">
             Password Rotation Required
           </Dialog.Title>
@@ -246,7 +246,7 @@ export function ForcedPasswordChangeModal({
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                 required
               />
             </div>
@@ -260,7 +260,7 @@ export function ForcedPasswordChangeModal({
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                 required
               />
             </div>
@@ -274,7 +274,7 @@ export function ForcedPasswordChangeModal({
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                 required
               />
             </div>

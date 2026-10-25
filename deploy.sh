@@ -53,9 +53,13 @@ build() {
 
     log_info "Compiling Tailwind CSS..."
     if command -v npm &> /dev/null; then
-        if [ ! -d "node_modules" ]; then
+        # Reinstall when the lockfile is newer than node_modules (same rule as
+        # the Makefile's node_modules target). A stale tree from before the
+        # Tailwind v4 upgrade would otherwise run the v3 CLI on v4 input.
+        if [ ! -d "node_modules" ] || [ package-lock.json -nt node_modules ]; then
             log_info "Installing npm dependencies..."
             npm install
+            touch node_modules
         fi
         npm run build
     else

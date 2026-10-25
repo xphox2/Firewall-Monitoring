@@ -152,7 +152,7 @@ export function IntegrationsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'smtp'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text'
             )}
           >
@@ -165,7 +165,7 @@ export function IntegrationsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'webhooks'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text'
             )}
           >
@@ -178,7 +178,7 @@ export function IntegrationsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'irc'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text'
             )}
           >
@@ -340,7 +340,7 @@ function SmtpSubTab() {
               value={draft.smtp_host ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_host: e.target.value }))}
               placeholder="smtp.example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
           <div>
@@ -351,7 +351,7 @@ function SmtpSubTab() {
               max={65535}
               value={draft.smtp_port ?? '587'}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_port: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
         </div>
@@ -364,7 +364,7 @@ function SmtpSubTab() {
               value={draft.smtp_username ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_username: e.target.value }))}
               placeholder="alerts@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
           <div>
@@ -376,7 +376,7 @@ function SmtpSubTab() {
               value={draft.smtp_password ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_password: e.target.value }))}
               placeholder="Leave ******** to keep stored secret"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
         </div>
@@ -389,7 +389,7 @@ function SmtpSubTab() {
               value={draft.smtp_from ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_from: e.target.value }))}
               placeholder="fwmon@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
           <div>
@@ -399,7 +399,7 @@ function SmtpSubTab() {
               value={draft.smtp_to ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_to: e.target.value }))}
               placeholder="noc@example.com, ops@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
           </div>
         </div>
@@ -423,7 +423,7 @@ function SmtpSubTab() {
             value={testToOverride}
             onChange={(e) => setTestToOverride(e.target.value)}
             placeholder="Optional recipient override (uses saved To if blank)"
-            className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+            className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
           <button
             type="button"
@@ -649,7 +649,7 @@ function WebhooksSubTab() {
                 value={draft[ch.key] ?? ''}
                 onChange={(e) => setDraft((prev) => ({ ...prev, [ch.key]: e.target.value }))}
                 placeholder={ch.placeholder}
-                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
               />
               <button
                 type="button"
@@ -685,7 +685,7 @@ function WebhooksSubTab() {
               value={draft.webhook_url ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, webhook_url: e.target.value }))}
               placeholder="https://api.example.com/fwmon/webhook"
-              className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+              className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
             />
             <button
               type="button"
@@ -708,7 +708,7 @@ function WebhooksSubTab() {
             value={draft.webhook_secret ?? ''}
             onChange={(e) => setDraft((prev) => ({ ...prev, webhook_secret: e.target.value }))}
             placeholder="Leave ******** to keep stored secret"
-            className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+            className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
         </div>
 
@@ -723,7 +723,7 @@ function WebhooksSubTab() {
                 value={draft.pagerduty_routing_key ?? ''}
                 onChange={(e) => setDraft((prev) => ({ ...prev, pagerduty_routing_key: e.target.value }))}
                 placeholder="32-char integration key"
-                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
               />
               <button
                 type="button"
@@ -747,7 +747,7 @@ function WebhooksSubTab() {
                 value={draft.opsgenie_api_key ?? ''}
                 onChange={(e) => setDraft((prev) => ({ ...prev, opsgenie_api_key: e.target.value }))}
                 placeholder="GenieKey ..."
-                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-none"
+                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
               />
               <button
                 type="button"

@@ -183,7 +183,7 @@ export function ProfileMatrixDrawer({ open, onOpenChange, profile, types, onSave
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter alert types…"
-            className="w-full rounded border border-border bg-bg-panel py-1.5 pl-8 pr-3 text-xs text-text focus:border-accent focus:outline-none"
+            className="w-full rounded border border-border bg-bg-panel py-1.5 pl-8 pr-3 text-xs text-text focus:border-accent focus:outline-hidden"
           />
         </div>
 

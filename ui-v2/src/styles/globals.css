@@ -1,6 +1,58 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "./preflight-v3.css" layer(base);
+/* Scan src/ only, like the old tailwind.config.js content glob did. */
+@import "tailwindcss/utilities.css" layer(utilities) source("..");
+
+/*
+ * Tailwind CSS v4. The theme below is the old tailwind.config.js
+ * theme.extend; the colors resolve to the --fwmon-* tokens defined further
+ * down, so Day/Night switching keeps working.
+ */
+@theme {
+  --color-bg: var(--fwmon-bg);
+  --color-bg-card: var(--fwmon-card-bg);
+  --color-bg-panel: var(--fwmon-panel-bg);
+  --color-bg-hover: var(--fwmon-row-hover);
+  --color-bg-elevated: var(--fwmon-elevated-bg);
+
+  --color-border: var(--fwmon-border);
+  --color-border-subtle: var(--fwmon-border-subtle);
+  --color-border-strong: var(--fwmon-border-strong);
+
+  --color-text: var(--fwmon-text);
+  --color-text-dim: var(--fwmon-text-dim);
+  --color-text-faint: var(--fwmon-text-faint);
+  --color-text-mute: var(--fwmon-text-mute);
+
+  --color-accent: var(--fwmon-accent);
+  --color-accent-hover: var(--fwmon-accent-hover);
+  --color-accent-soft: var(--fwmon-accent-soft);
+
+  --color-sig-ok: var(--fwmon-sig-ok);
+  --color-sig-warn: var(--fwmon-sig-warn);
+  --color-sig-crit: var(--fwmon-sig-crit);
+  --color-sig-info: var(--fwmon-sig-info);
+
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif;
+  --font-display: Archivo, Inter, sans-serif;
+  --font-mono: JetBrains Mono, SFMono-Regular, Consolas, monospace;
+
+  /*
+   * v3 line heights. v4 gives the text sizes a unitless line-height, which
+   * children inherit as a ratio instead of a length.
+   */
+  --text-xs--line-height: 1rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl--line-height: 2rem;
+}
+
+/* v3 applied `hover:` on every device; v4 limits it to (hover: hover). */
+@custom-variant hover (&:hover);
+
 
 :root,
 :root[data-theme="dark"] {

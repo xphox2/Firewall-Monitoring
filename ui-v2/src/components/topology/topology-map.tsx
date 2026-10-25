@@ -716,7 +716,7 @@ export function TopologyMap({
                 className={cn(
                   'rounded px-2 py-1 text-[10px] font-semibold uppercase',
                   linkFilter === option.id
-                    ? 'bg-bg-card text-text shadow-sm'
+                    ? 'bg-bg-card text-text shadow-xs'
                     : 'text-text-dim hover:text-text',
                 )}
               >

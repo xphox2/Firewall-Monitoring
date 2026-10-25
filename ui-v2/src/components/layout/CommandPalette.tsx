@@ -46,7 +46,7 @@ export function CommandPalette({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/65 backdrop-blur-[1px]" />
-        <Dialog.Content className="fixed left-1/2 top-[15%] z-50 w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 rounded-xl border border-border-strong bg-bg-card shadow-2xl overflow-hidden focus:outline-none">
+        <Dialog.Content className="fixed left-1/2 top-[15%] z-50 w-[calc(100vw-2rem)] max-w-xl -translate-x-1/2 rounded-xl border border-border-strong bg-bg-card shadow-2xl overflow-hidden focus:outline-hidden">
           <Dialog.Title className="sr-only">Command Palette</Dialog.Title>
           <Dialog.Description className="sr-only">
             Jump to any workspace, setting, or firewall device
@@ -58,7 +58,7 @@ export function CommandPalette({
                 value={search}
                 onValueChange={setSearch}
                 placeholder="Jump to workspace, setting, retention knob, or firewall..."
-                className="w-full bg-transparent text-xs sm:text-sm text-text placeholder:text-text-faint focus:outline-none"
+                className="w-full bg-transparent text-xs sm:text-sm text-text placeholder:text-text-faint focus:outline-hidden"
               />
               <kbd className="rounded bg-bg-panel px-1.5 py-0.5 font-mono text-[10px] text-text-faint border border-border">
                 ESC

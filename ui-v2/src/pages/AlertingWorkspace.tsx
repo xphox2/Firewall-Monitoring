@@ -828,7 +828,7 @@ export function AlertingWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
               activeTab === 'thresholds'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -849,7 +849,7 @@ export function AlertingWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
               activeTab === 'event-rules'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -865,7 +865,7 @@ export function AlertingWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
               activeTab === 'notification-profiles'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -881,7 +881,7 @@ export function AlertingWorkspace() {
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
               activeTab === 'effective'
-                ? 'bg-bg-card text-accent shadow-sm font-semibold'
+                ? 'bg-bg-card text-accent shadow-xs font-semibold'
                 : 'text-text-faint hover:text-text',
             )}
           >
@@ -956,7 +956,7 @@ export function AlertingWorkspace() {
                                 setEdits((prev) => ({ ...prev, [item.key]: e.target.value }))
                               }
                               className={cn(
-                                'w-full rounded-md border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-none tabular-nums',
+                                'w-full rounded-md border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
                                 isEdited ? 'border-accent' : 'border-border',
                               )}
                             />
@@ -1088,7 +1088,7 @@ export function AlertingWorkspace() {
                                 }
                                 placeholder={`default (${k.defaultVal})`}
                                 className={cn(
-                                  'flex-1 rounded-md border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-none tabular-nums',
+                                  'flex-1 rounded-md border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
                                   isEdited ? 'border-accent' : 'border-border',
                                 )}
                               />
@@ -1466,7 +1466,7 @@ export function AlertingWorkspace() {
                   value={testMatchJson}
                   onChange={(e) => setTestMatchJson(e.target.value)}
                   placeholder='{"op":"contains","field":"src_ip","value":"198.51.100."}'
-                  className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                  className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                 />
                 <p className="mt-1 text-[11px] text-text-faint">
                   Operators: and, or, in, regex, gt, lt over extracted fields such as src_ip,
@@ -1663,7 +1663,7 @@ export function AlertingWorkspace() {
                     value={policyName}
                     onChange={(e) => setPolicyName(e.target.value)}
                     placeholder="e.g. 24x7 NOC Critical Pager"
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
                 <div>
@@ -1679,7 +1679,7 @@ export function AlertingWorkspace() {
                     value={policyDesc}
                     onChange={(e) => setPolicyDesc(e.target.value)}
                     placeholder="Optional notes on which sites/devices use this profile"
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
                 <div>
@@ -1696,7 +1696,7 @@ export function AlertingWorkspace() {
                     max={1440}
                     value={policyCooldown}
                     onChange={(e) => setPolicyCooldown(e.target.value)}
-                    className="w-40 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                    className="w-40 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -1740,7 +1740,7 @@ export function AlertingWorkspace() {
                       value={policyRecipients}
                       onChange={(e) => setPolicyRecipients(e.target.value)}
                       placeholder="noc@example.com, oncall@example.com"
-                      className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-none"
+                      className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
                     />
                   </div>
                 )}
@@ -1802,7 +1802,7 @@ export function AlertingWorkspace() {
               value={simDeviceId}
               onChange={(e) => setSimDeviceId(e.target.value)}
               aria-label="Select device to simulate effective policy"
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
             >
               <option value="">-- Select a Firewall Device --</option>
               {devices.map((d) => (
@@ -1815,7 +1815,7 @@ export function AlertingWorkspace() {
               value={simAlertType}
               onChange={(e) => setSimAlertType(e.target.value)}
               aria-label="Alert type to simulate"
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-none"
+              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
             >
               <option value="CPU_HIGH">CPU high</option>
               <option value="MEMORY_HIGH">Memory high</option>

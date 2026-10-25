@@ -132,7 +132,7 @@ export function AlertsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'open'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text',
             )}
           >
@@ -145,7 +145,7 @@ export function AlertsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'incidents'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text',
             )}
           >
@@ -158,7 +158,7 @@ export function AlertsWorkspace() {
             className={cn(
               'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
               activeTab === 'history'
-                ? 'bg-bg-card text-text shadow-sm border border-border'
+                ? 'bg-bg-card text-text shadow-xs border border-border'
                 : 'text-text-dim hover:text-text',
             )}
           >

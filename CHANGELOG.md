@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.436] - 2026-10-24
+
+### Changed — Tailwind CSS 4 (N-1)
+- Both front-ends now build with Tailwind CSS 4.3.3, up from 3.4.19. The legacy admin pages use `@tailwindcss/cli` and the V2 console uses `@tailwindcss/vite`. This clears the last `npm audit` advisory in the root package (postcss-selector-parser < 7.1.6, GHSA-rj75-hqrm-r3gf), which came in through Tailwind 3. Root `npm audit` now reports 0 vulnerabilities.
+- The configuration moved from `tailwind.config.js` into CSS. In `cmd/api/static/css/styles.css` it lives in `@theme` and `@source` blocks, and in `ui-v2/src/styles/globals.css` it lives in `@theme`. `tailwind.config.js`, `ui-v2/tailwind.config.js` and `ui-v2/postcss.config.js` are deleted, along with the `autoprefixer` and `postcss` dev dependencies.
+- Rendering stays the same as on 3.4:
+  - Both builds keep Tailwind 3's base reset (preflight).
+  - Text sizes keep the 3.x rem line heights.
+  - `hover:` applies on every device, as in 3.x.
+  - The legacy `tailwind.css` stays outside CSS cascade layers, so the admin stylesheet link order still decides which rule wins.
+  - Classes whose meaning changed in 4.x were renamed to their equivalents: `shadow-sm` → `shadow-xs`, `focus:outline-none` → `focus:outline-hidden`, `backdrop-blur-sm` → `backdrop-blur-xs`.
+- A few classes that were already in the markup now render. Tailwind 3 silently skipped opacity modifiers on the V2 console's CSS-variable colors (for example `bg-sig-crit/10`, `border-sig-warn/40`, `divide-border/60`, `bg-accent/15`). Because of that, error and warning callouts, status pills, the active nav item and table row dividers showed no tint and a light-gray `#e5e7eb` border in both themes. They now show the intended tinted colors. On the legacy IRC page, `py-1.75` and `p-7.5` now give the buttons and the loading row the padding the markup asked for.
+- `deploy.sh` now reinstalls npm dependencies when `package-lock.json` is newer than `node_modules`, as the Makefile already does. Without this, a host with an old `node_modules` would build with the Tailwind 3 CLI.
+
 ## [0.11.435] - 2026-10-24
 
 ### Security — Device-string sanitising, preview block gate, purge relname guard (D-31, D-38, D-34, L-18)
