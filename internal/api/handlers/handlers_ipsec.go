@@ -1768,6 +1768,17 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 // which is what forces the terminal to rollback_failed instead of a clean
 // rolled_back.
 func ipsecPlanRollbackEnds(db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState) (ends []ipsec.RollbackEndState, cmds []*models.ProbeCommand, failReasons []string) {
+	// RECOVER the captured UUIDs from the apply command's stored result FIRST.
+	//
+	// The deploy poll is the only other place they are merged, so a tunnel that
+	// never reached a terminal poll (the one wedged in `deploying` when its peer
+	// was decommissioned mid-deploy) has NONE — even though the collector
+	// captured them and the apply command's result still holds them. Without
+	// this the rollback had nothing to delete by and correctly refused to claim
+	// a clean rollback. The recovered map is used for the remove commands AND
+	// persisted by the caller's guarded transition, so it survives the command
+	// row's 30-day pruning for good.
+	db.MergeIPSecCapturedUUIDs(st)
 	ends = make([]ipsec.RollbackEndState, 0, len(st.Ends))
 	cmds = make([]*models.ProbeCommand, 0, len(st.Ends))
 	for i := range st.Ends {

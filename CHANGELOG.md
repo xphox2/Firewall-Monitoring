@@ -1,6 +1,32 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.443] - 2026-10-25
+
+### Fixed — Recover the captured UUIDs, so the device can be cleaned without a login (IPSec retired-peer rollback)
+
+- **The captured UUIDs are no longer lost when nobody polls.** They were merged
+  into the deploy record in exactly ONE place — the deploy poll. A tunnel that
+  never reached a terminal poll (the one wedged in `deploying` when its peer was
+  decommissioned mid-deploy) therefore had **none** in its record, even though
+  the collector had captured them and the apply command's result still held
+  them. The rollback then had nothing to delete by and — correctly — refused to
+  claim a clean rollback instead of reporting a false clean. The rollback now
+  **recovers them from the apply command's result** before it builds the remove
+  commands, so the device is cleaned for real: the remove carries the recovered
+  UUID as its substitution instead of skipping every delete.
+- **The reconciler banks the captured UUIDs as soon as they exist.** The UUIDs
+  live in the apply command's result, and terminal command rows are pruned after
+  30 days — the deploy record is never pruned. The rollback reconciler (added
+  in v0.11.442) now merges them into the deploy record of every tunnel whose
+  saga has not cleanly finished, so a rollback is possible years later instead
+  of "the result is gone, clean it by hand". Banking is bookkeeping, not a saga
+  transition: the tunnel's status does not move, and the write is guarded, so a
+  concurrent poll that already merged them wins benignly.
+- **The bulk endpoint inherits both.** `POST /admin/api/ipsec/rollback-orphaned`
+  now cleans the orphaned set for real instead of reporting `needs_manual_cleanup`
+  for tunnels whose UUIDs were merely un-banked.
+
 ## [0.11.442] - 2026-10-25
 
 ### Fixed — IPSec rollback for retired peers (phantom peers on the V2 map)

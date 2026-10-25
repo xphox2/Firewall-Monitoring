@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"firewall-mon/internal/database"
@@ -334,6 +336,126 @@ func TestRollback_Still409_WhenCommandLive(t *testing.T) {
 	rec := rollbackReq(t, h, id)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("rollback with a live command = %d, want 409; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The captured UUIDs are merged in exactly ONE place — the deploy poll. A
+// tunnel wedged in `deploying` (its peer was decommissioned mid-deploy, so
+// nobody ever polls it) has NONE in its record, even though the collector
+// captured them and the apply command's result still holds them.
+//
+// The rollback must recover them from there and clean the device for real —
+// this is the difference between "roll it back yourself" and "roll it back".
+func TestRollback_RecoversCapturedUUIDsFromTheApplyResult(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	// Deploy and park it in `deploying` WITHOUT polling it — the deploy record
+	// therefore keeps no captured UUIDs.
+	if _, code := deployReq(t, h, id); code != http.StatusOK {
+		t.Fatalf("deploy = %d, want 200", code)
+	}
+	if err := db.UpdateIPSecTunnelStatus(id, "deploying", ""); err != nil {
+		t.Fatalf("set tunnel status: %v", err)
+	}
+	// The OPNsense end's apply COMPLETED on the device and the collector
+	// captured the UUIDs; the FortiGate end failed. The report holds the
+	// captures, the deploy record does not.
+	const capturedConn = "11111111-2222-3333-4444-555555555555"
+	st := deployStateOf(t, db, id)
+	for _, e := range st.Ends {
+		if e.Vendor == "opnsense" {
+			if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "succeeded",
+				`{"applied":true,"verified":true,"captured_uuids":{"conn":"`+capturedConn+`"}}`); err != nil {
+				t.Fatalf("complete opnsense apply: %v", err)
+			}
+			continue
+		}
+		if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "failed", "peer unreachable"); err != nil {
+			t.Fatalf("complete fortigate apply: %v", err)
+		}
+	}
+	if got := len(deployStateOf(t, db, id).Ends[1].CapturedUUIDs); got != 0 {
+		t.Fatalf("the fixture must start with NO captured UUIDs (the poll never ran), got %d", got)
+	}
+
+	rec := rollbackReq(t, h, id)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	st2 := deployStateOf(t, db, id)
+	if len(st2.Ends[1].CapturedUUIDs) == 0 {
+		t.Fatal("the rollback must recover the captured UUIDs from the apply command's result")
+	}
+	if st2.Ends[1].CapturedUUIDs["conn"] != capturedConn {
+		t.Errorf("recovered conn uuid = %q, want %q", st2.Ends[1].CapturedUUIDs["conn"], capturedConn)
+	}
+	if st2.Ends[1].RollbackUnproven {
+		t.Error("a RECOVERED end is proven — it must not be marked unproven")
+	}
+	// The remove command must carry the recovered UUID as its substitution:
+	// without it the collector skips every delete and reports a false clean.
+	cmd, _ := db.GetProbeCommandByCommandID(st2.Rollback.Ends[1].CommandID)
+	if cmd == nil {
+		t.Fatal("no remove command was enqueued for the OPNsense end")
+	}
+	if !strings.Contains(cmd.Payload, capturedConn) {
+		t.Errorf("the remove command must carry the recovered UUID as its substitution: %s", cmd.Payload)
+	}
+	// And the rollback settles cleanly.
+	completeRemove(t, db, probe.ID, st2.Rollback.Ends[0].CommandID)
+	completeRemove(t, db, probe.ID, st2.Rollback.Ends[1].CommandID)
+	if data := pollDeploy(t, h, id); data["status"] != "rolled_back" {
+		t.Fatalf("want rolled_back, got %v (note: %v)", data["status"], data["note"])
+	}
+}
+
+// The captured UUIDs live in the apply command's result, and terminal command
+// rows are pruned after 30 days — the deploy record is never pruned. So the
+// reconciler banks them as soon as they exist: that is what makes a rollback
+// possible years later instead of "the result is gone, clean it by hand".
+func TestReconciler_BanksCapturedUUIDsIntoTheDeployRecord(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	if _, code := deployReq(t, h, id); code != http.StatusOK {
+		t.Fatalf("deploy = %d, want 200", code)
+	}
+	if err := db.UpdateIPSecTunnelStatus(id, "deploying", ""); err != nil {
+		t.Fatalf("set tunnel status: %v", err)
+	}
+	const capturedConn = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	st := deployStateOf(t, db, id)
+	for _, e := range st.Ends {
+		if e.Vendor == "opnsense" {
+			if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "succeeded",
+				`{"applied":true,"verified":true,"captured_uuids":{"conn":"`+capturedConn+`"}}`); err != nil {
+				t.Fatalf("complete opnsense apply: %v", err)
+			}
+			continue
+		}
+		if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "failed", "peer unreachable"); err != nil {
+			t.Fatalf("complete fortigate apply: %v", err)
+		}
+	}
+
+	database.NewIPSecRollbackWorker(db).Tick(context.Background())
+
+	st2 := deployStateOf(t, db, id)
+	if len(st2.Ends[1].CapturedUUIDs) == 0 {
+		t.Fatal("the reconciler must bank the apply's captured UUIDs into the deploy record")
+	}
+	if st2.Ends[1].CapturedUUIDs["conn"] != capturedConn {
+		t.Errorf("banked conn uuid = %q, want %q", st2.Ends[1].CapturedUUIDs["conn"], capturedConn)
+	}
+	// Banking is bookkeeping, NOT a saga transition: the status must not move.
+	row, _ := db.GetIPSecTunnel(id)
+	if row.Status != "deploying" {
+		t.Errorf("banking must not move the tunnel's status, got %s", row.Status)
 	}
 }
 
