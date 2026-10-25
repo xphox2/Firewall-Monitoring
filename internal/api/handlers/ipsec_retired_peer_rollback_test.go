@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -92,6 +93,31 @@ func captureUUIDs(t *testing.T, db *database.Database, id uint, end int, uuids m
 	}
 }
 
+// captureTokenMap builds the capture map of every object an end's removal
+// addresses - what a SUCCESSFUL apply captures. A partial map is NOT enough:
+// the removal skips the delete step of every object it cannot address, so the
+// end would be unproven (the removal would otherwise report a false clean).
+func captureTokenMap(t *testing.T, st ipsec.DeployState, end int) map[string]string {
+	t.Helper()
+	tokens := ipsecRemoveStepTokens(st.Ends[end])
+	if len(tokens) == 0 {
+		t.Fatalf("end %d addresses no uuid-addressed object", end)
+	}
+	out := make(map[string]string, len(tokens))
+	for i, tok := range tokens {
+		out[tok] = fmt.Sprintf("%08d-2222-3333-4444-555555555555", i+1)
+	}
+	return out
+}
+
+// captureAllTokens captures every object an end's removal addresses.
+func captureAllTokens(t *testing.T, db *database.Database, id uint, end int) map[string]string {
+	t.Helper()
+	captures := captureTokenMap(t, deployStateOf(t, db, id), end)
+	captureUUIDs(t, db, id, end, captures)
+	return captures
+}
+
 // completeRemove marks a rollback's remove command as a clean success.
 func completeRemove(t *testing.T, db *database.Database, probeID uint, commandID string) {
 	t.Helper()
@@ -110,7 +136,7 @@ func TestRollback_RetiredPeerEnd_SkipsAndCleansLiveEnd(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7") // the end that must be cleaned
 	id := createTunnelRow(t, db, "fortigate", "opnsense", dead.ID, live.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	if err := db.RetireDevice(dead.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}
@@ -164,7 +190,7 @@ func TestRollback_PurgedPeerEnd_SkipsAndCleansLiveEnd(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", gone.ID, live.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	if err := db.DeleteDevice(gone.ID); err != nil {
 		t.Fatalf("purge peer: %v", err)
 	}
@@ -230,7 +256,7 @@ func TestRollback_LiveEndNoCollector_IsPerEndFailure(t *testing.T) {
 	other := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", live.ID, other.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	// Strip the collector from ONE live end: it is a real device that genuinely
 	// cannot be cleaned — a per-end failure, not a reason to abandon the other.
 	if err := db.Gorm().Model(&models.Device{}).Where("id = ?", live.ID).Update("probe_id", nil).Error; err != nil {
@@ -361,14 +387,18 @@ func TestRollback_RecoversCapturedUUIDsFromTheApplyResult(t *testing.T) {
 		t.Fatalf("set tunnel status: %v", err)
 	}
 	// The OPNsense end's apply COMPLETED on the device and the collector
-	// captured the UUIDs; the FortiGate end failed. The report holds the
-	// captures, the deploy record does not.
-	const capturedConn = "11111111-2222-3333-4444-555555555555"
+	// captured EVERY object's uuid; the FortiGate end failed. The report holds
+	// the captures, the deploy record does not.
 	st := deployStateOf(t, db, id)
+	captured := captureTokenMap(t, st, 1)
+	capturedJSON, err := json.Marshal(captured)
+	if err != nil {
+		t.Fatalf("marshal the captures: %v", err)
+	}
 	for _, e := range st.Ends {
 		if e.Vendor == "opnsense" {
 			if _, _, err := db.CompleteProbeCommand(probe.ID, e.CommandID, "succeeded",
-				`{"applied":true,"verified":true,"captured_uuids":{"conn":"`+capturedConn+`"}}`); err != nil {
+				`{"applied":true,"verified":true,"captured_uuids":`+string(capturedJSON)+`}`); err != nil {
 				t.Fatalf("complete opnsense apply: %v", err)
 			}
 			continue
@@ -389,8 +419,13 @@ func TestRollback_RecoversCapturedUUIDsFromTheApplyResult(t *testing.T) {
 	if len(st2.Ends[1].CapturedUUIDs) == 0 {
 		t.Fatal("the rollback must recover the captured UUIDs from the apply command's result")
 	}
-	if st2.Ends[1].CapturedUUIDs["conn"] != capturedConn {
-		t.Errorf("recovered conn uuid = %q, want %q", st2.Ends[1].CapturedUUIDs["conn"], capturedConn)
+	if len(st2.Ends[1].CapturedUUIDs) != len(captured) {
+		t.Errorf("recovered %d uuids, want %d", len(st2.Ends[1].CapturedUUIDs), len(captured))
+	}
+	for tok, want := range captured {
+		if got := st2.Ends[1].CapturedUUIDs[tok]; got != want {
+			t.Errorf("recovered %s = %q, want %q", tok, got, want)
+		}
 	}
 	if st2.Ends[1].RollbackUnproven {
 		t.Error("a RECOVERED end is proven — it must not be marked unproven")
@@ -401,8 +436,10 @@ func TestRollback_RecoversCapturedUUIDsFromTheApplyResult(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("no remove command was enqueued for the OPNsense end")
 	}
-	if !strings.Contains(cmd.Payload, capturedConn) {
-		t.Errorf("the remove command must carry the recovered UUID as its substitution: %s", cmd.Payload)
+	for tok, want := range captured {
+		if !strings.Contains(cmd.Payload, want) {
+			t.Errorf("the remove command must carry the recovered %s as its substitution: %s", tok, cmd.Payload)
+		}
 	}
 	// And the rollback settles cleanly.
 	completeRemove(t, db, probe.ID, st2.Rollback.Ends[0].CommandID)
@@ -471,7 +508,7 @@ func TestRollback_LegacyRecordWithoutEnds_StillPolls(t *testing.T) {
 	b := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", a.ID, b.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 
 	// Start a rollback so REAL remove commands exist.
 	rec := rollbackReq(t, h, id)
@@ -574,7 +611,7 @@ func TestBulkRollbackOrphaned_ReportsPerTunnel(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	orphanID := createTunnelRow(t, db, "fortigate", "opnsense", orphan.ID, live.ID, 1)
 	deployAndSettle(t, h, db, orphanID, "up")
-	captureUUIDs(t, db, orphanID, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, orphanID, 1)
 	if err := db.RetireDevice(orphan.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}
@@ -641,7 +678,7 @@ func TestBulkRollbackOrphaned_ReportsCleanlyRolledBackAsClean(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", gone.ID, live.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	if err := db.RetireDevice(gone.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}
@@ -674,7 +711,7 @@ func TestBulkRollbackOrphaned_ResolvesRollingBackOrphan(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", gone.ID, live.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	if err := db.RetireDevice(gone.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}
@@ -705,7 +742,7 @@ func TestResolveIPSecRollback_WorksWithoutUIPoll(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	id := createTunnelRow(t, db, "fortigate", "opnsense", gone.ID, live.ID, 1)
 	deployAndSettle(t, h, db, id, "up")
-	captureUUIDs(t, db, id, 1, map[string]string{"conn": "uuid-conn"})
+	captureAllTokens(t, db, id, 1)
 	if err := db.RetireDevice(gone.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}

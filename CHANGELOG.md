@@ -40,6 +40,23 @@ All notable changes to this project are documented in this file.
   OPNsense pre-shared-key search returns the key itself, and the command
   result column is not encrypted — so a document carrying a pre-shared key is
   blanked **before** it is written, never after.
+- **A device that provably holds nothing is a clean rollback.** When every
+  search answers and none of them finds an object of the tunnel's, the device
+  does not hold any — the removal is a genuine no-op and the tunnel settles on
+  `rolled_back`, which is the truth rather than a false clean.
+- **A partial search can be repeated, and a duplicate is reported.** A search
+  the device did not answer leaves the object's absence unproven, so the end
+  stays unproven *and* can be searched again — an object that was never looked
+  for can still be found. When the device holds more than one object of the
+  same kind, every one of them is reported (the removal addresses one uuid per
+  token), and the end stays unproven so the leftover is not invisible.
+- **"Unproven" is now decided per object, not per end.** An end whose captures
+  cover three of the four objects its removal addresses used to count as proven,
+  and the removal skipped the fourth delete step while reporting success. It is
+  now unproven unless **every** object the removal addresses is either
+  addressable (its uuid is known) or proven absent (a complete discovery did
+  not report it) — so a partially-known end is an honest `rollback_failed`, not
+  a false clean.
 
 ## [0.11.443] - 2026-10-25
 

@@ -412,6 +412,86 @@ func TestDiscover_ADuplicateObjectIsReportedAndKeepsTheEndUnproven(t *testing.T)
 	}
 }
 
+// A partial discovery followed by a complete one must COMPLETE the capture
+// map: the second search finds the object the first could not look for, and
+// the end becomes fully accounted for.
+//
+// The all-or-nothing merge this replaces dropped the second search's findings
+// (the map was already non-empty), which stranded the pre-shared key AND
+// cleared the "we cannot prove it" marker — a false clean.
+func TestDiscover_AResearchCompletesTheCaptureMap(t *testing.T) {
+	h, db := setupTestHandler(t)
+	probe, _ := setupProbeAndDevice(t, db)
+	fw := makeFortiDevice(t, db, probe.ID, "203.0.113.9")
+	opn := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
+	id := createTunnelRow(t, db, "fortigate", "opnsense", fw.ID, opn.ID, 1)
+	deployAndSettle(t, h, db, id, "up")
+
+	if resp := discoverReq(t, h, id); resp.code != http.StatusOK {
+		t.Fatalf("discover = %d, want 200; body: %s", resp.code, resp.body)
+	}
+	st := deployStateOf(t, db, id)
+	name := id2name(t, db, id)
+	intent, _ := database.IPSecModelToIntent(mustTunnel(t, db, id))
+	local := intent.Ends[1]
+	remote := intent.Ends[0]
+	const pskUUID = "22222222-3333-4444-5555-666666666666"
+
+	// Discovery 1: the connection is found, the pre-shared key is not searched.
+	first, _ := json.Marshal(map[string]any{
+		"steps": []map[string]any{
+			{"path": "/api/ipsec/connections/searchConnection", "status": 200,
+				"body": `{"total":1,"rows":[{"description":"` + name + `","uuid":"11111111-2222-3333-4444-555555555555","local_addrs":"` + local.PeerIP + `","remote_addrs":"` + remote.PeerIP + `","version":"2"}]}`},
+			{"path": "/api/ipsec/pre_shared_keys/searchItem", "status": 500, "body": ""},
+		},
+	})
+	if _, _, err := db.CompleteProbeCommand(probe.ID, st.DiscoveryCommandID, "succeeded", string(first)); err != nil {
+		t.Fatalf("complete the first discovery: %v", err)
+	}
+	c, _ := jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.GetIPSecDiscovery(c)
+	st1 := deployStateOf(t, db, id)
+	if st1.Ends[1].DiscoveryState != ipsec.DiscoveryStatePartial {
+		t.Fatalf("the first discovery must be partial, got %q", st1.Ends[1].DiscoveryState)
+	}
+	if _, ok := st1.Ends[1].CapturedUUIDs["psk"]; ok {
+		t.Fatal("the pre-shared key was never searched for — it must not be captured")
+	}
+
+	// Discovery 2: the pre-shared key is found.
+	if resp := discoverReq(t, h, id); resp.code != http.StatusOK {
+		t.Fatalf("the second discover = %d, want 200; body: %s", resp.code, resp.body)
+	}
+	st2 := deployStateOf(t, db, id)
+	second, _ := json.Marshal(map[string]any{
+		"steps": []map[string]any{
+			{"path": "/api/ipsec/connections/searchConnection", "status": 200,
+				"body": `{"total":1,"rows":[{"description":"` + name + `","uuid":"11111111-2222-3333-4444-555555555555","local_addrs":"` + local.PeerIP + `","remote_addrs":"` + remote.PeerIP + `","version":"2"}]}`},
+			{"path": "/api/ipsec/pre_shared_keys/searchItem", "status": 200,
+				"body": `{"total":1,"rows":[{"description":"` + name + `","uuid":"` + pskUUID + `","ident":"` + local.LocalID.Value + `","remote_ident":"` + remote.LocalID.Value + `"}]}`},
+			{"path": "/api/firewall/filter/searchRule?searchPhrase=" + name, "status": 200, "body": `{"total":0,"rows":[]}`},
+		},
+	})
+	if _, _, err := db.CompleteProbeCommand(probe.ID, st2.DiscoveryCommandID, "succeeded", string(second)); err != nil {
+		t.Fatalf("complete the second discovery: %v", err)
+	}
+	c, _ = jsonReq(http.MethodGet, "/x", "")
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(int(id))}}
+	h.GetIPSecDiscovery(c)
+
+	st3 := deployStateOf(t, db, id)
+	if st3.Ends[1].CapturedUUIDs["psk"] != pskUUID {
+		t.Fatalf("the second search must COMPLETE the capture map, got %+v", st3.Ends[1].CapturedUUIDs)
+	}
+	if st3.Ends[1].DiscoveryState != ipsec.DiscoveryStateFound {
+		t.Errorf("the end must be found, got %q", st3.Ends[1].DiscoveryState)
+	}
+	if st3.Ends[1].RollbackUnproven {
+		t.Error("an end whose objects are all addressable must not be unproven")
+	}
+}
+
 // discoverReq drives the discovery endpoint for one tunnel.
 func discoverReq(t *testing.T, h *Handler, id uint) *httptestResponse {
 	t.Helper()
