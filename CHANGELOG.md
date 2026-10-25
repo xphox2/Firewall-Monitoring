@@ -1,6 +1,72 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.442] - 2026-10-25
+
+### Fixed — IPSec rollback for retired peers (phantom peers on the V2 map)
+
+- **A retired or purged peer no longer blocks the rollback of the live end.**
+  The IPSec subsystem had no notion of a "retired" device: a decommissioned
+  FortiGate is still a device row (soft-retired) or is gone entirely (purged),
+  and neither can be cleaned. The remove command could not even be BUILT for
+  such an end, and one unbuildable end aborted the WHOLE rollback — so the live
+  end (the OPNsense) never got cleaned, the tunnel stayed `provisioned`
+  forever, and the phantom peer was re-created on every 5-minute telemetry
+  cycle. The rollback now classifies each end: a device that no longer exists
+  is **skipped and reported** (its reason is surfaced on the terminal), while a
+  live device that genuinely cannot be cleaned fails **on its own** while the
+  other end is still enqueued and cleaned.
+- **The rollback terminal now has ONE implementation.**
+  `database.ResolveIPSecRollback` holds the rules and is called by the deploy
+  poll, the new bulk endpoint and the new background reconciler, so all three
+  agree on what "rolled back" means. A skipped end counts as done, not as a
+  failure; an end whose remove cannot prove the device is clean still forces
+  `rollback_failed`.
+- **No more FALSE CLEAN on an OPNsense end with no captured UUIDs.** An
+  OPNsense remove addresses the objects by the UUIDs the apply captured; with
+  none stored, every step is skipped and the collector reports `applied: true`
+  — indistinguishable from a genuinely clean device. Such an end is now marked
+  unproven, so the rollback lands on `rollback_failed` with an explicit
+  "verify the device manually" reason instead of claiming success. This is the
+  case the auto-rollback path already guarded; the manual and bulk paths did
+  not.
+- **A tunnel wedged in `deploying` can now be rolled back.** Its apply command
+  is dead, but the rollback's from-statuses excluded `deploying`, so it could
+  never be cleaned. The concurrency guard still refuses while a command is
+  live.
+- **The telemetry layer no longer manufactures outages for dead peers.** A
+  tunnel whose far end was retired or purged can never come up, so expecting
+  its children produced a synthetic `down` row on every cycle. `expectedFor`
+  now skips such a pair (the lifecycle of every peer is resolved in ONE
+  query), and fails OPEN if that lookup fails — an unknown peer state must
+  never hide a real outage.
+- **The V2 map no longer draws phantom peer nodes.** `GetVPNMapData` now
+  reports each tunnel's `peer_state` (`active` / `retired` / `removed`) and
+  `peer_name`, resolved once per peer per request. The topology map skips both
+  the external node and the edge for a decommissioned peer — it used to invent
+  a phantom external node from the dead peer's IP — and lists those tunnels
+  below the map instead, so nothing is silently dropped.
+- **The V2 console can now run a rollback.** The IPSec tab wired only
+  preflight / deploy / recheck; the Rollback button existed only in the legacy
+  console. The new button is shown for exactly the server's rollback-able
+  statuses, sits behind a confirm dialog that states what it removes, and
+  polls the deploy endpoint to the saga's terminal (as the legacy console does).
+- **New bulk endpoint `POST /admin/api/ipsec/rollback-orphaned`** (admin-only,
+  audit-logged): rolls back the live end of every tunnel whose far end is
+  decommissioned, skips the dead end with its reason, advances tunnels left
+  mid-rollback (they could never be re-driven and they blocked the retired
+  device's purge), and **reports** the ones it cannot roll back under
+  `needs_manual_cleanup` instead of silently omitting them.
+- **New background reconciler.** The `rolling_back → rolled_back|rollback_failed`
+  terminal used to be advanced only by the UI-driven poll, so a tunnel left
+  mid-rollback was stuck forever. The singleton primary now ticks
+  `database.IPSecRollbackWorker` every 15 s and advances every rolling-back
+  tunnel with the shared resolver; the guarded write makes a concurrent
+  resolution with the poll benign.
+- **No schema migration.** The new per-end rollback record is additive inside
+  the existing `deploy_json` text column, and records written before it keep
+  working through the legacy index-aligned path.
+
 ## [0.11.441] - 2026-10-24
 
 ### Security — Durable, shared TOTP replay guard (D-14)

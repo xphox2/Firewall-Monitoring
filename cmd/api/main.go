@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.441"
+const ServerVersion = "0.11.442"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -603,6 +603,32 @@ func main() {
 		log.Println("AUDIT-040: device purge worker disabled (follower / not the singleton primary).")
 	}
 
+	// IPSec rollback reconciler: the rolling_back → rolled_back|rollback_failed
+	// terminal was advanced ONLY by the UI-driven GET …/deploy poll, so a
+	// tunnel left mid-rollback (browser closed) stayed stuck forever — it could
+	// not be re-rolled-back and it blocked the retired device's purge. The
+	// singleton primary now advances every rolling_back tunnel with the same
+	// ResolveIPSecRollback the poll uses; the guarded write makes a concurrent
+	// resolution with the poll benign.
+	if isPrimary {
+		rollbackWorker := database.NewIPSecRollbackWorker(db)
+		logging.SafeGo("ipsec-rollback", func() {
+			log.Println("ipsec-rollback: reconciler started (advancing rolling_back tunnels every 15s)")
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-bgCtx.Done():
+					return
+				case <-ticker.C:
+					rollbackWorker.Tick(bgCtx)
+				}
+			}
+		})
+	} else {
+		log.Println("ipsec-rollback: reconciler disabled (follower / not the singleton primary).")
+	}
+
 	setupRoutes(router, cfg, handler, authManager, db)
 
 	server := &http.Server{
@@ -924,6 +950,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/ipsec/tunnels/:id/rollback":     true,
 			"/admin/api/ipsec/tunnels/:id/recheck":      true,
 			"/admin/api/ipsec/tunnels/:id/deploy/reset": true,
+			// The bulk orphaned-rollback endpoint removes configuration from
+			// live devices across every tunnel — same class as the per-tunnel
+			// rollback (and it carries credential material into the collector),
+			// so it is admin-only.
+			"/admin/api/ipsec/rollback-orphaned": true,
 			// Wizard interface hints expose per-device addressing to the admin-only
 			// IPSec wizard; keep behind the same admin gate.
 			"/admin/api/devices/:id/ipsec-hints": true,
@@ -1163,6 +1194,11 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/ipsec/tunnels/:id/deploy", handler.DeployIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/deploy", handler.GetIPSecDeployResult)
 		admin.POST("/api/ipsec/tunnels/:id/rollback", handler.RollbackIPSecTunnel)
+		// Bulk cleanup of the orphaned set: every tunnel whose far end is a
+		// decommissioned device (retired or purged). The live end is rolled
+		// back, the dead end is skipped with its reason, and a tunnel the
+		// server cannot roll back is REPORTED under needs_manual_cleanup.
+		admin.POST("/api/ipsec/rollback-orphaned", handler.RollbackOrphanedIPSecTunnels)
 		// Re-run SA-liveness verification on a settled tunnel (recovery for a tunnel
 		// that came up after the one-shot post-deploy check); read-only on devices.
 		admin.POST("/api/ipsec/tunnels/:id/recheck", handler.RecheckIPSecTunnel)

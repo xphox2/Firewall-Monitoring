@@ -56,6 +56,64 @@ func (d *Database) GetDevice(id uint) (*models.Device, error) {
 	return &device, nil
 }
 
+// DeviceLifecycle is a device's rollout state for the IPSec peer checks.
+//
+// The three states matter because a tunnel's far end can be in any of them:
+// a decommissioned FortiGate is RETIRED (row kept, excluded from the live
+// fleet) or PURGED (row gone). Both mean "this peer will never come up", and
+// both are invisible to a plain active-device lookup — a retired device is
+// found by GetDevice (deliberately unscoped) and a purged one is not found at
+// all, which reads as an error rather than as a state.
+type DeviceLifecycle string
+
+const (
+	// DeviceActive is a live device: retired_at IS NULL and the row exists.
+	DeviceActive DeviceLifecycle = "active"
+	// DeviceRetired is a soft-retired device: retired_at IS NOT NULL. Its row and
+	// history are kept, but it has been decommissioned.
+	DeviceRetired DeviceLifecycle = "retired"
+	// DeviceMissing is a purged device: the row is gone.
+	DeviceMissing DeviceLifecycle = "missing"
+)
+
+// GetDeviceLifecycleStates resolves the lifecycle of each requested device in
+// ONE query.
+//
+// Cheaper than GetAllDevices (which decrypts every device's secrets and
+// preloads two associations) and it distinguishes retired from purged, which
+// GetRetiredDeviceIDs alone cannot.
+//
+// Devices that are not in the result map are NOT in the map at all: a purged
+// device has no row to return. Callers must treat "absent from the map" as
+// DeviceMissing — the map therefore only ever holds active and retired
+// entries.
+func (d *Database) GetDeviceLifecycleStates(ids []uint) (map[uint]DeviceLifecycle, error) {
+	out := make(map[uint]DeviceLifecycle, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	type row struct {
+		ID        uint
+		RetiredAt *time.Time
+	}
+	var rows []row
+	err := d.db.Model(&models.Device{}).
+		Select("id", "retired_at").
+		Where("id IN ?", ids).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.RetiredAt != nil {
+			out[r.ID] = DeviceRetired
+			continue
+		}
+		out[r.ID] = DeviceActive
+	}
+	return out, nil
+}
+
 // ResolveDeviceByIP finds a device ID by management IP or interface address.
 //
 // AUDIT-270: both lookups pin a deterministic ORDER BY. A management IP is not

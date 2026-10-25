@@ -64,11 +64,53 @@ type PreflightEndState struct {
 	CommandID string `json:"command_id"`
 }
 
+// RollbackEndState records ONE end's rollback outcome.
+//
+// The IPSec subsystem has no notion of a "retired" peer: a decommissioned
+// FortiGate is still a device row (soft-retired) or is gone entirely (purged),
+// and neither can be cleaned — there is nothing left to send a remove command
+// to. Treating that as a rollback FAILURE aborted the whole rollback, so the
+// LIVE end (the OPNsense) never got cleaned either and the tunnel stayed
+// "provisioned" forever, re-manufacturing a phantom peer on every telemetry
+// cycle.
+//
+// Skipped marks an end that CANNOT be rolled back because its device no longer
+// exists (retired or purged). Nothing can clean a device that no longer
+// exists, so its absence is NOT a rollback failure — it counts as done and its
+// reason is surfaced on the terminal.
+//
+// FailReason records why an end that WAS attempted could not be (e.g. a live
+// device with no collector assigned). Such an end is a genuine failure: the
+// device is still there and still holds objects.
+type RollbackEndState struct {
+	End      int  `json:"end"`
+	DeviceID uint `json:"device_id"`
+	// CommandID is the remove command enqueued for this end. Empty when the end
+	// was skipped or could not be built.
+	CommandID string `json:"command_id,omitempty"`
+	// Skipped marks an end that CANNOT be rolled back because its device is
+	// gone (retired or purged). Nothing can clean a device that no longer
+	// exists, so its absence is NOT a rollback failure.
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
+	// FailReason records why an attempted end could not be rolled back. Only
+	// meaningful when Skipped is false and CommandID is empty.
+	FailReason string `json:"fail_reason,omitempty"`
+}
+
 // RollbackState records the in-flight/last rollback so its terminal status is
 // poll-driven (never set at POST time). Auto is set when the server triggered a
 // compensating rollback after a partial/failed deploy (vs an operator POST).
 type RollbackState struct {
+	// CommandIDs is the LEGACY form: index-aligned with DeployState.Ends.
+	// Records written before per-end rollbacks carry it and no Ends. It is
+	// now READ-ONLY (the legacy fallback path) — Ends is authoritative.
 	CommandIDs []string `json:"command_ids"`
 	StartedAt  string   `json:"started_at,omitempty"`
 	Auto       bool     `json:"auto,omitempty"`
+	// Ends is the authoritative per-end rollback record. Empty on records
+	// written before this change → the terminal evaluation falls back to the
+	// index-aligned CommandIDs path. No schema migration: deploy_json is a text
+	// column and the new field is additive.
+	Ends []RollbackEndState `json:"ends,omitempty"`
 }

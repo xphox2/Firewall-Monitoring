@@ -497,6 +497,44 @@ used when the recovered name is already taken). Each row is logged as
 Devices page (Retired tab) like any other retired device. The migration is
 idempotent and never scans the partitioned telemetry parents.
 
+### IPSec tunnels whose peer was retired (v0.11.442)
+
+Retiring one end of an IPSec tunnel used to make the tunnel **un-rollback-able**:
+the remove command could not be built for an end whose device is gone, and one
+unbuildable end aborted the whole rollback — so the LIVE end (the OPNsense)
+kept its objects, the tunnel stayed `provisioned`, and the topology map
+re-created a phantom `down` peer for it on every telemetry cycle.
+
+Now:
+
+- **A retired or purged end is skipped, not attempted.** The live end is
+  cleaned; the terminal reason names the skipped end and says its objects were
+  NOT removed (a retired device may still be powered). A live end that
+  genuinely cannot be cleaned (no collector) fails on its own while the other
+  end is still cleaned.
+- **The V2 console can run the rollback.** The IPSec Tunnels tab has a
+  **Rollback** button for the rollback-able statuses, behind a confirm dialog
+  that states what it removes; it polls the deploy endpoint to the saga's
+  terminal. The legacy console has one too.
+- **`POST /admin/api/ipsec/rollback-orphaned`** (admin-only, audit-logged)
+  batches the cleanup: every tunnel whose far end is retired or purged gets
+  its live end rolled back, the dead end is skipped with its reason, and a
+  tunnel left mid-rollback is advanced to a terminal (it could never be
+  re-driven and it blocked the retired device's purge). The response is a
+  per-tunnel report; anything the server **cannot** roll back — no deploy
+  record, so the removal snapshot is gone — is reported under
+  `needs_manual_cleanup` rather than silently omitted. Remove those objects
+  on the device by hand.
+- **The background reconciler advances every `rolling_back` tunnel.** The
+  terminal used to be reached only by the UI-driven poll, so a tunnel left
+  mid-rollback was stuck forever. The singleton primary ticks the reconciler
+  every 15 s; the guarded write makes a concurrent poll benign.
+- **`rollback_failed` can be honest.** An OPNsense end whose apply outcome was
+  never proven has no captured UUIDs, so its remove would skip every step and
+  the collector would report `applied: true` — a false clean. Such an end
+  forces `rollback_failed` with a "verify the device manually" reason. Verify
+  the device by hand; `Force reset` clears the server-side record only.
+
 ### Permanently deleting a retired device (purge)
 
 Since v0.11.243 a **retired** device can be purged — every row keyed to it

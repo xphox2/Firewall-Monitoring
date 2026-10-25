@@ -339,3 +339,201 @@ func (d *Database) TransitionIPSecDeploy(id uint, fromStatuses []string, toStatu
 func (d *Database) DeleteIPSecTunnel(id uint) error {
 	return d.db.Delete(&models.IPSecTunnel{}, id).Error
 }
+
+// IPSecRollbackStatusRollingBack is the one status a rollback can be resolved
+// from. Kept as a literal here rather than imported from the handler package:
+// the database layer must not depend on the http layer.
+const IPSecRollbackStatusRollingBack = "rolling_back"
+
+// IPSecRollbackStatusRolledBack / IPSecRollbackStatusRollbackFailed are the two
+// terminals a rollback can reach.
+const (
+	IPSecRollbackStatusRolledBack     = "rolled_back"
+	IPSecRollbackStatusRollbackFailed = "rollback_failed"
+)
+
+// ipsecRollbackReportView is the minimal shape of the collector's apply report
+// the rollback terminal evaluation needs. It carries no secrets.
+type ipsecRollbackReportView struct {
+	Applied bool   `json:"applied"`
+	Error   string `json:"error"`
+}
+
+// ipsecFirstNonEmpty returns the first non-blank value, or "".
+func ipsecFirstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ResolveIPSecRollback advances a rolling_back tunnel to its terminal state.
+//
+// done=false while commands are still in flight. Performs EXACTLY ONE guarded
+// write when it reaches a terminal (the F2 invariant at TransitionIPSecDeploy) —
+// the caller must never chain a second status/deploy_json setter.
+//
+// This is the ONE implementation of the rollback terminal rules. It is called
+// by the deploy poll, by the bulk orphaned-rollback endpoint and by the
+// background reconciler, so all three agree on what "rolled back" means.
+//
+// Terminal rules (preserved verbatim from the poll):
+//   - a SKIPPED end (its device was retired or purged, so there is nothing left
+//     to clean) counts as DONE, not as a failure — its reason is appended to
+//     the terminal reason so the operator sees what was not touched;
+//   - a non-skipped end marked RollbackUnproven still forces rollback_failed
+//     even on a clean-looking report — a skipped OPNsense remove proves
+//     nothing about the device's state;
+//   - a lost race (another writer already wrote the terminal) is benign: the
+//     guarded write affects 0 rows and the current row is re-read.
+func (d *Database) ResolveIPSecRollback(id uint) (status, reason string, done bool, err error) {
+	var m models.IPSecTunnel
+	if e := d.db.First(&m, id).Error; e != nil {
+		return "", "", false, e
+	}
+	if m.Status != IPSecRollbackStatusRollingBack {
+		// Not ours to resolve — already terminal, or never started.
+		return m.Status, m.LastError, true, nil
+	}
+
+	var st ipsec.DeployState
+	if strings.TrimSpace(m.DeployJSON) != "" {
+		if e := json.Unmarshal([]byte(m.DeployJSON), &st); e != nil {
+			return m.Status, "", false, fmt.Errorf("decode deploy state %d: %w", id, e)
+		}
+	}
+	if st.Rollback == nil || len(st.Ends) == 0 {
+		// A rollback was started but its record is gone/malformed. Nothing can be
+		// proven, so this is an honest failure — never a silent clean.
+		return d.writeIPSecRollbackTerminal(id, m, IPSecRollbackStatusRollbackFailed,
+			"the rollback record is missing — verify the device manually", m.DeployJSON)
+	}
+
+	doneEnds, anyFail := 0, false
+	var reasons []string
+	for i := range st.Ends {
+		e := st.Ends[i]
+		label := fmt.Sprintf("end %c", 'A'+e.End)
+		cid, skipped, skipReason, failReason := "", false, "", ""
+		if i < len(st.Rollback.Ends) {
+			re := st.Rollback.Ends[i]
+			cid, skipped, skipReason, failReason = re.CommandID, re.Skipped, re.SkipReason, re.FailReason
+		} else if i < len(st.Rollback.CommandIDs) {
+			// LEGACY fallback: records written before per-end rollbacks carry only
+			// the index-aligned CommandIDs.
+			cid = st.Rollback.CommandIDs[i]
+		}
+		if skipped {
+			// The device is gone (retired or purged): there is nothing to clean,
+			// so this is DONE — not a failure. The reason is surfaced so the
+			// operator knows which objects (if any) may still be on the device.
+			doneEnds++
+			if skipReason != "" {
+				reasons = append(reasons, skipReason)
+			}
+			continue
+		}
+		if failReason != "" {
+			// The end was attempted but could not be built — a live device that
+			// genuinely cannot be cleaned. A real failure.
+			doneEnds++
+			anyFail = true
+			reasons = append(reasons, failReason)
+			continue
+		}
+		if cid == "" {
+			doneEnds++
+			anyFail = true
+			reasons = append(reasons, label+": a rollback command was not recorded — verify the device")
+			continue
+		}
+		cmd, cerr := d.GetProbeCommandByCommandID(cid)
+		if cerr != nil {
+			return m.Status, "", false, cerr
+		}
+		if cmd == nil { // pruned/missing → terminal-unknown
+			doneEnds++
+			anyFail = true
+			reasons = append(reasons, label+": a rollback command result was lost — verify the device")
+			continue
+		}
+		switch cmd.Status {
+		case ProbeCommandStatusSucceeded:
+			doneEnds++
+			var rv ipsecRollbackReportView
+			if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
+				anyFail = true
+				reasons = append(reasons, label+": rollback report unparseable")
+			} else if !rv.Applied {
+				anyFail = true
+				reasons = append(reasons, label+": "+ipsecFirstNonEmpty(rv.Error, "some objects could not be removed"))
+			} else if e.RollbackUnproven {
+				anyFail = true
+				reasons = append(reasons, label+" apply outcome was unknown and rollback could not prove the device is clean — verify manually")
+			}
+		case ProbeCommandStatusFailed, ProbeCommandStatusExpired:
+			doneEnds++
+			anyFail = true
+			reasons = append(reasons, label+": "+ipsecFirstNonEmpty(cmd.Result, "rollback command failed"))
+		default:
+			// pending/dispatched — the command is still in flight.
+		}
+	}
+
+	if doneEnds < len(st.Ends) {
+		// Still rolling back.
+		return m.Status, "", false, nil
+	}
+
+	if anyFail {
+		msg := strings.Join(reasons, "; ")
+		return d.writeIPSecRollbackTerminal(id, m, IPSecRollbackStatusRollbackFailed, msg, m.DeployJSON)
+	}
+	// Preserve WHY we rolled back: the deploy→rolling_back transition stored the
+	// deploy-failure reason (or "operator-initiated rollback") in last_error.
+	base := "rolled back — " + ipsecFirstNonEmpty(m.LastError, "deploy failed")
+	if len(reasons) > 0 {
+		base += " (" + strings.Join(reasons, "; ") + ")"
+	}
+	// The deploy_json record is CLEARED on a clean rollback so the tunnel becomes
+	// eligible for edit/delete again (the "delete-allowed-from-empty-deploy" rule).
+	return d.writeIPSecRollbackTerminal(id, m, IPSecRollbackStatusRolledBack, base, "")
+}
+
+// writeIPSecRollbackTerminal performs the ONE guarded write that moves a
+// rolling_back tunnel to its terminal status. A lost race (another writer — the
+// UI poll or the reconciler — already wrote the terminal) is benign: the guarded
+// write affects 0 rows and the current row is re-read so the caller still sees
+// the winner's status and reason.
+func (d *Database) writeIPSecRollbackTerminal(id uint, m models.IPSecTunnel, status, reason, deployJSON string) (string, string, bool, error) {
+	terr := d.TransitionIPSecDeploy(id, []string{IPSecRollbackStatusRollingBack}, status, reason, deployJSON, false, nil)
+	if terr == nil {
+		return status, reason, true, nil
+	}
+	if errors.Is(terr, ErrIPSecConcurrentDeploy) {
+		var cur models.IPSecTunnel
+		if e := d.db.First(&cur, id).Error; e != nil {
+			return status, reason, true, e
+		}
+		return cur.Status, cur.LastError, true, nil
+	}
+	return status, reason, false, terr
+}
+
+// ListIPSecTunnelsByStatus returns the ids of every tunnel in one of the given
+// statuses. It is the focused query the rollback reconciler uses — deliberately
+// NOT ListIPSecTunnels, which loads every intent (and every PSK ciphertext)
+// just to find the handful of rows that are rolling back.
+func (d *Database) ListIPSecTunnelsByStatus(statuses []string) ([]uint, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	var ids []uint
+	err := d.db.Model(&models.IPSecTunnel{}).
+		Where("status IN ?", statuses).
+		Order("id ASC").
+		Pluck("id", &ids).Error
+	return ids, err
+}

@@ -947,7 +947,19 @@ func ipsecHasLiveCommand(db database.Store, st *ipsec.DeployState) (bool, error)
 		}
 	}
 	if st.Rollback != nil {
-		ids = append(ids, st.Rollback.CommandIDs...)
+		// The per-end rollback record is authoritative; CommandIDs is the legacy
+		// index-aligned form. Empty ids are skipped (an end with no command is
+		// either skipped or failed — neither is "in flight").
+		for i := range st.Rollback.Ends {
+			if st.Rollback.Ends[i].CommandID != "" {
+				ids = append(ids, st.Rollback.Ends[i].CommandID)
+			}
+		}
+		for _, cid := range st.Rollback.CommandIDs {
+			if cid != "" {
+				ids = append(ids, cid)
+			}
+		}
 	}
 	for _, id := range ids {
 		cmd, err := db.GetProbeCommandByCommandID(id)
@@ -1226,72 +1238,21 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 	note := ""
 
 	if m.Status == ipsecStatusRollingBack && st != nil && st.Rollback != nil {
-		// Rollback in progress: terminal status is poll-driven from the per-end
-		// remove commands (index-aligned with st.Ends) AND the RollbackUnproven
-		// markers — a marked end forces rollback_failed even on a clean-looking
-		// (all-skipped) remove report, because that skip proves nothing.
-		done, anyFail, msg := 0, false, ""
-		for i := range st.Ends {
-			e := st.Ends[i]
-			var cid string
-			if i < len(st.Rollback.CommandIDs) {
-				cid = st.Rollback.CommandIDs[i]
-			}
-			if cid == "" {
-				done++
-				anyFail, msg = true, firstNonEmpty(msg, "a rollback command was not recorded — verify the device")
-				continue
-			}
-			cmd, cerr := db.GetProbeCommandByCommandID(cid)
-			if cerr != nil {
-				httputil.InternalError(c, "Failed to read command", cerr)
-				return
-			}
-			if cmd == nil { // pruned/missing → terminal-unknown
-				done++
-				anyFail, msg = true, firstNonEmpty(msg, "a rollback command result was lost — verify the device")
-				continue
-			}
-			switch cmd.Status {
-			case database.ProbeCommandStatusSucceeded:
-				done++
-				var rv ipsecApplyReportView
-				if json.Unmarshal([]byte(cmd.Result), &rv) != nil {
-					anyFail, msg = true, firstNonEmpty(msg, "rollback report unparseable")
-				} else if !rv.Applied {
-					anyFail, msg = true, firstNonEmpty(msg, rv.Error, "some objects could not be removed")
-				} else if e.RollbackUnproven {
-					anyFail, msg = true, firstNonEmpty(msg, fmt.Sprintf("end %c apply outcome was unknown and rollback could not prove the device is clean — verify manually", 'A'+e.End))
-				}
-			case database.ProbeCommandStatusFailed, database.ProbeCommandStatusExpired:
-				done++
-				anyFail, msg = true, firstNonEmpty(msg, cmd.Result, "rollback command failed")
-			}
+		// The terminal evaluation lives in the DATABASE layer so the poll, the
+		// bulk orphaned-rollback endpoint and the background reconciler all apply
+		// the SAME rules: a SKIPPED end (its device was retired or purged, so
+		// there is nothing to clean) counts as done, not as a failure — while an
+		// end marked RollbackUnproven still forces rollback_failed even on a
+		// clean-looking report (a skipped OPNsense remove proves nothing).
+		//
+		// ResolveIPSecRollback performs EXACTLY ONE guarded write when it reaches
+		// a terminal — the F2 invariant (no chained status/deploy_json setter).
+		rstatus, reason, _, rerr := db.ResolveIPSecRollback(id)
+		if rerr != nil {
+			httputil.InternalError(c, "Failed to resolve rollback", rerr)
+			return
 		}
-		// termReason is the reason surfaced to the UI on the terminal poll (as
-		// `note`), so the failure banner shows WHY it rolled back instead of "No
-		// further detail". Empty while still rolling back (the ends still carry the
-		// apply error the frontend snapshots).
-		termReason := ""
-		if done >= len(st.Ends) {
-			// One guarded write per terminal (never chain a second setter — F2).
-			if anyFail {
-				status = ipsecStatusRollbackFailed
-				termReason = msg
-				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, msg, m.DeployJSON, false, nil) // keep record for retry / reset
-			} else {
-				status = ipsecStatusRolledBack
-				// Preserve WHY we rolled back. The deploy→rolling_back transition
-				// already stored the deploy-failure reason in last_error; carry it
-				// forward (the deploy_json record is still cleared) so the operator
-				// isn't left with a bare "rolled_back" and no cause.
-				reason := "rolled back — " + firstNonEmpty(m.LastError, "deploy failed")
-				termReason = reason
-				log.Printf("ipsec-deploy: tunnel %d auto-rolled-back cleanly: %s", id, reason)
-				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusRollingBack}, status, reason, "", false, nil)
-			}
-		}
-		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": status, "op": "rollback", "auto": st.Rollback.Auto, "note": termReason}))
+		c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": rstatus, "op": "rollback", "auto": st.Rollback.Auto, "note": reason}))
 		return
 	}
 
@@ -1451,30 +1412,33 @@ func (h *Handler) GetIPSecDeployResult(c *gin.Context) {
 					st.Ends[i].RollbackUnproven = true
 				}
 			}
-			rbCmds := make([]*models.ProbeCommand, 0, len(st.Ends))
-			rbIDs := make([]string, 0, len(st.Ends))
-			buildErr := ""
-			for i := range st.Ends {
-				cmd, berr := ipsecBuildRemoveCmd(db, m.ID, m.Name, st.Ends[i])
-				if berr != nil {
-					buildErr = berr.Error()
-					break
-				}
-				rbCmds = append(rbCmds, cmd)
-				rbIDs = append(rbIDs, cmd.CommandID)
+			// PER-END classification (same rules as the manual path): an end whose
+			// device is gone is SKIPPED, not a reason to abort the whole
+			// compensating rollback — the live end still has to be cleaned.
+			rbEnds, rbCmds, rbFails := ipsecPlanRollbackEnds(db, m, st)
+			rbIDs := make([]string, 0, len(rbEnds))
+			for _, e := range rbEnds {
+				rbIDs = append(rbIDs, e.CommandID) // index-aligned with st.Ends
 			}
-			if buildErr != "" {
+			if len(rbCmds) == 0 && len(rbFails) > 0 {
 				status = ipsecStatusError
 				blob, _ := json.Marshal(st)
 				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status,
-					"deploy failed and the automatic rollback could not be built ("+buildErr+") — roll back manually", string(blob), false, nil)
+					"deploy failed and the automatic rollback could not be built ("+strings.Join(rbFails, "; ")+") — roll back manually", string(blob), false, nil)
 			} else {
-				st.Rollback = &ipsec.RollbackState{CommandIDs: rbIDs, StartedAt: time.Now().UTC().Format(time.RFC3339), Auto: true}
+				st.Rollback = &ipsec.RollbackState{CommandIDs: rbIDs, StartedAt: time.Now().UTC().Format(time.RFC3339), Auto: true, Ends: rbEnds}
 				status = ipsecStatusRollingBack
 				note = "automatic rollback: a deploy end failed — reversing the tunnel"
 				blob, _ := json.Marshal(st)
 				_ = db.TransitionIPSecDeploy(id, []string{ipsecStatusDeploying}, status,
 					firstNonEmpty(failMsg, "deploy failed"), string(blob), false, rbCmds)
+				if len(rbCmds) == 0 {
+					// Every end was skipped — there is nothing to clean anywhere.
+					// Resolve it now instead of waiting for the next poll.
+					if rstatus, rreason, _, rerr := db.ResolveIPSecRollback(id); rerr == nil {
+						status, note = rstatus, rreason
+					}
+				}
 			}
 		}
 	}
@@ -1696,8 +1660,15 @@ func applyFailReason(rv ipsecApplyReportView) string {
 
 // RollbackIPSecTunnel reverses a deploy from the stored per-end remove-steps
 // snapshot (NOT a re-render — so a later intent edit can't change what gets
-// removed). It enqueues remove_ipsec per deployed end and moves the tunnel to
+// removed). It enqueues remove_ipsec per DEPLOYABLE end and moves the tunnel to
 // rolling_back; the terminal rolled_back/rollback_failed is poll-driven.
+//
+// PER-END OUTCOMES: an end whose device no longer exists (retired or purged)
+// is SKIPPED and reported, not attempted — nothing can clean a device that is
+// not there, and treating that as a failure used to abort the whole rollback,
+// leaving the LIVE end dirty and the tunnel stuck "provisioned" forever. A
+// live end that genuinely cannot be cleaned fails ON ITS OWN while the other
+// end is still enqueued and cleaned.
 func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 	db := h.reqDB(c)
 	if !httputil.RequireDB(c, db) {
@@ -1729,25 +1700,35 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		return
 	}
 
-	cmds := make([]*models.ProbeCommand, 0, len(st.Ends))
-	rollbackIDs := make([]string, 0, len(st.Ends))
-	for i := range st.Ends {
-		cmd, berr := ipsecBuildRemoveCmd(db, m.ID, m.Name, st.Ends[i])
-		if berr != nil {
-			c.JSON(http.StatusBadRequest, response.Error(berr.Error()))
-			return
-		}
-		cmds = append(cmds, cmd)
-		rollbackIDs = append(rollbackIDs, cmd.CommandID)
+	// Classify EVERY end first: a skipped end must not abort the rollback, and
+	// a hard failure must not stop the other end's cleanup.
+	ends, cmds, failReasons := ipsecPlanRollbackEnds(db, m, st)
+
+	if len(cmds) == 0 && len(failReasons) > 0 {
+		// Nothing could be attempted at all — every end either failed or was
+		// skipped, and there is at least one genuine failure to report.
+		c.JSON(http.StatusBadRequest, response.Error(strings.Join(failReasons, "; ")))
+		return
 	}
 
-	st.Rollback = &ipsec.RollbackState{CommandIDs: rollbackIDs, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+	rbIDs := make([]string, 0, len(ends))
+	for _, e := range ends {
+		rbIDs = append(rbIDs, e.CommandID) // index-aligned with st.Ends ("" = no command)
+	}
+	st.Rollback = &ipsec.RollbackState{
+		CommandIDs: rbIDs,
+		StartedAt:  time.Now().UTC().Format(time.RFC3339),
+		Ends:       ends,
+	}
 	blob, merr := json.Marshal(st)
 	if merr != nil {
 		httputil.InternalError(c, "Failed to encode deploy state", merr)
 		return
 	}
-	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusDown, ipsecStatusError, ipsecStatusRollbackFailed}
+	// fromStatuses adds `deploying`: a tunnel wedged in deploying (its apply
+	// command dead) could otherwise never be rolled back. The concurrency guard
+	// above still refuses while any apply/rollback command is live.
+	fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusDown, ipsecStatusError, ipsecStatusRollbackFailed, ipsecStatusDeploying}
 	// AUDIT IP3: carry an operator-initiated reason (not empty) so the terminal
 	// banner reads "rolled back — operator-initiated rollback" instead of
 	// synthesizing the misleading "deploy failed" when LastError is empty. The
@@ -1760,7 +1741,303 @@ func (h *Handler) RollbackIPSecTunnel(c *gin.Context) {
 		httputil.InternalError(c, "Failed to start rollback", terr)
 		return
 	}
-	c.JSON(http.StatusOK, response.Success(gin.H{"tunnel_id": m.ID, "status": ipsecStatusRollingBack, "commands": rollbackIDs}))
+	// Every end was skipped → there is nothing to clean anywhere. Resolve it now
+	// instead of leaving it rolling_back until the next poll.
+	if len(cmds) == 0 {
+		if status, reason, _, rerr := db.ResolveIPSecRollback(id); rerr == nil {
+			c.JSON(http.StatusOK, response.Success(gin.H{
+				"tunnel_id": id, "status": status, "commands": []string{},
+				"ends": ends, "skipped_ends": ends, "note": reason,
+			}))
+			return
+		}
+	}
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnel_id": id, "status": ipsecStatusRollingBack, "commands": rbIDs,
+		"ends": ends, "skipped_ends": skippedEndStates(ends),
+	}))
+}
+
+// ipsecPlanRollbackEnds classifies every end of a tunnel's deploy record and
+// builds the remove commands for the ends that CAN be cleaned.
+//
+// It is the ONE implementation of the per-end rules, shared by the manual
+// rollback, the bulk orphaned-rollback endpoint and the poll's auto-rollback.
+// It MUTATES st: an end whose remove would be a false clean (a live OPNsense
+// end with no captured UUIDs) is marked RollbackUnproven on the deploy record,
+// which is what forces the terminal to rollback_failed instead of a clean
+// rolled_back.
+func ipsecPlanRollbackEnds(db database.Store, m *models.IPSecTunnel, st *ipsec.DeployState) (ends []ipsec.RollbackEndState, cmds []*models.ProbeCommand, failReasons []string) {
+	ends = make([]ipsec.RollbackEndState, 0, len(st.Ends))
+	cmds = make([]*models.ProbeCommand, 0, len(st.Ends))
+	for i := range st.Ends {
+		p := ipsecPlanRollbackEnd(db, m, st.Ends[i])
+		re := ipsec.RollbackEndState{End: st.Ends[i].End, DeviceID: st.Ends[i].DeviceID}
+		switch {
+		case p.Skipped:
+			re.Skipped = true
+			re.SkipReason = p.SkipReason
+		case p.FailReason != "":
+			re.FailReason = p.FailReason
+			failReasons = append(failReasons, p.FailReason)
+		default:
+			if p.Unproven {
+				// The remove would skip every <uuid:NAME> step and report a
+				// false clean — mark the end so the terminal forces
+				// rollback_failed with a "verify manually" reason.
+				st.Ends[i].RollbackUnproven = true
+			}
+			re.CommandID = p.Cmd.CommandID
+			cmds = append(cmds, p.Cmd)
+		}
+		ends = append(ends, re)
+	}
+	return ends, cmds, failReasons
+}
+
+// skippedEndStates returns the skipped ends of a rollback plan (the ends whose
+// device no longer exists), for the API response.
+func skippedEndStates(ends []ipsec.RollbackEndState) []ipsec.RollbackEndState {
+	out := make([]ipsec.RollbackEndState, 0, len(ends))
+	for _, e := range ends {
+		if e.Skipped {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// ipsecOrphanReport is one tunnel's outcome in the bulk orphaned-rollback
+// report.
+type ipsecOrphanReport struct {
+	TunnelID uint   `json:"tunnel_id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	// Action is what the server did: rolled_back | rolling_back |
+	// rollback_failed | needs_manual_cleanup | already_clean | error.
+	Action string `json:"action"`
+	// SkippedEnds are the ends whose device no longer exists (retired/purged) —
+	// they were NOT cleaned and their objects may still be there.
+	SkippedEnds []ipsec.RollbackEndState `json:"skipped_ends"`
+	// Commands are the remove commands enqueued for this tunnel.
+	Commands []string `json:"commands"`
+	// Error explains a failure, a manual-cleanup requirement or the terminal
+	// reason.
+	Error string `json:"error,omitempty"`
+}
+
+// RollbackOrphanedIPSecTunnels rolls back every IPSec tunnel whose far end is
+// a DECOMMISSIONED device (retired or purged).
+//
+// This is the operator's cleanup path for the orphaned set: a tunnel to a
+// retired peer can never come up, so its config on the LIVE end is pure debt
+// — and while the tunnel stays "provisioned" the telemetry layer keeps
+// manufacturing a synthetic "down" child for it on every cycle, which the
+// topology map then draws as a phantom peer.
+//
+// Per tunnel:
+//   - a deploy record exists → the live end is rolled back and the dead end is
+//     SKIPPED with its reason;
+//   - every end is dead → the tunnel resolves straight to rolled_back (there is
+//     nothing to clean anywhere);
+//   - the tunnel is already rolling_back → it is advanced to its terminal (it
+//     could otherwise never be re-driven, and it blocks the retired device's
+//     purge);
+//   - there is NO deploy record → the removal snapshot is gone, so the server
+//     CANNOT clean the device: the tunnel is REPORTED under needs_manual_cleanup
+//     rather than silently omitted.
+func (h *Handler) RollbackOrphanedIPSecTunnels(c *gin.Context) {
+	db := h.reqDB(c)
+	if !httputil.RequireDB(c, db) {
+		return
+	}
+	tunnels, err := db.ListIPSecTunnels()
+	if err != nil {
+		httputil.InternalError(c, "Failed to list tunnels", err)
+		return
+	}
+	// Resolve every endpoint's lifecycle in ONE query: active / retired /
+	// purged (absent from the map).
+	deviceIDs := make([]uint, 0, len(tunnels)*2)
+	for i := range tunnels {
+		if tunnels[i].ADeviceID != 0 {
+			deviceIDs = append(deviceIDs, tunnels[i].ADeviceID)
+		}
+		if tunnels[i].BDeviceID != 0 {
+			deviceIDs = append(deviceIDs, tunnels[i].BDeviceID)
+		}
+	}
+	states, serr := db.GetDeviceLifecycleStates(deviceIDs)
+	if serr != nil {
+		httputil.InternalError(c, "Failed to resolve device lifecycles", serr)
+		return
+	}
+
+	report := make([]ipsecOrphanReport, 0, len(tunnels))
+	rollingBack, manual := 0, 0
+	for i := range tunnels {
+		m := tunnels[i]
+		if !ipsecTunnelHasDeadEnd(m, states) {
+			continue
+		}
+		rep := ipsecOrphanReport{TunnelID: m.ID, Name: m.Name, Status: m.Status, SkippedEnds: []ipsec.RollbackEndState{}, Commands: []string{}}
+		st, perr := parseDeployState(&m)
+		if perr != nil {
+			rep.Action = "error"
+			rep.Error = "the deploy record could not be read: " + perr.Error()
+			report = append(report, rep)
+			continue
+		}
+		if m.Status == ipsecStatusRolledBack {
+			// Already cleanly rolled back — the live end is clean, and the deploy
+			// record was cleared BY that rollback. Checked BEFORE the no-record
+			// branch below: a rolled_back tunnel has no record, and it must not
+			// be reported as needing manual cleanup.
+			rep.Action = "already_clean"
+			report = append(report, rep)
+			continue
+		}
+		if st == nil || len(st.Ends) == 0 {
+			// No deploy record: the removal snapshot is gone forever (a
+			// ForceResetIPSecDeploy-cleared record, or a tunnel that was never
+			// deployed). The server cannot remove anything, so the operator is
+			// told to clean the live end by hand.
+			rep.Action = "needs_manual_cleanup"
+			rep.Error = "no deploy record — the removal snapshot is gone, so the objects on the live end must be removed manually"
+			if m.LastDeployedAt == nil {
+				rep.Error += " (this tunnel was never deployed, so nothing may be on the device)"
+			}
+			manual++
+			report = append(report, rep)
+			continue
+		}
+		if m.Status == ipsecStatusRollingBack {
+			// Already rolling back: advance it to its terminal. Without this an
+			// orphan left mid-rollback could never be re-driven (the rollback's
+			// fromStatuses exclude rolling_back) and it blocked the retired
+			// device's purge.
+			rstatus, reason, _, rerr := db.ResolveIPSecRollback(m.ID)
+			rep.Status, rep.Action, rep.Error = rstatus, rstatus, reason
+			if rerr != nil {
+				rep.Action = "error"
+				rep.Error = "the in-flight rollback could not be resolved: " + rerr.Error()
+			}
+			report = append(report, rep)
+			continue
+		}
+		// A command still in flight means the device may be mid-write: never
+		// reverse a deploy that is still running.
+		if live, lerr := ipsecHasLiveCommand(db, st); lerr != nil {
+			rep.Action = "error"
+			rep.Error = "the in-flight commands could not be checked: " + lerr.Error()
+			report = append(report, rep)
+			continue
+		} else if live {
+			rep.Action = "in_flight"
+			rep.Error = "a deploy or rollback command is still in flight for this tunnel — retry once it settles"
+			report = append(report, rep)
+			continue
+		}
+		// Attempt a rollback: the live end is cleaned, the dead end is skipped.
+		ends, cmds, failReasons := ipsecPlanRollbackEnds(db, &m, st)
+		rep.SkippedEnds = skippedEndStates(ends)
+		if len(cmds) == 0 && len(failReasons) > 0 {
+			rep.Action = "needs_manual_cleanup"
+			rep.Error = strings.Join(failReasons, "; ")
+			manual++
+			report = append(report, rep)
+			continue
+		}
+		rbIDs := make([]string, 0, len(ends))
+		for _, e := range ends {
+			rbIDs = append(rbIDs, e.CommandID)
+		}
+		st.Rollback = &ipsec.RollbackState{
+			CommandIDs: rbIDs,
+			StartedAt:  time.Now().UTC().Format(time.RFC3339),
+			Ends:       ends,
+		}
+		blob, merr := json.Marshal(st)
+		if merr != nil {
+			rep.Action = "error"
+			rep.Error = "the rollback state could not be encoded: " + merr.Error()
+			report = append(report, rep)
+			continue
+		}
+		fromStatuses := []string{ipsecStatusDegraded, ipsecStatusUp, ipsecStatusDown, ipsecStatusError, ipsecStatusRollbackFailed, ipsecStatusDeploying}
+		terr := db.TransitionIPSecDeploy(m.ID, fromStatuses, ipsecStatusRollingBack, "bulk orphaned rollback", string(blob), false, cmds)
+		if terr != nil {
+			rep.Action = "error"
+			rep.Error = "the rollback could not be started: " + terr.Error()
+			report = append(report, rep)
+			continue
+		}
+		rep.Commands = rbIDs
+		rep.Status = ipsecStatusRollingBack
+		rep.Action = ipsecStatusRollingBack
+		if len(cmds) == 0 {
+			// Every end was dead → nothing to clean anywhere → resolved now.
+			rstatus, reason, _, rerr := db.ResolveIPSecRollback(m.ID)
+			rep.Status, rep.Action, rep.Error = rstatus, rstatus, reason
+			if rerr != nil {
+				rep.Action = "error"
+				rep.Error = "the rollback could not be resolved: " + rerr.Error()
+			}
+		}
+		if rep.Action == ipsecStatusRollingBack {
+			rollingBack++
+		}
+		report = append(report, rep)
+	}
+
+	// Forensic record: WHO rolled back WHICH orphaned set. Best-effort — a log
+	// failure never blocks the operator.
+	usernameVal, _ := c.Get("username")
+	userIDVal, _ := c.Get("user_id")
+	usernameStr, _ := usernameVal.(string)
+	userID, _ := userIDVal.(uint)
+	if err := db.SaveAuditLog(&models.AuditLog{
+		CreatedAt: time.Now(),
+		Actor:     usernameStr,
+		ActorID:   userID,
+		Method:    http.MethodPost,
+		Action:    "ipsec_bulk_rollback_orphaned",
+		Target:    fmt.Sprintf("tunnels=%d rolling_back=%d needs_manual_cleanup=%d", len(report), rollingBack, manual),
+		Status:    http.StatusOK,
+		IPAddress: c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}); err != nil {
+		log.Printf("ipsec-bulk-rollback: audit log write failed by %s: %v", usernameStr, err)
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"tunnels": report,
+		"summary": gin.H{
+			"orphans":              len(report),
+			"rolling_back":         rollingBack,
+			"needs_manual_cleanup": manual,
+		},
+	}))
+}
+
+// ipsecTunnelHasDeadEnd reports whether either end of a tunnel points at a
+// decommissioned device — retired (the row is kept) or purged (the row is
+// gone). Such a peer can never come up, so the tunnel is an orphan.
+func ipsecTunnelHasDeadEnd(m models.IPSecTunnel, states map[uint]database.DeviceLifecycle) bool {
+	for _, id := range []uint{m.ADeviceID, m.BDeviceID} {
+		if id == 0 {
+			continue
+		}
+		st, ok := states[id]
+		if !ok {
+			// Absent from the lifecycle map: the device row is gone (purged).
+			return true
+		}
+		if st == database.DeviceRetired {
+			return true
+		}
+	}
+	return false
 }
 
 // RecheckIPSecTunnel re-runs SA-liveness verification on an already-deployed
@@ -1856,11 +2133,11 @@ func (h *Handler) RecheckIPSecTunnel(c *gin.Context) {
 // ipsecBuildRemoveCmd builds the remove_ipsec command for one deployed end from
 // its stored RemoveSteps snapshot + captured-UUID substitutions (empty for
 // FortiGate). Shared by manual RollbackIPSecTunnel and the poll's auto-rollback.
-func ipsecBuildRemoveCmd(db database.Store, tunnelID uint, tunnelName string, e ipsec.DeployEndState) (*models.ProbeCommand, error) {
-	dev, derr := db.GetDevice(e.DeviceID)
-	if derr != nil {
-		return nil, fmt.Errorf("end %c device (id %d) not found — cannot roll back", 'A'+e.End, e.DeviceID)
-	}
+//
+// It takes the DEVICE (not the store): the caller has already resolved it and
+// classified it, so the lookup is not repeated — and the caller must be able to
+// tell "the device is gone" (skip) from "the device has no collector" (fail).
+func ipsecBuildRemoveCmd(dev *models.Device, tunnelID uint, tunnelName string, e ipsec.DeployEndState) (*models.ProbeCommand, error) {
 	if dev.ProbeID == nil || *dev.ProbeID == 0 {
 		return nil, fmt.Errorf("end %c (%s): device has no collector assigned", 'A'+e.End, dev.Name)
 	}
@@ -1895,6 +2172,88 @@ func ipsecBuildRemoveCmd(db database.Store, tunnelID uint, tunnelName string, e 
 		Type:      database.ProbeCommandTypeIPSecRemove,
 		Payload:   string(buf),
 	}, nil
+}
+
+// ipsecRollbackEndPlan is the classified outcome of ONE end's rollback.
+type ipsecRollbackEndPlan struct {
+	End      int
+	DeviceID uint
+	// Skipped marks an end whose device no longer exists (retired or purged).
+	// Nothing can clean a device that is not there, so this is NOT a failure.
+	Skipped    bool
+	SkipReason string
+	// FailReason marks an end that WAS attempted but could not be — a live
+	// device that genuinely cannot be cleaned. A real failure.
+	FailReason string
+	// Unproven marks a live OPNsense end whose apply outcome was never proven:
+	// its remove addresses the objects by the UUIDs the apply captured, so with
+	// no stored UUID every step is skipped and the report reads "applied: true"
+	// — a FALSE CLEAN. The device may still hold every object.
+	Unproven bool
+	Cmd      *models.ProbeCommand
+}
+
+// ipsecPlanRollbackEnd classifies what can be done for one deployed end.
+//
+// The IPSec subsystem has NO notion of a "retired" peer: a decommissioned
+// FortiGate is still a device row (soft-retired) or is gone entirely (purged),
+// and neither can be cleaned. Before this classification existed, the remove
+// command could not even be BUILT for such an end, and one unbuildable end
+// aborted the WHOLE rollback — so the live end (the OPNsense) never got
+// cleaned either, the tunnel stayed "provisioned" forever, and the phantom
+// peer was re-manufactured on every 5-minute telemetry cycle.
+//
+// The classification:
+//
+//   - the device row is GONE (purged) → SKIPPED: nothing can clean it;
+//   - the device is RETIRED → SKIPPED: it may still hold objects, and the
+//     reason says so explicitly;
+//   - the device is live but has no collector → HARD FAILURE for that end
+//     only (the other end is still cleaned);
+//   - a live OPNsense end with NO captured UUIDs → UNPROVEN;
+//   - otherwise → the remove command is built.
+func ipsecPlanRollbackEnd(db database.Store, m *models.IPSecTunnel, e ipsec.DeployEndState) ipsecRollbackEndPlan {
+	p := ipsecRollbackEndPlan{End: e.End, DeviceID: e.DeviceID}
+	dev, derr := db.GetDevice(e.DeviceID)
+	if derr != nil {
+		p.Skipped = true
+		p.SkipReason = fmt.Sprintf("end %c (id %d) no longer exists — nothing to clean", 'A'+e.End, e.DeviceID)
+		return p
+	}
+	if dev.RetiredAt != nil {
+		p.Skipped = true
+		p.SkipReason = fmt.Sprintf("end %c (%s) was retired on %s — its objects were NOT removed", 'A'+e.End, dev.Name, dev.RetiredAt.Format("2006-01-02"))
+		return p
+	}
+	if dev.ProbeID == nil || *dev.ProbeID == 0 {
+		p.FailReason = fmt.Sprintf("end %c (%s): device has no collector assigned — clean it manually", 'A'+e.End, dev.Name)
+		return p
+	}
+	// A live OPNsense end with no captured UUIDs: every <uuid:NAME> delete step
+	// is skipped by the collector and the report reads "applied: true". That is
+	// a false clean, so the end is marked unproven and the terminal forces
+	// rollback_failed with an explicit "verify manually" reason.
+	p.Unproven = e.Vendor == "opnsense" && len(e.CapturedUUIDs) == 0 && ipsecRemoveStepsUseUUID(e)
+	cmd, berr := ipsecBuildRemoveCmd(dev, m.ID, m.Name, e)
+	if berr != nil {
+		p.FailReason = fmt.Sprintf("end %c (%s): %v — clean it manually", 'A'+e.End, dev.Name, berr)
+		return p
+	}
+	p.Cmd = cmd
+	return p
+}
+
+// ipsecRemoveStepsUseUUID reports whether this end's remove snapshot addresses
+// device objects by a captured <uuid:NAME> token. Only those removes depend on
+// the apply's captured UUIDs, so only those can be a false clean when the
+// captures are missing.
+func ipsecRemoveStepsUseUUID(e ipsec.DeployEndState) bool {
+	for _, s := range e.RemoveSteps {
+		if strings.Contains(s.Path, "<uuid:") || strings.Contains(s.Body, "<uuid:") {
+			return true
+		}
+	}
+	return false
 }
 
 // ForceResetIPSecDeploy is the operator escape from a wedged deploy record: it
