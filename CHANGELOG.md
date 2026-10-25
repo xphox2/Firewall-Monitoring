@@ -1,6 +1,44 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.438] - 2026-10-24
+
+### Security — Drop forged SNMP traps before decoding them (D-18)
+
+- The trap receiver handed every UDP datagram to gosnmp's full BER decoder
+  (every varbind, OID and value) and only then rate-limited and compared the
+  community, so an unauthenticated flood paid the whole decode cost per
+  packet. The receiver now owns its socket and filters in cost order:
+  1. a header-only community check — the community is the second field of
+     the SNMPv1/v2c outer SEQUENCE, so it is compared (constant-time) without
+     touching the PDU. Forged datagrams stop here and never reach the
+     rate-limiter state, so a spoofed-source flood can no longer fill the
+     per-source map or drain the budget legitimate traps need;
+  2. the per-source token bucket (AUDIT-012);
+  3. a new receiver-wide cap (500/s, burst 1000) — the per-source limiter
+     alone admitted up to 100k datagrams/s spread over 10k sources;
+  4. the full decode (whose community must match the pre-check),
+     classification and the alert pipeline. INFORMs are still acknowledged.
+  Global-cap drops are counted as `reason="global"` in
+  `fwmon_trap_ratelimit_drops_total` and in the per-minute summary log;
+  pre-check rejections get their own counter,
+  `fwmon_trap_community_drops_total`, so a forged flood stays visible. A
+  decoder panic on a crafted body drops that datagram; a panic in the alert
+  pipeline is not swallowed.
+- `SNMP_TRAP_LISTEN` with a `tcp://` prefix (which gosnmp silently honoured)
+  is now a clear startup error — SNMP traps are UDP; use `host:port`.
+- Fixed: `Start()` blocked forever inside gosnmp's listener, so the
+  trap-receiver daemon never logged "listening", never ran the M25
+  cooldown prune or the LC-9 policy/maintenance refresh, and never reached
+  its graceful-shutdown path. `Start()` now binds the socket (a bind failure
+  is still a startup error) and runs the read loop in the background;
+  `Stop()` closes it and waits for the loop to exit.
+- The receive buffer is now 64 KiB (was gosnmp's 4 KiB), so a large
+  legitimate trap is no longer truncated into a decode error.
+  `TestTrapCommunity_Header`, `TestHandleDatagram_PrefilterOrder` and
+  `TestTrapReceiver_StartDoesNotBlock_EndToEnd` (real UDP: forged trap
+  dropped, INFORM acknowledged, `Stop` ends the loop) pin the behaviour.
+
 ## [0.11.437] - 2026-10-24
 
 ### Security — Probe registration approval window (D-26)

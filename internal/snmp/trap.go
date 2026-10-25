@@ -2,6 +2,7 @@ package snmp
 
 import (
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -37,13 +38,24 @@ var trapRateLimitDrops = prometheus.NewCounterVec(
 		Namespace: "fwmon",
 		Subsystem: "trap",
 		Name:      "ratelimit_drops_total",
-		Help:      "Trap datagrams dropped by the per-source rate limiter, by reason (rate = token exhaustion, cap = source-map full).",
+		Help:      "Trap datagrams dropped by the rate limiters, by reason (rate = per-source token exhaustion, cap = source-map full, global = receiver-wide cap).",
 	},
 	[]string{"reason"},
 )
 
+// trapCommunityDrops counts datagrams dropped by the D-18 header pre-check
+// (wrong community, malformed header, SNMPv3). They are deliberately kept out
+// of the rate limiters, so this is the only signal that a forged flood is
+// arriving.
+var trapCommunityDrops = prometheus.NewCounter(prometheus.CounterOpts{
+	Namespace: "fwmon",
+	Subsystem: "trap",
+	Name:      "community_drops_total",
+	Help:      "Trap datagrams dropped before decoding because the header was malformed, SNMPv3, or carried the wrong community.",
+})
+
 func init() {
-	prometheus.MustRegister(trapRateLimitDrops)
+	prometheus.MustRegister(trapRateLimitDrops, trapCommunityDrops)
 }
 
 // Standard IETF trap OIDs (RFC 3418)
@@ -85,8 +97,14 @@ type ipBucket struct {
 
 type TrapReceiver struct {
 	config  *config.Config
-	server  *gosnmp.TrapListener
 	handler func(*models.TrapEvent)
+
+	// D-18: the receiver owns its UDP socket so it can drop unauthenticated
+	// and over-rate datagrams before gosnmp's full BER decode. done is closed
+	// when the read loop exits.
+	conn     *net.UDPConn
+	done     chan struct{}
+	stopOnce sync.Once
 
 	// AUDIT-012: per-source-IP token-bucket rate limiter. Without it, an
 	// attacker who can reach UDP/162 can flood the listener with crafted
@@ -101,19 +119,48 @@ type TrapReceiver struct {
 	// operator-visible without one log write per flooded packet. Guarded by rlMu.
 	rlDropsRate   uint64
 	rlDropsCap    uint64
+	rlDropsGlobal uint64
 	rlLastDropLog time.Time
+
+	// D-18: receiver-wide token bucket, guarded by rlMu.
+	globalTokens float64
+	globalLast   time.Time
+	globalRate   float64
+	globalBurst  float64
 }
 
 func NewTrapReceiver(cfg *config.Config) (*TrapReceiver, error) {
-	trapListener := gosnmp.NewTrapListener()
-
 	return &TrapReceiver{
-		config:    cfg,
-		server:    trapListener,
-		rlBuckets: make(map[string]*ipBucket),
-		rlRate:    defaultTrapRatePerSec,
-		rlBurst:   defaultTrapBurst,
+		config:       cfg,
+		rlBuckets:    make(map[string]*ipBucket),
+		rlRate:       defaultTrapRatePerSec,
+		rlBurst:      defaultTrapBurst,
+		globalTokens: defaultTrapGlobalBurst,
+		globalRate:   defaultTrapGlobalRatePerSec,
+		globalBurst:  defaultTrapGlobalBurst,
 	}, nil
+}
+
+// allowGlobal consumes one token from the receiver-wide bucket (D-18).
+func (t *TrapReceiver) allowGlobal() bool {
+	t.rlMu.Lock()
+	defer t.rlMu.Unlock()
+	now := time.Now()
+	if !t.globalLast.IsZero() {
+		if elapsed := now.Sub(t.globalLast).Seconds(); elapsed > 0 {
+			t.globalTokens += elapsed * t.globalRate
+			if t.globalTokens > t.globalBurst {
+				t.globalTokens = t.globalBurst
+			}
+		}
+	}
+	t.globalLast = now
+	if t.globalTokens < 1 {
+		t.recordDropLocked("global", now)
+		return false
+	}
+	t.globalTokens--
+	return true
 }
 
 // allow consumes one token for the given source IP. Returns true if the
@@ -175,15 +222,18 @@ func (t *TrapReceiver) allow(ip string) bool {
 // into a log-volume DoS. Caller holds rlMu.
 func (t *TrapReceiver) recordDropLocked(reason string, now time.Time) {
 	trapRateLimitDrops.WithLabelValues(reason).Inc()
-	if reason == "cap" {
+	switch reason {
+	case "cap":
 		t.rlDropsCap++
-	} else {
+	case "global":
+		t.rlDropsGlobal++
+	default:
 		t.rlDropsRate++
 	}
 	if now.Sub(t.rlLastDropLog) >= time.Minute {
-		log.Printf("trap rate-limiter: dropped %d datagram(s) in the last interval (%d over per-source rate, %d new sources rejected at the %d-source cap) — legitimate traps may be lost during a flood; see fwmon_trap_ratelimit_drops_total",
-			t.rlDropsRate+t.rlDropsCap, t.rlDropsRate, t.rlDropsCap, maxRateLimitedIPs)
-		t.rlDropsRate, t.rlDropsCap = 0, 0
+		log.Printf("trap rate-limiter: dropped %d datagram(s) in the last interval (%d over per-source rate, %d new sources rejected at the %d-source cap, %d over the receiver-wide cap) — legitimate traps may be lost during a flood; see fwmon_trap_ratelimit_drops_total",
+			t.rlDropsRate+t.rlDropsCap+t.rlDropsGlobal, t.rlDropsRate, t.rlDropsCap, maxRateLimitedIPs, t.rlDropsGlobal)
+		t.rlDropsRate, t.rlDropsCap, t.rlDropsGlobal = 0, 0, 0
 		t.rlLastDropLog = now
 	}
 }
@@ -217,38 +267,133 @@ func (t *TrapReceiver) Start(handler func(*models.TrapEvent)) error {
 	}
 	t.handler = handler
 
-	expectedCommunity := []byte(t.config.SNMP.TrapCommunity)
-
-	t.server.OnNewTrap = func(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) {
-		// AUDIT-012: per-IP rate limit BEFORE crypto / parse so an
-		// attacker can't burn CPU even with bad packets.
-		if !t.allow(addr.IP.String()) {
-			return
-		}
-		// AUDIT-012: constant-time community check. The previous `!=`
-		// short-circuited byte-by-byte, leaking the prefix length of
-		// any guessed community to a network attacker. subtle.Constant
-		// TimeCompare returns 0 for differing lengths and compares all
-		// bytes of equal-length inputs without short-circuit.
-		if subtle.ConstantTimeCompare([]byte(packet.Community), expectedCommunity) != 1 {
-			return
-		}
-		trap := t.parseTrap(packet, addr)
-		if trap != nil && t.handler != nil {
-			t.handler(trap)
-		}
+	// gosnmp's listener also accepted a "tcp://" prefix; SNMP traps are UDP
+	// (RFC 3417) and this receiver only speaks UDP, so say so plainly.
+	listen := strings.TrimPrefix(t.config.SNMP.TrapListenAddr, "udp://")
+	if strings.Contains(listen, "://") {
+		return fmt.Errorf("SNMP_TRAP_LISTEN %q: only UDP is supported (use host:port)", t.config.SNMP.TrapListenAddr)
 	}
-
-	err := t.server.Listen(t.config.SNMP.TrapListenAddr)
+	addr, err := net.ResolveUDPAddr("udp", listen)
 	if err != nil {
 		return fmt.Errorf("failed to start trap listener: %w", err)
 	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to start trap listener: %w", err)
+	}
+	t.conn = conn
+	t.done = make(chan struct{})
 
+	// The socket is bound above so a bind failure is still a startup error;
+	// the read loop runs in the background. (gosnmp's Listen blocked forever,
+	// so the caller's post-Start work — the M25 cooldown prune, the LC-9
+	// policy refresh and the shutdown path — never ran.)
+	go t.readLoop([]byte(t.config.SNMP.TrapCommunity))
 	return nil
 }
 
+// trapReadBuf is the receive buffer: the largest UDP payload, so no datagram
+// is silently truncated into a decode error.
+const trapReadBuf = 65535
+
+func (t *TrapReceiver) readLoop(expectedCommunity []byte) {
+	defer close(t.done)
+	buf := make([]byte, trapReadBuf)
+	for {
+		n, addr, err := t.conn.ReadFromUDP(buf)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			log.Printf("trap receiver: read error: %v", err)
+			continue
+		}
+		if resp := t.handleDatagram(buf[:n], addr, expectedCommunity); resp != nil {
+			if _, err := t.conn.WriteToUDP(resp, addr); err != nil {
+				log.Printf("trap receiver: inform response to %s: %v", addr.IP, err)
+			}
+		}
+	}
+}
+
+// handleDatagram runs one datagram through the D-18 filter order — each
+// stage cheaper than the next, so a flood is shed as early as possible:
+//
+//  1. community pre-check on the raw header (no PDU decode). Unauthenticated
+//     datagrams stop here and never touch the rate-limiter state, so a
+//     spoofed-source flood cannot fill the per-IP map or drain the global
+//     budget that legitimate traps need;
+//  2. per-source token bucket (AUDIT-012);
+//  3. receiver-wide token bucket;
+//  4. full gosnmp decode, classification and the handler.
+//
+// It returns the response to send for an InformRequest, else nil.
+func (t *TrapReceiver) handleDatagram(msg []byte, addr *net.UDPAddr, expectedCommunity []byte) []byte {
+	// AUDIT-012: constant-time community check. subtle.ConstantTimeCompare
+	// returns 0 for differing lengths and compares all bytes of equal-length
+	// inputs without short-circuit, so it leaks no prefix length.
+	community, ok := trapCommunity(msg)
+	if !ok || subtle.ConstantTimeCompare(community, expectedCommunity) != 1 {
+		trapCommunityDrops.Inc()
+		return nil
+	}
+	if !t.allow(addr.IP.String()) || !t.allowGlobal() {
+		return nil
+	}
+
+	// The decoded packet's OctetString values alias the datagram, and the read
+	// loop reuses its buffer for the next one: decode a private copy, so
+	// nothing derived from this trap can change under a later read.
+	packet, err := decodeTrap(append([]byte(nil), msg...))
+	if err != nil {
+		return nil
+	}
+	// The decoder must agree with the pre-check; anything else is a crafted
+	// header and is dropped.
+	if subtle.ConstantTimeCompare([]byte(packet.Community), expectedCommunity) != 1 {
+		return nil
+	}
+	if trap := t.parseTrap(packet, addr); trap != nil && t.handler != nil {
+		t.handler(trap)
+	}
+	if packet.PDUType == gosnmp.InformRequest {
+		// RFC 3416 4.2.7: acknowledge with the same varbinds, noError.
+		packet.PDUType = gosnmp.GetResponse
+		packet.Error = gosnmp.NoError
+		packet.ErrorIndex = 0
+		out, err := packet.MarshalMsg()
+		if err != nil {
+			return nil
+		}
+		return out
+	}
+	return nil
+}
+
+// decodeTrap runs gosnmp's full decoder on an authenticated datagram. The
+// recover covers only the decoder — a crafted body must not kill the
+// receiver — so a panic in the alert handler still surfaces as a crash
+// instead of being mislabelled as a malformed packet.
+func decodeTrap(msg []byte) (packet *gosnmp.SnmpPacket, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			packet, err = nil, fmt.Errorf("trap decode panic: %v", r)
+		}
+	}()
+	return gosnmp.Default.UnmarshalTrap(msg, false)
+}
+
 func (t *TrapReceiver) Stop() {
-	t.server.Close()
+	t.stopOnce.Do(func() {
+		if t.conn == nil {
+			return
+		}
+		t.conn.Close()
+		select {
+		case <-t.done:
+		case <-time.After(3 * time.Second):
+		}
+	})
 }
 
 func (t *TrapReceiver) parseTrap(packet *gosnmp.SnmpPacket, addr *net.UDPAddr) *models.TrapEvent {
