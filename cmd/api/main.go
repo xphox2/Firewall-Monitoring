@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.443"
+const ServerVersion = "0.11.444"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -950,6 +950,10 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 			"/admin/api/ipsec/tunnels/:id/rollback":     true,
 			"/admin/api/ipsec/tunnels/:id/recheck":      true,
 			"/admin/api/ipsec/tunnels/:id/deploy/reset": true,
+			// The device-side discovery probe reads the device's API with the
+			// stored credentials and reports what it finds — admin-only, like
+			// the rollback it feeds.
+			"/admin/api/ipsec/tunnels/:id/discover": true,
 			// The bulk orphaned-rollback endpoint removes configuration from
 			// live devices across every tunnel — same class as the per-tunnel
 			// rollback (and it carries credential material into the collector),
@@ -1194,6 +1198,12 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		admin.POST("/api/ipsec/tunnels/:id/deploy", handler.DeployIPSecTunnel)
 		admin.GET("/api/ipsec/tunnels/:id/deploy", handler.GetIPSecDeployResult)
 		admin.POST("/api/ipsec/tunnels/:id/rollback", handler.RollbackIPSecTunnel)
+		// Device-side discovery: a READ-ONLY probe that asks the device where
+		// this tunnel's objects are, so a rollback can address them by uuid
+		// even when the apply's captured uuids are gone. It changes nothing on
+		// the device; the report is the operator's review before the removal.
+		admin.POST("/api/ipsec/tunnels/:id/discover", handler.DiscoverIPSecTunnel)
+		admin.GET("/api/ipsec/tunnels/:id/discover", handler.GetIPSecDiscovery)
 		// Bulk cleanup of the orphaned set: every tunnel whose far end is a
 		// decommissioned device (retired or purged). The live end is rolled
 		// back, the dead end is skipped with its reason, and a tunnel the

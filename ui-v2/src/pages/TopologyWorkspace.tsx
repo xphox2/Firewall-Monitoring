@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ArrowRight,
   Undo2,
+  Search,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
@@ -658,6 +659,30 @@ const IPSEC_ROLLBACKABLE = new Set([
 // IPSEC_ROLLBACK_TERMINAL: the two statuses a rollback can settle on.
 const IPSEC_ROLLBACK_TERMINAL = new Set(['rolled_back', 'rollback_failed']);
 
+// A discovered object: one of the tunnel's objects the DEVICE reported, with
+// the uuid the removal will address it by.
+interface IPSecDiscoveredObject {
+  token: string;
+  object_type: string;
+  uuid: string;
+  description: string;
+  matched?: Record<string, string>;
+  unverified?: string[];
+}
+
+// The discovery report: what the device holds for this tunnel. It is the
+// operator's review BEFORE anything is removed.
+interface IPSecDiscoveryReport {
+  tunnel_id: number;
+  end: number;
+  status: 'none' | 'pending' | 'complete' | 'failed';
+  found: IPSecDiscoveredObject[];
+  unresolved: string[];
+  unsearched?: string[];
+  captures: Record<string, string>;
+  note?: string;
+}
+
 function ipsecTunnelStatus(t: IPSecTunnelIntent): string {
   return (t.status || t.deploy_state || 'draft').toLowerCase();
 }
@@ -737,6 +762,55 @@ function IpsecTunnelsSubTab() {
     },
   });
 
+  // Find the tunnel's objects ON THE DEVICE. The removal addresses them by
+  // their device-assigned uuid, and those uuids come from the apply's
+  // response — which may be long gone. This asks the device instead, and shows
+  // what it holds BEFORE anything is removed.
+  const [discovery, setDiscovery] = useState<IPSecDiscoveryReport | null>(null);
+  const discoverMutation = useMutation({
+    mutationFn: async (tunnel: IPSecTunnelIntent) => {
+      await apiFetch(`/admin/api/ipsec/tunnels/${tunnel.id}/discover`, { method: 'POST' });
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const rep = await apiFetch<IPSecDiscoveryReport>(
+          `/admin/api/ipsec/tunnels/${tunnel.id}/discover`,
+        );
+        if (rep?.status && rep.status !== 'pending') return rep;
+      }
+      return null;
+    },
+    onSuccess: (rep, tunnel) => {
+      if (!rep) {
+        toast({
+          title: `The device did not answer for ${tunnel.name}`,
+          description: 'The probe is still running — try again in a moment.',
+          variant: 'warning',
+        });
+        return;
+      }
+      setDiscovery(rep);
+      if (rep.status === 'failed') {
+        toast({
+          title: `The device could not be searched for ${tunnel.name}`,
+          description: rep.note,
+          variant: 'error',
+        });
+        return;
+      }
+      toast({
+        title:
+          rep.found.length > 0
+            ? `Found ${rep.found.length} object(s) for ${tunnel.name} on the device`
+            : `The device reports no object for ${tunnel.name}`,
+        description: rep.note,
+        variant: rep.found.length > 0 ? 'success' : 'info',
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: 'The device search failed', description: err.message, variant: 'error' });
+    },
+  });
+
   const loadPreview = async (tunnel: IPSecTunnelIntent) => {
     setSelectedTunnel(tunnel);
     // Clear the previous tunnel's render so the drawer cannot show it under the
@@ -810,6 +884,16 @@ function IpsecTunnelsSubTab() {
             {IPSEC_ROLLBACKABLE.has(ipsecTunnelStatus(row.original)) && (
               <button
                 type="button"
+                onClick={() => discoverMutation.mutate(row.original)}
+                className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text"
+                title="Ask the device where this tunnel's objects are (read-only)"
+              >
+                <Search className="h-3 w-3" /> Find on device
+              </button>
+            )}
+            {IPSEC_ROLLBACKABLE.has(ipsecTunnelStatus(row.original)) && (
+              <button
+                type="button"
                 onClick={() => setTunnelToRollback(row.original)}
                 className="flex items-center gap-1 rounded border border-sig-warn/40 bg-sig-warn/10 px-2 py-1 text-[11px] font-semibold text-sig-warn"
                 title="Remove the deployed configuration from the devices"
@@ -851,6 +935,46 @@ function IpsecTunnelsSubTab() {
           </div>
         )}
       />
+
+      {discovery && discovery.found.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-card p-3.5">
+          <div className="text-[11px] uppercase tracking-wide text-text-dim">
+            On the device — tunnel #{discovery.tunnel_id}, end {discovery.end === 0 ? 'A' : 'B'}
+          </div>
+          <p className="mt-1 text-[11px] text-text-dim">
+            These objects carry this tunnel's name. Rolling back removes them by the uuid below.
+          </p>
+          <ul className="mt-2 space-y-1 text-[11px]">
+            {discovery.found.map((o) => (
+              <li key={`${o.token}-${o.uuid}`} className="flex flex-wrap items-baseline gap-2">
+                <span className="rounded bg-bg-panel px-1.5 py-0.5 font-mono text-[10px] uppercase text-text-dim">
+                  {o.object_type}
+                </span>
+                <span className="font-mono text-text">{o.uuid}</span>
+                <span className="font-mono text-text-dim">{o.description}</span>
+                {o.unverified && o.unverified.length > 0 && (
+                  <span className="text-sig-warn">
+                    not confirmed by: {o.unverified.join(', ')}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {discovery.unresolved.length > 0 && (
+            <p className="mt-2 text-[11px] text-sig-warn">
+              Not located on the device: {discovery.unresolved.join(', ')} — those objects were not
+              found, so they cannot be removed by uuid.
+            </p>
+          )}
+          {discovery.unsearched && discovery.unsearched.length > 0 && (
+            <p className="mt-1 text-[11px] text-sig-crit">
+              Not searched: {discovery.unsearched.join(', ')} — the device did not answer for those,
+              so their absence is not proven.
+            </p>
+          )}
+          {discovery.note && <p className="mt-1 text-[11px] text-text-faint">{discovery.note}</p>}
+        </div>
+      )}
 
       <SlideOverDrawer
         open={Boolean(selectedTunnel)}

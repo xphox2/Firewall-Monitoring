@@ -574,6 +574,7 @@ func TestBulkRollbackOrphaned_ReportsPerTunnel(t *testing.T) {
 	live := makeOpnsenseDevice(t, db, probe.ID, "198.51.100.7")
 	orphanID := createTunnelRow(t, db, "fortigate", "opnsense", orphan.ID, live.ID, 1)
 	deployAndSettle(t, h, db, orphanID, "up")
+	captureUUIDs(t, db, orphanID, 1, map[string]string{"conn": "uuid-conn"})
 	if err := db.RetireDevice(orphan.ID); err != nil {
 		t.Fatalf("retire peer: %v", err)
 	}

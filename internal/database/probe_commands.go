@@ -1,6 +1,7 @@
 package database
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -305,6 +306,92 @@ func probeCommandResultCap(cmdType string) int {
 // parse for a reason that has nothing to do with the device.
 func ProbeCommandResultTruncated(result string) bool {
 	return strings.HasSuffix(result, probeCommandTruncatedMarker)
+}
+
+// RedactProbeCommandResult removes a device document's SECRET fields before
+// the document is persisted.
+//
+// The command result column is NOT encrypted, so a device document that
+// carries a secret must never reach the database in the clear. The OPNsense
+// pre-shared-key search is the case that matters: its rows carry the key
+// itself ("Key"), alongside the key's identifiers ("ident" / "remote_ident").
+//
+// The shape is precise: an object carrying BOTH "ident" and "remote_ident" IS
+// a pre-shared key, and its "Key" field is the secret. Nothing else in an
+// OPNsense document has that shape, so the redaction cannot touch ordinary
+// device data.
+//
+// Defence in depth: the redaction happens BEFORE the write, so the secret is
+// never persisted — not even briefly. A body that is not JSON, or that has no
+// such object, is returned unchanged.
+func RedactProbeCommandResult(result string) string {
+	// Cheap pre-filter: a document with no "Key" at all cannot hold a
+	// pre-shared key. (The field name may arrive escaped, inside a nested
+	// document, so this is a loose test — the walk below is the real check.)
+	if !strings.Contains(result, "Key") {
+		return result
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(result), &doc); err != nil {
+		return result
+	}
+	if !redactDeviceSecrets(doc) {
+		return result
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return result
+	}
+	return string(out)
+}
+
+// redactDeviceSecrets walks a decoded device document and blanks the "Key"
+// field of every pre-shared-key object. It reports whether it changed
+// anything.
+//
+// A device document often arrives NESTED inside the report — the collector's
+// step body is a JSON document carried as a string — so a string value that
+// itself parses as JSON is redacted inside and re-encoded.
+func redactDeviceSecrets(node any) bool {
+	changed := false
+	switch v := node.(type) {
+	case map[string]any:
+		if _, hasIdent := v["ident"]; hasIdent {
+			if _, hasRemote := v["remote_ident"]; hasRemote {
+				if _, hasKey := v["Key"]; hasKey {
+					v["Key"] = ""
+					changed = true
+				}
+			}
+		}
+		for key, child := range v {
+			if s, ok := child.(string); ok {
+				var inner any
+				if err := json.Unmarshal([]byte(s), &inner); err != nil {
+					continue // not a nested document
+				}
+				if redactDeviceSecrets(inner) {
+					out, merr := json.Marshal(inner)
+					if merr != nil {
+						continue
+					}
+					v[key] = string(out)
+					changed = true
+				}
+				continue
+			}
+			if redactDeviceSecrets(child) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if redactDeviceSecrets(child) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 func (d *Database) CompleteProbeCommand(probeID uint, commandID, status, result string) (cmd models.ProbeCommand, applied bool, err error) {

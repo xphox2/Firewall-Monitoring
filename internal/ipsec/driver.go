@@ -287,6 +287,48 @@ type VendorDriver interface {
 	Advisories(v RenderView, bodies map[string]string) []Advisory
 }
 
+// Discoverer is implemented by the vendors whose objects can be LOCATED on the
+// device by owner tag.
+//
+// It exists for the vendors whose remove addresses objects by their
+// device-assigned UUID (OPNsense). When the server has lost those UUIDs — the
+// apply command's result was pruned, or the apply never reported — the only
+// way to clean the device is to ASK the device what it holds.
+//
+// FortiGate deliberately does NOT implement it: its remove is self-proving
+// (GET-before-DELETE by the deterministic mkey), so it never needed a UUID in
+// the first place and there is nothing to discover.
+type Discoverer interface {
+	// Discovery returns the READ-ONLY searches that find this tunnel's objects
+	// on the device, with the fields that identify them.
+	Discovery(v RenderView) []DiscoverStep
+}
+
+// DiscoverStep is one read-only search that locates a tunnel's objects on the
+// device.
+//
+// The device is the source of truth here: the server may have lost the UUIDs
+// the apply captured, while the objects are still on the box. Every object the
+// deploy created carries the tunnel's NAME as its description (the owner tag
+// the apply wrote), so a search by owner tag finds them.
+//
+// Match are the ADDITIONAL fields that must equal the tunnel's expected
+// values — the exact description PLUS the selectors. A foreign object that
+// happens to share the name is not ours.
+type DiscoverStep struct {
+	// Token is the capture name this search resolves ("conn", "psk",
+	// "rule_out_0"). It matches the <uuid:NAME> tokens in the remove steps, so
+	// a discovered uuid drops straight into the removal.
+	Token string `json:"token"`
+	// ObjectType labels the object kind in the operator's report.
+	ObjectType string `json:"object_type"`
+	// Path is the read-only GET endpoint to search.
+	Path string `json:"path"`
+	// Match are the row fields that must equal these values, beyond the
+	// description (which always matches the tunnel's name).
+	Match map[string]string `json:"match,omitempty"`
+}
+
 // PreflightStep is one read-only check the collector performs before a deploy.
 // Check names the semantic (auth / phase1 / phase2 / vti / connection) so the
 // collector can turn the raw GET result into a structured finding; ExpectAbsent

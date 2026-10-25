@@ -11,6 +11,17 @@ type DeployState struct {
 	DeployedAt string           `json:"deployed_at,omitempty"`
 	Ends       []DeployEndState `json:"ends"`
 	Rollback   *RollbackState   `json:"rollback,omitempty"`
+	// DiscoveryCommandID is the READ-ONLY probe that located (or is locating)
+	// this tunnel's objects on the device.
+	//
+	// It exists for the vendors whose removal deletes objects by their
+	// device-assigned UUID (OPNsense): when the apply's captured UUIDs are
+	// gone, the only way to clean the device is to ASK the device what it
+	// holds. The probe changes nothing — it only tells the server which UUIDs
+	// the objects have, so the removal can address them.
+	DiscoveryCommandID string `json:"discovery_command_id,omitempty"`
+	// DiscoveryEnd is the deploy end the discovery probe looked up on.
+	DiscoveryEnd int `json:"discovery_end,omitempty"`
 }
 
 // DeployEndState records one deployed end: the apply command sent to its

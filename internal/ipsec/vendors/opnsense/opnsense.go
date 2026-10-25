@@ -246,6 +246,87 @@ func (d driver) RenderRemove(v ipsec.RenderView) (ipsec.Artifact, error) {
 	}, nil
 }
 
+// Discovery returns the READ-ONLY searches that locate this tunnel's objects
+// on the device.
+//
+// WHY it exists: the OPNsense removal deletes objects BY THEIR DEVICE-ASSIGNED
+// UUID, and those UUIDs come from the apply's response. When the server has
+// lost them (the apply command's result was pruned, or the apply never
+// reported), the only way to clean the device is to ASK the device what it
+// holds. Every object the deploy created carries the tunnel's NAME as its
+// description — the owner tag the apply wrote — so a search by owner tag finds
+// them; Match adds the selectors, so a foreign object that happens to share
+// the name is not ours.
+//
+// THE CONNECTION IS THE ANCHOR: OPNsense's delConnection CASCADES to the
+// connection's local/remote auths and child SAs (they reference it by their
+// `connection` field, and the controller deletes them with it). Locating the
+// connection is therefore enough to remove the whole IPsec footprint, so the
+// local/remote/child uuids are deliberately NOT searched for: the driver's
+// own delete steps for them are skipped and the cascade does the work.
+//
+// The pre-shared key IS searched for: it is a separate top-level model, so the
+// cascade does not reach it. Its search document carries the key itself, so the
+// server redacts that field before the document is persisted.
+func (d driver) Discovery(v ipsec.RenderView) []ipsec.DiscoverStep {
+	in := v.Intent
+	local, remote := v.Local(), v.Remote()
+
+	// The connection's own selectors, computed EXACTLY as Render computes them:
+	// a dynamic end has no reachable static address and leaves the field empty
+	// (strongSwan reads an empty address as %any).
+	localAddr := local.PeerIP
+	if local.Dynamic {
+		localAddr = ""
+	}
+	remoteAddr := remote.PeerIP
+	if remote.Dynamic {
+		remoteAddr = ""
+	}
+	connMatch := map[string]string{}
+	if localAddr != "" {
+		connMatch["local_addrs"] = localAddr
+	}
+	if remoteAddr != "" {
+		connMatch["remote_addrs"] = remoteAddr
+	}
+	connMatch["version"] = ikeVersion(in.IKEVersion)
+
+	steps := []ipsec.DiscoverStep{{
+		Token:      nameConn,
+		ObjectType: "connection",
+		Path:       epConnSearch,
+		Match:      connMatch,
+	}, {
+		Token:      namePSK,
+		ObjectType: "pre_shared_key",
+		Path:       epPSKSearch,
+		Match: map[string]string{
+			"ident":        local.LocalID.Value,
+			"remote_ident": remote.LocalID.Value,
+		},
+	}}
+	// The floating firewall rules — one per (local, remote) pair per direction.
+	// Their selectors are the subnet pair, which is what makes a rule with our
+	// name but someone else's subnets distinguishable from ours.
+	//
+	// The search phrase mirrors the deploy's own collision anchor (a
+	// rule-heavy box returns thousands of rules, and the phrase narrows the
+	// answer to ours before the exact match is applied).
+	for _, sp := range fwRuleSpecs(in, v.Self) {
+		steps = append(steps, ipsec.DiscoverStep{
+			Token:      sp.capture,
+			ObjectType: "firewall_rule",
+			Path:       epRuleSearch + "?searchPhrase=" + in.Name,
+			Match: map[string]string{
+				"source_net":      sp.src,
+				"destination_net": sp.dst,
+			},
+		})
+	}
+	return steps
+}
+
 func (d driver) StatusProbe(v ipsec.RenderView) []ipsec.ProbeStep {
 	return []ipsec.ProbeStep{{Kind: ipsec.StepHTTPAPI, Method: "GET", Path: "/api/ipsec/sessions/searchPhase1"}}
 }
