@@ -22,14 +22,14 @@ func seedConnectionWithSecrets(t *testing.T, h *Handler) (conn *models.DeviceCon
 	src := &models.Device{
 		Name:          "fw-a",
 		IPAddress:     "192.168.105.1",
-		SNMPCommunity: db.EncryptField("snmp-secret-a"),
-		SSHPassword:   db.EncryptField("ssh-secret-a"),
+		SNMPCommunity: mustEncryptField(t, db, "snmp-secret-a"),
+		SSHPassword:   mustEncryptField(t, db, "ssh-secret-a"),
 	}
 	dst := &models.Device{
 		Name:          "fw-b",
 		IPAddress:     "192.168.105.2",
-		SNMPCommunity: db.EncryptField("snmp-secret-b"),
-		SSHPassword:   db.EncryptField("ssh-secret-b"),
+		SNMPCommunity: mustEncryptField(t, db, "snmp-secret-b"),
+		SSHPassword:   mustEncryptField(t, db, "ssh-secret-b"),
 	}
 	for _, d := range []*models.Device{src, dst} {
 		if err := db.Gorm().Create(d).Error; err != nil {

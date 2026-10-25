@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.440] - 2026-10-24
+
+### Security — Fail-closed field encryption and HKDF key derivation (D-12, D-11)
+
+- **Field encryption now fails closed (D-12).** Before this change, `encryptField` returned the *plaintext* when the key was missing or the AES / GCM / random-nonce step failed, so a secret could end up stored in cleartext. `EncryptField` now returns `(string, error)`, and `EncryptDeviceSecrets` / `EncryptIRCServerSecrets` / `EncryptIRCChannelSecrets` return `error`. They are all-or-nothing, so a struct is never left half-encrypted. Every write path aborts on that error: the device create/update, IRC server/channel create/update, settings save and 2FA setup handlers answer 500, and `CreateDevice` / `UpdateDevice` / `CreateIPSecTunnel` / `UpdateIPSecTunnel` / `EnqueueProbeCommand` / `SaveArchiveSettings` return the error. Nothing is stored in any of these cases.
+- **Keyless plaintext passthrough is now limited to the test harnesses.** Only `NewDatabaseForTesting` and the PG integration harness set it, through an explicit `keylessPassthrough` flag. A production `Database` without a key refuses to store secrets. Production always has a key because config requires `JWT_SECRET_KEY`.
+- **The startup backfill (`migrateEncryptSecrets`) skips a row it cannot encrypt.** It logs the row and column, never the value, and never writes plaintext or a blank.
+- **`UpdateDevice` now encrypts device credentials before its full-row `Save`.** It previously wrote whatever the struct held. No production caller used it, but it was a latent plaintext path.
+- **New secrets use an HKDF-derived key and a new `{enc2}` prefix (D-11).** The AES-256 key for new encryptions is `HKDF-SHA256(secret, info="fwmon-field-encryption-v2")` instead of `sha256(secret)`. This separates it from the secret that, on the `JWT_SECRET_KEY` fallback, also signs login tokens. New ciphertext is written as `{enc2}<base64>`.
+- **Existing `{enc}` data needs no operator action.** On read, `{enc}` values are decrypted with the legacy `sha256` key of every key-chain entry (`ENCRYPTION_KEY` plus `ENCRYPTION_KEY_HISTORY`), and `{enc2}` values with the HKDF key of every entry. Existing rows are **not** re-encrypted at startup; they move to `{enc2}` only when an admin saves them again.
+- **Every "already encrypted?" check recognises both prefixes.** These checks now go through `database.IsEncryptedValue`: the double-encrypt guard, the startup backfill, and the archive-settings rule that rejects a ciphertext-looking secret. Note that `{enc2}` does not start with `{enc}`.
+- **The encryption key canary is still written in the legacy `{enc}` format.** A rolled-back binary can therefore still verify its key, instead of crash-looping poller/trap on a canary it cannot read.
+- **Rollback note:** a binary older than this release cannot read `{enc2}` values. It treats them as plaintext and would send the raw `{enc2}<base64>` string as the SNMP/SSH/SMTP/IRC/API credential. After a rollback, re-enter every secret that was saved (created or edited) since the upgrade. Secrets not touched since the upgrade stay `{enc}` and keep working on the older binary. An older binary's startup backfill may wrap `{enc2}` SNMP/IRC/settings values as `{enc}({enc2}…)`. Upgrading again recovers those automatically, because the read path unwraps that one level.
+
 ## [0.11.439] - 2026-10-24
 
 ### Security — Bound the archive Head hash of a sidecarless object (D-37)

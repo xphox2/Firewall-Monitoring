@@ -31,7 +31,7 @@ func TestArchiveSettings_PG(t *testing.T) {
 	if err := d.db.Raw(`SELECT value FROM system_settings WHERE "key" = ?`, ArchiveSecretSettingKey).Scan(&stored).Error; err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stored, "{enc}") || strings.Contains(stored, "fake-ui-secret") {
+	if !strings.HasPrefix(stored, enc2Prefix) || strings.Contains(stored, "fake-ui-secret") {
 		t.Fatalf("secret stored as %q", stored)
 	}
 	res, err := d.ResolveArchiveConfig(ctx, env)

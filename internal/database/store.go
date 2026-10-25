@@ -591,11 +591,13 @@ type AuditStore interface {
 // SecretStore covers the field-level encrypt/decrypt helpers handlers use when
 // echoing or storing device/IRC credentials.
 type SecretStore interface {
-	EncryptField(plaintext string) string
+	// EncryptField / Encrypt*Secrets fail closed (D-12): on error the caller
+	// must abort the write — a secret is never stored as plaintext.
+	EncryptField(plaintext string) (string, error)
 	DecryptField(ciphertext string) string
-	EncryptIRCChannelSecrets(ch *models.IRCChannel)
+	EncryptIRCChannelSecrets(ch *models.IRCChannel) error
 	DecryptIRCChannelSecrets(ch *models.IRCChannel)
-	EncryptIRCServerSecrets(s *models.IRCServer)
+	EncryptIRCServerSecrets(s *models.IRCServer) error
 	DecryptIRCServerSecrets(s *models.IRCServer)
 }
 

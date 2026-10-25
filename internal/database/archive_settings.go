@@ -123,7 +123,7 @@ func (d *Database) ArchiveTableHasChunks(ctx context.Context, table string) (boo
 
 // CanEncryptSettings reports whether this server has an encryption key, so a
 // secret setting is stored encrypted rather than as plaintext.
-func (d *Database) CanEncryptSettings() bool { return len(d.encKeys.current) > 0 }
+func (d *Database) CanEncryptSettings() bool { return len(d.encKeys.current.v2) > 0 }
 
 // SaveArchiveSettings applies one admin save in a single transaction: set
 // stores ARCHIVE_* key → value (the secret encrypted), revert deletes the
@@ -145,7 +145,11 @@ func (d *Database) SaveArchiveSettings(ctx context.Context, set map[string]strin
 			row.Value, row.Type, row.Category = v, f.Kind, "archive"
 			row.Label = "Raw archive: " + f.Env + " (admin setting; the environment value is the default)"
 			if f.Kind == config.ArchiveKindSecret {
-				row.Value, row.IsSecret = d.EncryptField(v), true
+				ct, err := d.EncryptField(v)
+				if err != nil {
+					return fmt.Errorf("encrypt %s: %w", f.Setting(), err)
+				}
+				row.Value, row.IsSecret = ct, true
 			}
 			if err := tx.Save(&row).Error; err != nil {
 				return fmt.Errorf("save %s: %w", f.Setting(), err)

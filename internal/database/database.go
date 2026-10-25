@@ -23,11 +23,15 @@ import (
 )
 
 type Database struct {
-	db        *gorm.DB
-	encKeys   keyChain
-	dialect   Dialect
-	trapBatch *BatchInserter[models.TrapEvent]
-	pingBatch *BatchInserter[models.PingResult]
+	db      *gorm.DB
+	encKeys keyChain
+	// keylessPassthrough lets EncryptField store plaintext when no key is
+	// configured. ONLY the SQLite test harness (NewDatabaseForTesting) sets
+	// it; any other keyless Database refuses to store secrets (D-12).
+	keylessPassthrough bool
+	dialect            Dialect
+	trapBatch          *BatchInserter[models.TrapEvent]
+	pingBatch          *BatchInserter[models.PingResult]
 	// pgxPool is the dedicated *pgxpool.Pool used for high-throughput bulk
 	// inserts via the COPY protocol (SaveFlowSamples on the hot path). It is
 	// nil on the SQLite test backend (NewDatabaseForTesting) and on any
@@ -220,38 +224,40 @@ func Connect(cfg *config.Config) (*Database, error) {
 	dial = postgresDialect{}
 	log.Printf("Database: connected to PostgreSQL at %s:%d/%s", cfg.Database.Host, cfg.Database.Port, cfg.Database.Name)
 
-	var encKey []byte
+	// The configured secret; both key derivations (legacy sha256 for {enc},
+	// HKDF for {enc2} — crypto.go) are made from it by newKeyChain.
+	var encSecret string
 	if cfg.Server.EncryptionKey != "" {
-		encKey = deriveKey(cfg.Server.EncryptionKey)
+		encSecret = cfg.Server.EncryptionKey
 	} else if cfg.Server.JWTSecretKey != "" {
 		log.Println("WARNING: ENCRYPTION_KEY not set — falling back to JWT secret for database encryption. To use a separate key, set ENCRYPTION_KEY to the SAME value as JWT_SECRET_KEY first, then rotate it.")
-		encKey = deriveKey(cfg.Server.JWTSecretKey)
+		encSecret = cfg.Server.JWTSecretKey
 	}
 
 	// AUDIT-009: load any legacy keys for decrypt-only fallback. Comma-
 	// separated list in ENCRYPTION_KEY_HISTORY env, ordered newest-historical
 	// first. Encrypt always uses the current key; decrypt tries current
-	// first then each legacy key. Operators rotate by:
+	// first then each legacy key, for both the {enc} and {enc2} formats.
+	// Operators rotate by:
 	//   1. Set new value of ENCRYPTION_KEY.
 	//   2. Move the previous ENCRYPTION_KEY value into ENCRYPTION_KEY_HISTORY.
 	//   3. Restart — new writes use the new key, old reads fall through.
 	//   4. (Optional) run a re-encryption migration to re-save every
-	//      {enc} row under the new key, then drop the entry from
+	//      encrypted row under the new key, then drop the entry from
 	//      ENCRYPTION_KEY_HISTORY.
-	var legacyKeys [][]byte
-	if history := os.Getenv("ENCRYPTION_KEY_HISTORY"); history != "" {
-		for _, k := range strings.Split(history, ",") {
-			k = strings.TrimSpace(k)
-			if k != "" {
-				legacyKeys = append(legacyKeys, deriveKey(k))
+	var history []string
+	if h := os.Getenv("ENCRYPTION_KEY_HISTORY"); h != "" {
+		for _, k := range strings.Split(h, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				history = append(history, k)
 			}
 		}
-		if len(legacyKeys) > 0 {
-			log.Printf("Loaded %d legacy decryption key(s) from ENCRYPTION_KEY_HISTORY", len(legacyKeys))
+		if len(history) > 0 {
+			log.Printf("Loaded %d legacy decryption key(s) from ENCRYPTION_KEY_HISTORY", len(history))
 		}
 	}
 
-	d := &Database{db: db, encKeys: keyChain{current: encKey, legacy: legacyKeys}, dialect: dial, archiveHold: &archiveHoldState{}, archiveGateCache: &archiveGateCacheState{},
+	d := &Database{db: db, encKeys: newKeyChain(encSecret, history), dialect: dial, archiveHold: &archiveHoldState{}, archiveGateCache: &archiveGateCacheState{},
 		// The daily net_events leaves are created as far back as retention
 		// reaches (partitionLookbackDays), so EnsurePartitions needs the window
 		// CleanupOldData will use — recorded here once, from the same config.

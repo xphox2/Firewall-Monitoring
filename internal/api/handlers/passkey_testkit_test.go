@@ -150,7 +150,7 @@ func (e *pkEnv) createUser(name, role string, withTOTP bool) *models.Admin {
 		e.t.Fatalf("CreateAdmin: %v", err)
 	}
 	if withTOTP {
-		if err := e.db.SetAdminTOTP(a.ID, e.db.EncryptField(pkTestSecret), true); err != nil {
+		if err := e.db.SetAdminTOTP(a.ID, mustEncryptField(e.t, e.db, pkTestSecret), true); err != nil {
 			e.t.Fatalf("SetAdminTOTP: %v", err)
 		}
 	}

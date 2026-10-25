@@ -30,7 +30,7 @@ func TestUpdateDevice_RedactedCommunityNotWrittenBack(t *testing.T) {
 		Name:          "fw-edge",
 		IPAddress:     "192.168.105.1",
 		SNMPVersion:   "2c",
-		SNMPCommunity: db.EncryptField(realCommunity),
+		SNMPCommunity: mustEncryptField(t, db, realCommunity),
 		Enabled:       true,
 	}
 	if err := db.Gorm().Create(dev).Error; err != nil {
@@ -78,7 +78,7 @@ func TestUpdateDevice_RealCommunityStillUpdates(t *testing.T) {
 		Name:          "fw-edge",
 		IPAddress:     "192.168.105.2",
 		SNMPVersion:   "2c",
-		SNMPCommunity: db.EncryptField("old-comm"),
+		SNMPCommunity: mustEncryptField(t, db, "old-comm"),
 		Enabled:       true,
 	}
 	if err := db.Gorm().Create(dev).Error; err != nil {

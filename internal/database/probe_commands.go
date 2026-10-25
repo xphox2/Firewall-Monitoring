@@ -175,7 +175,11 @@ func (d *Database) enqueueProbeCommandTx(tx *gorm.DB, cmd *models.ProbeCommand) 
 	}
 	cmd.Status = ProbeCommandStatusPending
 	cmd.Attempts = 0
-	cmd.Payload = d.EncryptField(cmd.Payload)
+	payload, err := d.EncryptField(cmd.Payload)
+	if err != nil {
+		return fmt.Errorf("EnqueueProbeCommand: %w", err)
+	}
+	cmd.Payload = payload
 	return tx.Create(cmd).Error
 }
 

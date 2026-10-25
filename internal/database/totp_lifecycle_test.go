@@ -16,7 +16,11 @@ func TestTOTP_SecretEncryptionRoundTrip(t *testing.T) {
 	root, _ := d.GetAdmin()
 
 	const secret = "JBSWY3DPEHPK3PXP"
-	if err := d.SetAdminTOTP(root.ID, d.EncryptField(secret), true); err != nil {
+	enc, err := d.EncryptField(secret)
+	if err != nil {
+		t.Fatalf("EncryptField: %v", err)
+	}
+	if err := d.SetAdminTOTP(root.ID, enc, true); err != nil {
 		t.Fatalf("SetAdminTOTP: %v", err)
 	}
 
@@ -25,7 +29,7 @@ func TestTOTP_SecretEncryptionRoundTrip(t *testing.T) {
 	if err != nil || raw == nil {
 		t.Fatalf("GetAdminByID: %v", err)
 	}
-	if raw.TOTPSecret == secret && d.EncryptField(secret) != secret {
+	if raw.TOTPSecret == secret && enc != secret {
 		t.Error("TOTP secret stored in plaintext despite encryption being available")
 	}
 	if !raw.TOTPEnabled || raw.TOTPConfirmedAt == nil {

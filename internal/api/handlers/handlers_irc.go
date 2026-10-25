@@ -121,7 +121,11 @@ func (h *Handler) CreateIRCServer(c *gin.Context) {
 	server.LastError = ""
 	server.Channels = nil
 
-	db.EncryptIRCServerSecrets(&server)
+	if err := db.EncryptIRCServerSecrets(&server); err != nil {
+		// D-12: never store the IRC credentials as plaintext.
+		httputil.InternalError(c, "Failed to encrypt server credentials", err)
+		return
+	}
 
 	if err := db.Gorm().Create(&server).Error; err != nil {
 		httputil.InternalError(c, "Failed to create server", err)
@@ -203,7 +207,12 @@ func (h *Handler) UpdateIRCServer(c *gin.Context) {
 			if v == httputil.RedactedMask {
 				delete(updates, field)
 			} else if v != "" {
-				updates[field] = db.EncryptField(v)
+				ct, err := db.EncryptField(v)
+				if err != nil {
+					httputil.InternalError(c, "Failed to encrypt credentials", err)
+					return
+				}
+				updates[field] = ct
 			}
 		}
 	}
@@ -348,7 +357,11 @@ func (h *Handler) CreateIRCChannel(c *gin.Context) {
 	channel.JoinedAt = nil
 	channel.Server = nil
 
-	db.EncryptIRCChannelSecrets(&channel)
+	if err := db.EncryptIRCChannelSecrets(&channel); err != nil {
+		// D-12: never store the channel credentials as plaintext.
+		httputil.InternalError(c, "Failed to encrypt channel credentials", err)
+		return
+	}
 
 	if err := db.Gorm().Create(&channel).Error; err != nil {
 		httputil.InternalError(c, "Failed to create channel", err)
@@ -432,7 +445,12 @@ func (h *Handler) UpdateIRCChannel(c *gin.Context) {
 			if v == httputil.RedactedMask {
 				delete(updates, field)
 			} else if v != "" {
-				updates[field] = db.EncryptField(v)
+				ct, err := db.EncryptField(v)
+				if err != nil {
+					httputil.InternalError(c, "Failed to encrypt credentials", err)
+					return
+				}
+				updates[field] = ct
 			}
 		}
 	}

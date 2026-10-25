@@ -74,8 +74,8 @@ func (f *totpFakeStore) ClearAdminTOTP(id uint) error {
 	f.totpCleared = true
 	return nil
 }
-func (f *totpFakeStore) EncryptField(p string) string { return p }
-func (f *totpFakeStore) DecryptField(p string) string { return p }
+func (f *totpFakeStore) EncryptField(p string) (string, error) { return p, nil }
+func (f *totpFakeStore) DecryptField(p string) string          { return p }
 func (f *totpFakeStore) SetAdminTOTP(id uint, enc string, enabled bool) error {
 	f.admin.TOTPEnabled = enabled
 	return nil

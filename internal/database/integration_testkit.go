@@ -58,6 +58,11 @@ func NewIntegrationDB(tb testing.TB) *Database {
 		tb.Fatalf("Connect: %v", err)
 	}
 	tb.Cleanup(func() { _ = d.Close() })
+	// The harness config carries no ENCRYPTION_KEY / JWT_SECRET_KEY: keep the
+	// same keyless plaintext passthrough NewDatabaseForTesting gives (D-12
+	// makes a keyless non-test Database refuse to store secrets). Suites that
+	// assert encryption at rest call SetEncryptionKeyForTesting.
+	d.keylessPassthrough = true
 
 	if err := d.RunMigrations(); err != nil {
 		tb.Fatalf("RunMigrations on real Postgres: %v", err)

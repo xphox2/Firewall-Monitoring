@@ -799,7 +799,15 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		if secretKeys[s.Key] {
 			s.IsSecret = true
 			if s.Value != "" && h.db != nil {
-				s.Value = h.db.EncryptField(s.Value)
+				// D-12: an encryption failure aborts the whole save (no
+				// row has been written yet) rather than persisting the
+				// secret as plaintext.
+				ct, err := h.db.EncryptField(s.Value)
+				if err != nil {
+					httputil.InternalError(c, "Failed to encrypt secret setting", err)
+					return
+				}
+				s.Value = ct
 			}
 		}
 		validSettings = append(validSettings, s)

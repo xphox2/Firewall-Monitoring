@@ -421,7 +421,13 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 			delete(filteredUpdates, field)
 			continue
 		}
-		filteredUpdates[field] = db.EncryptField(str)
+		ct, err := db.EncryptField(str)
+		if err != nil {
+			// D-12: never fall back to storing the plaintext secret.
+			httputil.InternalError(c, "Failed to encrypt device credential", err)
+			return nil, false
+		}
+		filteredUpdates[field] = ct
 	}
 
 	// Encrypt SSH password if present. ssh_password is now redacted on GET
@@ -432,7 +438,12 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 		if !isStr || str == "" || str == httputil.RedactedMask {
 			delete(filteredUpdates, "ssh_password")
 		} else {
-			filteredUpdates["ssh_password"] = db.EncryptField(str)
+			ct, err := db.EncryptField(str)
+			if err != nil {
+				httputil.InternalError(c, "Failed to encrypt device credential", err)
+				return nil, false
+			}
+			filteredUpdates["ssh_password"] = ct
 		}
 	}
 
@@ -444,7 +455,12 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 		if !isStr || str == "" || str == httputil.RedactedMask {
 			delete(filteredUpdates, "api_token")
 		} else {
-			filteredUpdates["api_token"] = db.EncryptField(str)
+			ct, err := db.EncryptField(str)
+			if err != nil {
+				httputil.InternalError(c, "Failed to encrypt device credential", err)
+				return nil, false
+			}
+			filteredUpdates["api_token"] = ct
 		}
 	}
 

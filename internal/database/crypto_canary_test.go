@@ -10,7 +10,7 @@ func TestVerifyEncryptionKey(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 
 	// First boot with a configured key — establishes the canary row.
-	d.encKeys = keyChain{current: deriveKey("key-one")}
+	d.encKeys = newKeyChain("key-one", nil)
 	if err := d.VerifyEncryptionKey(); err != nil {
 		t.Fatalf("first verify (establish canary): %v", err)
 	}
@@ -29,7 +29,7 @@ func TestVerifyEncryptionKey(t *testing.T) {
 	// Key rotated/lost with no history — the canary no longer decrypts, which
 	// is exactly when every {enc} secret in the DB is unreadable. Must be
 	// reported broken so the daemons fail-fast and /health degrades.
-	d.encKeys = keyChain{current: deriveKey("key-two")}
+	d.encKeys = newKeyChain("key-two", nil)
 	if err := d.VerifyEncryptionKey(); err == nil {
 		t.Fatal("expected error when the key no longer decrypts the canary")
 	}
@@ -39,7 +39,7 @@ func TestVerifyEncryptionKey(t *testing.T) {
 
 	// Original key supplied via the legacy chain (ENCRYPTION_KEY_HISTORY) —
 	// the canary decrypts again, matching the real secrets' decryptability.
-	d.encKeys = keyChain{current: deriveKey("key-two"), legacy: [][]byte{deriveKey("key-one")}}
+	d.encKeys = newKeyChain("key-two", []string{"key-one"})
 	if err := d.VerifyEncryptionKey(); err != nil {
 		t.Fatalf("verify with original key in history: %v", err)
 	}
