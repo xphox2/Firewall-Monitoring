@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.439] - 2026-10-24
+
+### Security — Bound the archive Head hash of a sidecarless object (D-37)
+
+- The local archive target's `Head` computes the ETag of an object that has
+  no `.fwmeta` sidecar (one copied in by hand) by hashing the whole file, with
+  no limit — so a huge sidecarless file left on the share was read end to end
+  by every `Head` (verify, status, retry) of it. Such an object larger than
+  5 GiB — the largest single-part S3 object, the only kind whose ETag is a
+  plain MD5 — is now refused as a mismatch without being read, which the
+  archive worker already handles (it re-exports the chunk as a new version).
+  Objects the archive writes always carry a sidecar and are unaffected.
+  `TestHead_SidecarlessHashBounded` pins it.
+
 ## [0.11.438] - 2026-10-24
 
 ### Security — Drop forged SNMP traps before decoding them (D-18)

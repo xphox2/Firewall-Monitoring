@@ -382,6 +382,26 @@ func TestHead_ObjectWithoutSidecar(t *testing.T) {
 	}
 }
 
+// TestHead_SidecarlessHashBounded pins D-37: Head refuses to hash a
+// sidecarless object larger than an object can be, instead of reading it
+// whole on every call.
+func TestHead_SidecarlessHashBounded(t *testing.T) {
+	orig := sidecarlessHashLimit
+	sidecarlessHashLimit = 4
+	t.Cleanup(func() { sidecarlessHashLimit = orig })
+	s, _ := newStore(t)
+	p := s.file("syslog/v2/2026-10/03/chunk.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("abcde"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Head(ctx, "syslog/v2/2026-10/03/chunk.json", ""); !errors.Is(err, objstore.ErrMismatch) {
+		t.Fatalf("Head of an oversized sidecarless object = %v, want ErrMismatch", err)
+	}
+}
+
 // TestNew_PathEscapes: a local directory outside the allowed root, with
 // '..', relative, on the database volume, or a root of "/" is refused by the
 // configuration; a symbolic link that leads out of the root is refused by
