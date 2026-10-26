@@ -15,7 +15,7 @@ import {
   Edit3,
   Terminal,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, type MeResponse } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -482,6 +482,14 @@ function SitesSubTab() {
     queryFn: () => apiFetch<SiteRecord[]>('/admin/api/sites'),
   });
 
+  // The operator's own role. The Event Profile is assigned through an
+  // admin-only endpoint, so the picker has to be gated.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
+  const isAdmin = me?.role === 'admin';
+
   const sites = sitesList ?? [];
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -803,6 +811,8 @@ function SitesSubTab() {
         scope="site"
         id={alertConfigSite?.id ?? 0}
         name={alertConfigSite?.name ?? ''}
+        // The Event Profile is assigned through an ADMIN-ONLY endpoint.
+        canAssignEventProfile={isAdmin}
       />
 
       <ConfirmDialog

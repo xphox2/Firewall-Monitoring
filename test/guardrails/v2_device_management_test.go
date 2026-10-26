@@ -187,6 +187,84 @@ func TestV2NonAdminSaveOmitsAdminOnlyFields(t *testing.T) {
 // (handlers_devices_purge.go). The console's purge dialog sent only the
 // password and the TOTP code, so EVERY purge was rejected with a 400 on the
 // missing name — the feature was present and unusable.
+// TestV2AdminOnlyEndpointsAreNotCalledByOperators pins that the console
+// does not call an admin-only endpoint on behalf of an operator.
+//
+// The purge surface is admin-only END TO END - the read-only job list and
+// the status endpoint included (cmd/api/main.go: "/admin/api/purge-jobs",
+// "/admin/api/devices/:id/purge"). Firing them for an operator is a 403 on
+// every page load: noise in the console, and a false alarm.
+//
+// The per-interface public control is the sharper case: READING the setting
+// is operator-level (GET /admin/api/display-settings is not admin-only), but
+// WRITING it goes through POST /admin/api/settings, which IS. A control that
+// is visible and answers 403 is worse than one that says why it is disabled.
+func TestV2AdminOnlyEndpointsAreNotCalledByOperators(t *testing.T) {
+	editor := readV2(t, "pages/DevicesWorkspace.tsx")
+
+	// The two purge reads must be gated on the role.
+	for _, needle := range []string{"/admin/api/purge-jobs", "/admin/api/devices/${deviceId}/purge"} {
+		idx := strings.Index(editor, needle)
+		if idx < 0 {
+			t.Errorf("DevicesWorkspace.tsx does not call %q - the purge job surface is missing", needle)
+			continue
+		}
+		window := editor[idx:min(len(editor), idx+600)]
+		if !strings.Contains(window, "enabled: isAdmin") {
+			t.Errorf("the query for %q is not gated on the role - it is an admin-only endpoint, so an operator gets a 403 on every page load", needle)
+		}
+	}
+
+	// The per-interface public WRITE is admin-only.
+	toggle := readV2(t, "components/devices/public-interface-toggle.tsx")
+	if !strings.Contains(toggle, "canEdit") {
+		t.Error("public-interface-toggle.tsx has no canEdit gate - the setting is WRITTEN through POST /admin/api/settings, which is admin-only, so an operator would get a 403 on every click")
+	}
+	if !regexp.MustCompile(`disabled=\{[^}]*!canEdit`).MatchString(toggle) {
+		t.Error("the public-interface toggle is not disabled for an operator - the control would be visible and answer 403")
+	}
+}
+
+// TestV2AdminOnlyWritesAreGated pins that every control which WRITES an
+// admin-only endpoint is gated on the role.
+//
+// Three of them are writes the server keeps admin-only, and each would be a
+// visible control that answers 403:
+//
+//   - revealing a stored credential (POST .../reveal-secret);
+//   - assigning an Event Profile (PUT .../event-profile) - which is worse
+//     than a 403, because the alert-config PUT commits FIRST, so the save
+//     is half applied and then reported as a failure;
+//   - writing the public_interfaces display setting (POST /admin/api/settings).
+func TestV2AdminOnlyWritesAreGated(t *testing.T) {
+	editor := readV2(t, "pages/DevicesWorkspace.tsx")
+
+	// The reveal button on a stored credential.
+	if !strings.Contains(editor, "disabled={!isAdmin}") {
+		t.Error("DevicesWorkspace.tsx does not disable the credential reveal button for an operator - POST .../reveal-secret is admin-only, so the operator would enter a password and a TOTP code and then get a 403")
+	}
+	if !strings.Contains(editor, "canReveal={isAdmin}") {
+		t.Error("DevicesWorkspace.tsx does not pass canReveal to the secret fields - the same 403, one field at a time")
+	}
+
+	// The Event Profile picker, in BOTH drawers.
+	drawer := readV2(t, "components/devices/alert-config-drawer.tsx")
+	if !strings.Contains(drawer, "canAssignEventProfile") {
+		t.Error("the alert-config drawer has no canAssignEventProfile gate - the event profile is written through an admin-only endpoint, so a save would commit the alert-config and then 403 on the profile")
+	}
+	if !strings.Contains(drawer, "disabled={!canAssignEventProfile}") {
+		t.Error("the Event Profile select is not disabled for an operator - it would offer a control that answers 403")
+	}
+	if !strings.Contains(drawer, "canAssignEventProfile\n        ? buildEventProfileBody") {
+		t.Error("the alert-config save does not skip the event-profile write for an operator - the write would 403 after the alert-config PUT had already committed")
+	}
+	for _, f := range []string{"pages/DevicesWorkspace.tsx", "pages/CollectorsWorkspace.tsx"} {
+		if !strings.Contains(readV2(t, f), "canAssignEventProfile={isAdmin}") {
+			t.Errorf("%s does not pass canAssignEventProfile - the Event Profile picker is not gated on the role", f)
+		}
+	}
+}
+
 func TestV2PurgeSendsTheConfirmationName(t *testing.T) {
 	dialog := readV2(t, "components/devices/purge-device-dialog.tsx")
 	// The needles are matched as OBJECT KEYS at the start of a line, not as
@@ -264,12 +342,19 @@ func TestV2PublicInterfaceWriteIsComplete(t *testing.T) {
 		t.Error("the public-interface toggle does not write the public_interfaces setting")
 	}
 	// The whole map goes back, not just this device's entry.
-	if !strings.Contains(toggle, "const payload = { ...map,") {
+	if !strings.Contains(toggle, "{ ...map, [key]: next }") {
 		t.Error("the public-interface toggle does not write back the WHOLE map — a partial write would erase every other device's public-dashboard selection (AUDIT-185)")
 	}
 	// And the toggle stays disabled until the map has loaded, so a click
 	// cannot serialise a half-loaded map.
-	if !strings.Contains(toggle, "disabled={!map}") {
-		t.Error("the public-interface toggle is not disabled until the map has loaded — a pre-load click would serialise an empty map and wipe every other device's selection")
+	if !strings.Contains(toggle, "!map || !canEdit") {
+		t.Error("the public-interface toggle is not disabled until the map has loaded - a pre-load click would serialise an empty map and wipe every other device's selection")
+	}
+	// The map is read from the SHARED query cache, not from a per-toggle copy:
+	// there is one toggle per interface, and each one used to hold its own
+	// copy, so toggling A and then B would have had B write the map as it was
+	// before A's change and erase A's selection.
+	if !strings.Contains(toggle, "queryClient.setQueryData") {
+		t.Error("the public-interface toggle does not write through the shared query cache - each toggle holds its own copy of the map, so two toggles in a row would erase the first one")
 	}
 }

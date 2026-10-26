@@ -56,6 +56,15 @@ export interface AlertConfigDrawerProps {
   id: number;
   /** The name, for the drawer title. */
   name: string;
+  /**
+   * Whether the operator may assign an Event Profile.
+   *
+   * The Event Profile is assigned through its own endpoint, which is
+   * ADMIN-ONLY. Offering the picker to an operator means a save that commits
+   * the alert-config and then answers 403 on the profile - a partial write
+   * and a misleading "could not save".
+   */
+  canAssignEventProfile?: boolean;
 }
 
 interface FormState {
@@ -101,7 +110,14 @@ const EMPTY: FormState = {
  * - `storm_sources` is a site-only tri-state: blank inherits, 0 disables the
  *   digest for that site, and a positive number sets the threshold.
  */
-export function AlertConfigDrawer({ open, onOpenChange, scope, id, name }: AlertConfigDrawerProps) {
+export function AlertConfigDrawer({
+  open,
+  onOpenChange,
+  scope,
+  id,
+  name,
+  canAssignEventProfile = true,
+}: AlertConfigDrawerProps) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<FormState>(EMPTY);
@@ -126,7 +142,7 @@ export function AlertConfigDrawer({ open, onOpenChange, scope, id, name }: Alert
   const { data: profiles } = useQuery({
     queryKey: ['event-rule-profiles'],
     queryFn: () => apiFetch<ProfileOption[]>('/admin/api/event-rule-profiles'),
-    enabled: open,
+    enabled: open && canAssignEventProfile,
   });
 
   useEffect(() => {
@@ -160,7 +176,9 @@ export function AlertConfigDrawer({ open, onOpenChange, scope, id, name }: Alert
       await apiFetch(`/admin/api${path}/alert-config`, { method: 'PUT', body });
       // The Event Profile has its own admin-only endpoint; the server
       // refreshes the resolution cache from it, so it is sent separately.
-      const profileBody = buildEventProfileBody(config?.event_profile_id, form.event_profile_id);
+      const profileBody = canAssignEventProfile
+        ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
+        : null;
       if (profileBody) {
         await apiFetch(`/admin/api${path}/event-profile`, {
           method: 'PUT',
@@ -284,11 +302,17 @@ export function AlertConfigDrawer({ open, onOpenChange, scope, id, name }: Alert
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-text-dim">Event profile</span>
+            <span className="mb-1 block text-xs font-medium text-text-dim">
+              Event profile
+              {!canAssignEventProfile ? (
+                <span className="ml-1 text-[10px] font-normal text-text-faint">Admin only</span>
+              ) : null}
+            </span>
             <select
               value={form.event_profile_id}
+              disabled={!canAssignEventProfile}
               onChange={(e) => set('event_profile_id', e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text disabled:opacity-60"
             >
               <option value="">Inherit</option>
               {(profiles ?? []).map((p) => (

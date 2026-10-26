@@ -500,7 +500,7 @@ function DeviceInventoryView() {
         </div>
       </div>
 
-      <PurgeJobsPanel />
+      <PurgeJobsPanel isAdmin={isAdmin} />
 
       <ResponsiveDataView
         data={filteredDevices}
@@ -771,7 +771,13 @@ function DeviceInventoryView() {
                     <button
                       type="button"
                       onClick={() => setRevealField('snmp_community')}
-                      className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text"
+                      disabled={!isAdmin}
+                      title={
+                        isAdmin
+                          ? 'Reveal the stored value (requires admin password verification)'
+                          : 'Admin only — revealing a stored credential is an admin action'
+                      }
+                      className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Eye className="h-3.5 w-3.5" /> Reveal
                     </button>
@@ -801,6 +807,7 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_auth_pass: v }))
                     }
                     onReveal={setRevealField}
+                    canReveal={isAdmin}
                     hint="Required for SNMPv3 with an auth protocol."
                   />
                   <DeviceSecretField
@@ -812,6 +819,7 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_priv_pass: v }))
                     }
                     onReveal={setRevealField}
+                    canReveal={isAdmin}
                     hint="Required for SNMPv3 with a privacy protocol."
                   />
                 </div>
@@ -891,6 +899,7 @@ function DeviceInventoryView() {
                 revealedSecrets={revealedSecrets}
                 onChange={(v) => setEditingDevice((p) => ({ ...p, ssh_password: v }))}
                 onReveal={setRevealField}
+                canReveal={isAdmin}
                 hint="Used for the configuration backup and the IPSec provisioning path."
               />
               <div>
@@ -939,6 +948,7 @@ function DeviceInventoryView() {
                   revealedSecrets={revealedSecrets}
                   onChange={(v) => setEditingDevice((p) => ({ ...p, api_token: v }))}
                   onReveal={setRevealField}
+                  canReveal={isAdmin}
                   hint={
                     editingDevice.vendor === 'opnsense'
                       ? 'OPNsense stores a key and a secret in this ONE field, separated by a colon. Enter them as "key:secret".'
@@ -1045,7 +1055,7 @@ function DeviceInventoryView() {
  * started it. Without a list the operator had no way to see that a purge was
  * running, how far it had got, or that one had failed.
  */
-function PurgeJobsPanel() {
+function PurgeJobsPanel({ isAdmin }: { isAdmin: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -1053,6 +1063,10 @@ function PurgeJobsPanel() {
     queryKey: ['purge-jobs'],
     queryFn: () => apiFetch<PurgeJob[]>('/admin/api/purge-jobs'),
     refetchInterval: 10_000,
+    // The purge endpoints are admin-only END TO END, the read-only job list
+    // included. Firing them as an operator would be a 403 on every page
+    // load, which is noise in the console and a false alarm.
+    enabled: isAdmin,
   });
 
   const cancelMutation = useMutation({
@@ -1106,7 +1120,7 @@ function PurgeJobsPanel() {
  * deletes the rows table by table. Without this the operator had no way to
  * see that a purge was running, how far it had got, or to stop it.
  */
-function PurgeJobPanel({ deviceId }: { deviceId: number }) {
+function PurgeJobPanel({ deviceId, isAdmin }: { deviceId: number; isAdmin: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -1114,6 +1128,8 @@ function PurgeJobPanel({ deviceId }: { deviceId: number }) {
     queryKey: ['device-purge-job', deviceId],
     queryFn: () => apiFetch<PurgeJob>(`/admin/api/devices/${deviceId}/purge`),
     retry: false,
+    // Admin-only, like the rest of the purge surface.
+    enabled: isAdmin,
     // Only while it is actually running; a finished job does not need a poll.
     refetchInterval: (query) => {
       const status = (query.state.data as PurgeJob | undefined)?.status;
@@ -1193,6 +1209,7 @@ function DeviceSecretField({
   revealedSecrets,
   onChange,
   onReveal,
+  canReveal,
   hint,
   placeholder,
 }: {
@@ -1202,6 +1219,8 @@ function DeviceSecretField({
   revealedSecrets: Record<string, string>;
   onChange: (value: string) => void;
   onReveal: (field: string) => void;
+  /** False for an operator: revealing a stored credential is admin-only. */
+  canReveal: boolean;
   hint?: string;
   placeholder?: string;
 }) {
@@ -1224,8 +1243,13 @@ function DeviceSecretField({
           <button
             type="button"
             onClick={() => onReveal(field)}
-            title="Reveal the stored value (requires admin password verification)"
-            className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text"
+            disabled={!canReveal}
+            title={
+              canReveal
+                ? 'Reveal the stored value (requires admin password verification)'
+                : 'Admin only — revealing a stored credential is an admin action'
+            }
+            className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Eye className="h-3.5 w-3.5" /> Reveal
           </button>
@@ -1268,6 +1292,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     queryKey: ['me'],
     queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
   });
+  const isAdmin = me?.role === 'admin';
 
   // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
   // this as an array made `.map` throw and (before the ErrorBoundary) blanked
@@ -1650,6 +1675,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                             <PublicInterfaceToggle
                               deviceId={deviceId}
                               interfaceName={iface.name}
+                              canEdit={isAdmin}
                             />
                           ) : null}
                         </div>
@@ -2140,7 +2166,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           {activeTab === 'lifecycle' && (
             <div className="space-y-4">
               <RecentAlertsPanel alerts={recentAlerts} />
-              <PurgeJobPanel deviceId={deviceId} />
+              <PurgeJobPanel deviceId={deviceId} isAdmin={isAdmin} />
               <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
               <h2 className="text-sm font-semibold text-text">Device Lifecycle & Permanent Purge</h2>
               <p className="text-xs text-text-dim">
@@ -2192,6 +2218,8 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         scope="device"
         id={deviceId}
         name={detail?.device?.name ?? `device ${deviceId}`}
+        // The Event Profile is assigned through an ADMIN-ONLY endpoint.
+        canAssignEventProfile={isAdmin}
       />
 
       <PurgeDeviceDialog

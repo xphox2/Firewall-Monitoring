@@ -97,6 +97,33 @@ caught by a test:
 - The alert-config body is checked not to carry the event profile, and the
   public-interface write is checked to send the **whole** map.
 
+### Fixed — Controls that would have answered 403
+
+Several of the server's endpoints are **admin-only**, and the console has to
+know that before it calls them:
+
+- **The purge job queries are not fired for an operator.** The purge surface
+  is admin-only end to end, the read-only job list included, so an operator
+  was getting a 403 on every page load.
+- **The credential reveal button is disabled for an operator.** Revealing a
+  stored secret is admin-only; the button used to ask for a password and a
+  TOTP code and then answer 403.
+- **The Event Profile picker is disabled for an operator.** Assigning one
+  goes through its own admin-only endpoint, so a save would have committed
+  the alert-config and *then* failed on the profile — a half-applied
+  override reported as a failure.
+- **The per-interface public control is disabled for an operator.** Reading
+  the setting is operator-level; writing it is not.
+
+### Fixed — Two interface toggles could erase each other
+
+The per-interface public setting holds the map for **every** device, and
+there is one toggle per interface. Each toggle used to hold its own copy of
+the map, so toggling interface A and then interface B would have had B
+write the map as it was *before* A's change — erasing A's selection. The
+map is now read from the shared query cache and written back optimistically,
+so the second toggle builds on the first one's result.
+
 ## [0.11.448] - 2026-10-26
 
 ### Added — Declare a connection, and act on every alert that matches
