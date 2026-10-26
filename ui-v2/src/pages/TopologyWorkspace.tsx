@@ -14,7 +14,7 @@ import {
   Undo2,
   Search,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, type MeResponse } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
@@ -32,6 +32,7 @@ import {
   type ConnectionDetail,
 } from '@/components/topology/connection-detail-panels';
 import { activeTopologyDevices, linkState } from '@/lib/topology';
+import { IpsecWizard, type WizardDevice } from '@/components/topology/ipsec-wizard';
 import {
   ConnectionEditor,
   type ConnectionDevice,
@@ -848,6 +849,28 @@ function IpsecTunnelsSubTab() {
     refetchInterval: 15_000,
   });
 
+  // The devices the wizard picks its two ends from. The UUID is what the
+  // default local identity is derived from (`fwm-<uuid>`), and the vendor
+  // decides which crypto options the pair supports.
+  const { data: wizardDevices } = useQuery({
+    queryKey: ['devices-for-ipsec'],
+    queryFn: () => apiFetch<WizardDevice[]>('/admin/api/devices'),
+    refetchInterval: 60_000,
+  });
+
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardTunnelId, setWizardTunnelId] = useState<number | null>(null);
+
+  // EVERY endpoint the wizard calls is admin-only - the tunnel list, the
+  // capabilities, the device hints, the preview and the save. The console
+  // therefore needs the operator's role before it offers the action, or a
+  // non-admin is shown a control that can only answer 403.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
+  const isAdmin = me?.role === 'admin';
+
   const tunnels = tunnelsList ?? [];
 
   const [selectedTunnel, setSelectedTunnel] = useState<IPSecTunnelIntent | null>(null);
@@ -1035,6 +1058,30 @@ function IpsecTunnelsSubTab() {
             >
               <Eye className="h-3 w-3" /> Preview CLI
             </button>
+            {/*
+              Edit the intent. Gated on the SERVER's rule - a tunnel with a
+              deploy record cannot be edited until it is rolled back, and the
+              server answers 409 for one. The list response states that per
+              row as `editable`, so the button follows it exactly.
+            */}
+            <button
+              type="button"
+              onClick={() => {
+                setWizardTunnelId(row.original.id);
+                setWizardOpen(true);
+              }}
+              disabled={row.original.editable === false || !isAdmin}
+              title={
+                !isAdmin
+                  ? 'Admin only — editing a tunnel is an admin action'
+                  : row.original.editable === false
+                    ? 'Roll back the deployment before editing this tunnel'
+                    : 'Edit the tunnel intent'
+              }
+              className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Edit
+            </button>
             <button
               type="button"
               onClick={() => actionMutation.mutate({ id: row.original.id, action: 'preflight' })}
@@ -1104,14 +1151,45 @@ function IpsecTunnelsSubTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-text">IPSec Tunnel Intents & Deploy Saga ({tunnels.length})</h2>
           <p className="text-xs text-text-dim">
             Vendor-validated IPSec Phase 1/Phase 2 intents with read-only REST preflight, atomic deploy, and rollback snapshots.
           </p>
         </div>
+        {/*
+          The wizard. Until now the console could list, deploy, roll back and
+          delete a tunnel but not AUTHOR one, so a tunnel could never be
+          provisioned from here at all.
+        */}
+        <button
+          type="button"
+          onClick={() => {
+            setWizardTunnelId(null);
+            setWizardOpen(true);
+          }}
+          disabled={!isAdmin}
+          title={
+            isAdmin
+              ? 'Declare a new IPSec tunnel'
+              : 'Admin only — provisioning a tunnel is an admin action'
+          }
+          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          New tunnel
+        </button>
       </div>
+
+      <IpsecWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        tunnelId={wizardTunnelId}
+        devices={wizardDevices ?? []}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ['ipsec-tunnels'] });
+        }}
+      />
 
       <ResponsiveDataView
         data={tunnels}
