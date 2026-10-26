@@ -1,6 +1,96 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.450] - 2026-10-26
+
+### Added — The V2 console can finally author an IPSec tunnel
+
+- **A tunnel could not be provisioned from the V2 console at all.** The tab
+  could list, preview, deploy, roll back, discover and delete a tunnel, but
+  there was no way to CREATE one, and no way to edit one. The server's
+  endpoints were live and unused. There is now a three-phase wizard —
+  **Design**, **Paths**, **Verify** — ported from the legacy console.
+  - **Design** collects what the legacy wizard collected: the two ends (device,
+    vendor, egress interface, LAN interface(s), local identity, protected
+    subnets, peer IP, the dynamic-peer flag and a gateway), the tunnel mode, the
+    crypto profile and the pre-shared key.
+  - **Paths** shows every path between a protected subnet on one side and one
+    on the other, and lets each be turned off. The keys are canonicalised the
+    same way the server canonicalises them, because a key the server does not
+    recognise is a **silent fail-open** — the path stays enabled even though
+    the operator turned it off.
+  - **Verify** renders exactly what each side will receive, with the findings
+    the server raises. A blocking finding disables the save.
+- **The mode comes from the vendors' intersection, not a hardcoded default.**
+  OPNsense supports policy-based only, so every OPNsense pair's intersection
+  is a single mode.
+- **The crypto options are the intersection too**, and the IKE version comes
+  with the preset — it is only the Custom profile that offers it separately.
+- **The name, the VTI subnet and the inner IPs are the server's.** The wizard
+  does not offer a name field, because the server derives `fwm-t<ID>`.
+- **The pre-shared key round-trips.** The mask means two opposite things on
+  the same token: on create it means "generate one", on edit it means
+  "unchanged". An edit that dropped it would send an empty key, which on a
+  create means "generate a new one".
+- **A tunnel with a deployment cannot be edited**, and the Edit button follows
+  the server's own rule (stated per row as `editable`) rather than
+  approximating it from the status — a partially-deployed tunnel still carries
+  its record and the server answers 409.
+- **The device's own facts are used.** The egress interface, the LAN
+  interfaces, the peer IP and the default local identity (`fwm-<uuid>`) are
+  prefilled from the device's IPSec hints, and every field stays editable for a
+  device that has never been polled.
+
+### Fixed — Two silent failures in the wizard
+
+- **A disabled path could have stayed ENABLED.** The server compares the
+  stored path key EXACTLY against its own canonical form, and a key it does
+  not recognise is a **silent fail-open** — the path stays enabled even
+  though the operator turned it off, and the server raises only a warning.
+  The console was building the key from the raw subnet strings, so
+  `10.0.0.1/8` would have been sent where the server computes
+  `10.0.0.0/8`. The keys are now canonicalised where they are built and
+  again where they are sent, and a subnet that cannot be canonicalised
+  (an IPv6 one) is left enabled **visibly** rather than "disabled" in a way
+  that does nothing.
+- **Editing a Custom-crypto tunnel would have rewritten its crypto.** The
+  intent stores the RESOLVED crypto, not the profile's name, so the form has
+  to infer which preset it came from. The inference was applied only when it
+  was NOT Custom — so a Custom tunnel was shown as "Modern" and the save
+  replaced its crypto with the Modern preset, silently. The profile is now
+  inferred unconditionally on an **edit**, and the whole form state is reset
+  when the wizard opens so the previous session's profile cannot leak into the
+  next tunnel. The inference runs on edits only: the create form's custom
+  crypto is an empty placeholder, which matches no preset, so running it
+  there would flip the default profile to "Custom" with empty selectors — and
+  the operator never touched the dropdown.
+- **The Paths tab says so when a path cannot be toggled.** A subnet that is
+  not IPv4 cannot be canonicalised client-side, and a path key the server
+  cannot match would silently stay enabled. Those paths stay enabled, and the
+  tab now says how many and why, instead of leaving them silently absent.
+
+### Added — Guardrails for the wizard
+
+- The wizard's endpoints are pinned, and so is the distinction between the
+  preview (a POST) and the update (a PUT — POSTing it would create a second
+  tunnel).
+- The path keys are pinned to the shared canonicaliser, and the profile
+  reconstruction is pinned to an UNCONDITIONAL assignment — a Custom tunnel
+  must not keep the previous session's profile.
+- The wizard is pinned to the role: every endpoint it calls is admin-only,
+  so a non-admin is shown a control that could only answer 403.
+- The mode select is pinned to the capability intersection, the PSK mask to
+  the server's exact string, the step count to a COUNT (the preview's `steps`
+  is a number; the rendered steps carry the plaintext key and are never
+  returned), and the findings' `end` to the shared helper — `end` is a pointer
+  on the server, and `0` is the FIRST end, so a truthiness test would silently
+  drop end A's findings.
+- 26 new unit tests for the intent assembly: the canonical path keys, the
+  preset-versus-Custom reconstruction, the identity default and validation,
+  the finding scope, and the fields the intent MUST always carry
+  (`enabled` — omitted is FALSE, which would save the tunnel DISABLED — plus
+  `dpd` and `mss_clamp`, which raise spurious warnings when absent).
+
 ## [0.11.449] - 2026-10-26
 
 ### Fixed — A device could not be un-published from the public dashboard
