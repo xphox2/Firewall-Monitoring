@@ -3,6 +3,13 @@
 @import "./preflight-v3.css" layer(base);
 /* Scan src/ only, like the old tailwind.config.js content glob did. */
 @import "tailwindcss/utilities.css" layer(utilities) source("..");
+/*
+ * The motion layer ported from the V1 console: the spinner, the shape
+ * preserving skeletons, the status-dot pulse, the loading overlay and the
+ * gauge. These are plain CSS rather than Tailwind utilities because they carry
+ * keyframes and a reduced-motion counterpart each.
+ */
+@import "./motion.css" layer(components);
 
 /*
  * Tailwind CSS v4. The theme below is the old tailwind.config.js

@@ -24,6 +24,8 @@ import {
 import { apiFetch } from '@/lib/api';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { StatusDot } from '@/components/ui/status-dot';
+import { Gauge } from '@/components/ui/gauge';
 import { DeviceCapabilitiesPanel } from '@/components/devices/capability-matrix';
 import type { DeviceCapabilities } from '@/lib/device-capabilities';
 import { SlideOverDrawer, DrawerTab } from '@/components/ui/slide-over-drawer';
@@ -264,15 +266,20 @@ function DeviceInventoryView() {
         cell: ({ row }) => (
           <div>
             <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  'h-2 w-2 rounded-full shrink-0',
+              {/*
+                The pulsing status dot. V1's device list had one
+                (cmd/api/static/js/admin-main.js:533) and V2 had a flat dot
+                that never moved.
+                */}
+              <StatusDot
+                state={
                   row.original.retired_at
-                    ? 'bg-text-mute'
+                    ? 'muted'
                     : row.original.status === 'online'
-                      ? 'bg-sig-ok'
-                      : 'bg-sig-crit'
-                )}
+                      ? 'online'
+                      : 'offline'
+                }
+                label={row.original.retired_at ? 'retired' : row.original.status || 'unknown'}
               />
               <span className="font-semibold text-text">{row.original.name}</span>
               {row.original.retired_at && (
@@ -1279,17 +1286,22 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 <h2 className="text-sm font-semibold text-text">Historical Telemetry</h2>
                 {chartRangePills}
               </div>
+              {/*
+                The gauges. V1 drew a donut for CPU and memory
+                (cmd/api/static/js/admin-device-detail.js:336-337) and V2 had
+                plain numbers.
+              */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="rounded-xl border border-border bg-bg-card p-4">
                 <div className="text-xs text-text-dim">CPU Utilization</div>
-                <div className="text-2xl font-mono font-bold text-text mt-1">
-                  {Math.round(cpuUsage)}%
+                <div className="mt-1">
+                  <Gauge value={cpuUsage} max={100} size={72} />
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-bg-card p-4">
                 <div className="text-xs text-text-dim">Memory Utilization</div>
-                <div className="text-2xl font-mono font-bold text-text mt-1">
-                  {Math.round(memoryUsage)}%
+                <div className="mt-1">
+                  <Gauge value={memoryUsage} max={100} size={72} />
                 </div>
               </div>
               <div className="rounded-xl border border-border bg-bg-card p-4">

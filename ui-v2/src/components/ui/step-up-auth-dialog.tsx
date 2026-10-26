@@ -168,7 +168,7 @@ export function StepUpAuthDialog({
                     : 'bg-accent hover:bg-accent-hover'
                 } disabled:opacity-50`}
               >
-                {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {submitting && <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
                 {confirmLabel}
               </button>
             </div>
@@ -300,7 +300,7 @@ export function ForcedPasswordChangeModal({
                 disabled={saving}
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
               >
-                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                {saving && <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />}
                 Update Password & Sign In Again
               </button>
             </div>

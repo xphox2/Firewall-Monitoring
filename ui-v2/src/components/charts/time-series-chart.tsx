@@ -3,6 +3,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useTheme } from '@/lib/theme';
 import { formatAxisValue, formatValue, type ChartKind, type ChartSeries } from '@/lib/chart';
+import { LoadingOverlay } from '@/components/ui/loading-overlay';
 
 export interface TimeSeriesChartProps {
   /** Epoch milliseconds, one per point. */
@@ -45,6 +46,7 @@ export function TimeSeriesChart({
   spanGaps = true,
 }: TimeSeriesChartProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const loadHostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<uPlot | null>(null);
   const { theme } = useTheme();
 
@@ -169,27 +171,37 @@ export function TimeSeriesChart({
         </div>
       )}
 
-      {isLoading && !hasData ? (
-        <div
-          className="flex items-center justify-center rounded-lg border border-border bg-bg-panel text-xs text-text-faint"
-          style={{ height }}
-        >
-          Loading chart…
-        </div>
-      ) : !hasData ? (
-        <div
-          className="flex items-center justify-center rounded-lg border border-border bg-bg-panel text-xs text-text-faint"
-          style={{ height }}
-        >
-          {emptyMessage}
-        </div>
-      ) : (
-        <div
-          ref={hostRef}
-          className="w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
-          style={{ height }}
+      {/*
+        * The host is the overlay's mount point: `fwmon-load-host` makes it
+        * position-relative and gives it a min-height only while the overlay
+        * is actually shown, so a fast load never jumps the layout.
+        *
+        * A REFETCH (data already on screen, new range loading) keeps the old
+        * chart and dims it under the overlay, which is what V1 did: swapping
+        * it for a spinner would lose the operator's place.
+        */}
+      <div className="fwmon-load-host" ref={loadHostRef}>
+        {isLoading && !hasData ? (
+          <div className="chart-loading" style={{ height }}>
+            Loading chart…
+          </div>
+        ) : !hasData ? (
+          <div className="chart-loading" style={{ height }}>
+            {emptyMessage}
+          </div>
+        ) : (
+          <div
+            ref={hostRef}
+            className="w-full overflow-hidden rounded-lg border border-border bg-bg-panel"
+            style={{ height }}
+          />
+        )}
+        <LoadingOverlay
+          active={isLoading && hasData}
+          label="Refreshing chart…"
+          hostRef={loadHostRef}
         />
-      )}
+      </div>
     </div>
   );
 }

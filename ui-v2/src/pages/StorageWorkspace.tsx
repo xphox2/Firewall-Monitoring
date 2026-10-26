@@ -1805,7 +1805,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
             </p>
           </div>
           <RefreshCw
-            className={cn('h-3.5 w-3.5 text-text-faint', isLoading && 'animate-spin')}
+            className={cn('h-3.5 w-3.5 text-text-faint', isLoading && 'animate-spin motion-reduce:animate-none')}
             aria-hidden="true"
           />
         </div>

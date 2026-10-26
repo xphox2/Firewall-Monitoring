@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { useTheme } from '@/lib/theme';
 import { bundleEdges, linkColour, normalizePositions, type MapPosition } from '@/lib/topology';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { TopologyParticles } from '@/components/topology/topology-particles';
 
 cytoscape.use(fcose);
 
@@ -307,6 +308,10 @@ export function TopologyMap({
   const { theme } = useTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
+  // The graph instance in state, so the particle layer can depend on it: the
+  // graph is created once in an effect, and a child effect would run BEFORE
+  // the parent's, so a ref read at mount time would still be null.
+  const [cyCore, setCyCore] = useState<Core | null>(null);
   // useState's function initializer reads localStorage once, not every render.
   const [initialSavedPositions] = useState(loadSavedPositions);
   const savedPositionsRef = useRef<Record<string, MapPosition>>(initialSavedPositions);
@@ -613,10 +618,12 @@ export function TopologyMap({
     document.addEventListener('keydown', onKeyDown);
 
     cyRef.current = cy;
+    setCyCore(cy);
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       cy.destroy();
       cyRef.current = null;
+      setCyCore(null);
     };
   }, []);
 
@@ -801,13 +808,19 @@ export function TopologyMap({
 
       <div className="relative">
         <div ref={hostRef} className="h-[520px] w-full" />
+        {/*
+          * The traffic particles. They layer a canvas over the graph, so they
+          * are mounted as a sibling of the Cytoscape host rather than inside
+          * it - Cytoscape owns its own container.
+          */}
+        <TopologyParticles cy={cyCore} hostRef={hostRef} />
         {nodes.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-text-dim">
             No devices to draw yet.
           </div>
         )}
 
-        <div className="pointer-events-none absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-card/90 px-2 py-1.5">
+        <div className="pointer-events-none absolute bottom-2 left-2 z-10 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-card/90 px-2 py-1.5">
           {LEGEND.map((item) => (
             <span key={item.label} className="flex items-center gap-1 text-[10px] text-text-dim">
               <span

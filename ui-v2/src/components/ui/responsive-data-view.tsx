@@ -7,8 +7,9 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
-import { ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Inbox } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Inbox, TriangleAlert, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SkeletonRows } from './skeleton';
 
 export interface ResponsiveDataViewProps<TData> {
   data: TData[];
@@ -20,7 +21,24 @@ export interface ResponsiveDataViewProps<TData> {
   emptyTitle?: string;
   emptyDescription?: string;
   isLoading?: boolean;
+  /**
+   * True when the query FAILED. Without this the view cannot tell a failed
+   * query from an empty result set, so a backend error rendered the empty
+   * state ("No matching records") - which reads as "there is no data" when
+   * the truth is "the server could not be reached".
+   */
+  isError?: boolean;
+  /** The failure, for the error message. */
+  error?: unknown;
+  /** Retry the failed query. Without it the error state has no action. */
+  onRetry?: () => void;
   className?: string;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string' && error) return error;
+  return 'The request could not be completed.';
 }
 
 export function ResponsiveDataView<TData>({
@@ -33,6 +51,9 @@ export function ResponsiveDataView<TData>({
   emptyTitle = 'No matching records',
   emptyDescription = 'Adjust your filters or time window to see results.',
   isLoading = false,
+  isError = false,
+  error,
+  onRetry,
   className,
 }: ResponsiveDataViewProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -50,13 +71,34 @@ export function ResponsiveDataView<TData>({
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-bg-card p-6 space-y-3">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <div
-            key={n}
-            className="h-10 rounded-md bg-bg-panel animate-pulse border border-border/50"
-          />
-        ))}
+      <div className="rounded-lg border border-border bg-bg-card p-6">
+        <SkeletonRows rows={5} />
+      </div>
+    );
+  }
+
+  // The error state comes BEFORE the empty state: a failed query must never
+  // render "no data".
+  if (isError) {
+    return (
+      <div
+        className="rounded-lg border border-sig-crit/40 bg-sig-crit/5 p-10 text-center"
+        role="alert"
+      >
+        <TriangleAlert className="mx-auto mb-2.5 h-8 w-8 text-sig-crit" />
+        <div className="text-sm font-semibold text-text">Could not load this data</div>
+        <div className="mx-auto mt-1 max-w-md text-xs text-text-dim">
+          {errorMessage(error)}
+        </div>
+        {onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text transition-colors hover:text-text"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Retry
+          </button>
+        ) : null}
       </div>
     );
   }
