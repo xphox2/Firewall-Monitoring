@@ -1,6 +1,129 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.449] - 2026-10-26
+
+### Fixed — A device could not be un-published from the public dashboard
+
+- **`public_visible` had no control at all.** The column DEFAULTS TO `true`, so
+  every device was on the **unauthenticated** public dashboard, and there was
+  no way in the V2 console to say otherwise. There is now a per-device
+  toggle, in the list and in the editor, and the list shows a Public / Private
+  badge so "where did that device go from the public board?" has an answer.
+  The server makes the change admin-only, so the control is disabled for
+  everyone else, with the reason. A non-admin's save does not carry the field
+  at all: the server rejects a request on the **presence** of an admin-only
+  key, not on a change, so sending it would have refused the whole edit —
+  every ordinary field change would have failed with a 403.
+- **The per-interface "Public" checkbox** is a separate thing — it picks WHICH
+  of a device's interfaces are published, and it is stored as a display
+  setting rather than a column. It now exists on the device detail.
+  - The setting holds the map for EVERY device, so the write is a
+    read-modify-write of the whole thing. The control stays disabled until
+    the map has loaded, because posting a partially-loaded map would erase
+    every OTHER device's public-dashboard selection.
+
+### Fixed — The device editor could set no secret at all
+
+- The V2 editor had no field for the SNMPv3 auth or privacy password, the SSH
+  password, or the REST API token. A device could be monitored but never
+  configured, and the IPSec provisioning path — which authenticates with the
+  API token — could not be set up at all. All of them are now editable, with
+  the same reveal-and-step-up flow the SNMP community string already had.
+- **A revealed secret was silently dropped on save.** The editor kept the
+  revealed value apart from the record, and only saved the record — so
+  revealing a secret, changing it and saving lost the change. The save body
+  now merges the revealed values.
+- The stored mask is never sent back to the server. A masked or empty secret
+  means "leave it unchanged", and the body now says that by omission rather
+  than by sending the mask.
+- The API token is one field. For OPNsense it holds a key and a secret
+  separated by a colon, and the field says so.
+- "Allow a self-signed TLS certificate" is admin-only on the server, so it is
+  disabled for everyone else.
+
+### Fixed — The permanent purge was present and unusable
+
+- The purge dialog sent the password and the TOTP code but **not the device
+  name**, so the server rejected **every** purge with a 400. The feature was
+  there and could not be used.
+- It also never asked for the TOTP code on a 2FA account, so even a correct
+  request was refused with a 403.
+- The dialog now collects all three the server asks for — the name typed out,
+  the password, and the code when the account has 2FA — and the confirm
+  button stays disabled until the name matches.
+- **The operator now sees what will be deleted first**: the row count per
+  table, the IPSec tunnel intents that will be removed with it, and the
+  tables whose count failed, so an incomplete estimate says so rather than
+  looking like a small one.
+- A purge runs in the BACKGROUND, so there is now a job panel on the device
+  (progress, tables done, the current table, the error) with a **Cancel**,
+  and a list of the running jobs on the device list.
+
+### Added — Per-device and per-site alert overrides
+
+- The console had only the GLOBAL thresholds and the notification policies,
+  so a noisy device or site could not be given its own numbers — every device
+  in the fleet raised on the same ones. There is now an override per device
+  and per site: the thresholds, the notification profile, the event profile,
+  and (per site) the storm-digest threshold.
+- The form follows the server's contract exactly. The alert-config PUT
+  **binds onto the existing row**, so an absent field PRESERVES the stored
+  value; the body therefore carries only the fields the operator changed, and
+  a field left blank is omitted rather than sent as a zero.
+- The Event Profile is assigned through its own endpoint, not folded into the
+  alert-config body — that is where the server refreshes its resolution cache
+  from.
+- "Reset to defaults" removes the override, so the global values apply again.
+
+### Added — Guardrails for the class of bug above
+
+Two bugs of the same shape had already shipped: a form field the server
+silently drops, and a required field the console never sent. Both are now
+caught by a test:
+
+- Every field the device editor writes is checked against the server's update
+  allow-list, **parsed from the Go source**. A field outside the list is
+  silently dropped, so the operator types a value and is told it worked while
+  nothing was stored. The check also pins that the fields with no column at
+  all — `api_key`, `api_secret` — and the one that exists but is outside the
+  allow-list — `wan_speed_mbps` — never reappear.
+- A non-admin's save is checked not to carry the admin-only fields, because
+  the server rejects the whole request when one is present.
+- The admin-only controls are checked to be gated on the operator's role.
+- The purge is checked to send all three of the fields the server demands —
+  matched as object keys, so the dialog's own documentation cannot satisfy
+  the test.
+- The alert-config body is checked not to carry the event profile, and the
+  public-interface write is checked to send the **whole** map.
+
+### Fixed — Controls that would have answered 403
+
+Several of the server's endpoints are **admin-only**, and the console has to
+know that before it calls them:
+
+- **The purge job queries are not fired for an operator.** The purge surface
+  is admin-only end to end, the read-only job list included, so an operator
+  was getting a 403 on every page load.
+- **The credential reveal button is disabled for an operator.** Revealing a
+  stored secret is admin-only; the button used to ask for a password and a
+  TOTP code and then answer 403.
+- **The Event Profile picker is disabled for an operator.** Assigning one
+  goes through its own admin-only endpoint, so a save would have committed
+  the alert-config and *then* failed on the profile — a half-applied
+  override reported as a failure.
+- **The per-interface public control is disabled for an operator.** Reading
+  the setting is operator-level; writing it is not.
+
+### Fixed — Two interface toggles could erase each other
+
+The per-interface public setting holds the map for **every** device, and
+there is one toggle per interface. Each toggle used to hold its own copy of
+the map, so toggling interface A and then interface B would have had B
+write the map as it was *before* A's change — erasing A's selection. The
+map is now read from the shared query cache and written back optimistically,
+so the second toggle builds on the first one's result.
+
 ## [0.11.448] - 2026-10-26
 
 ### Added — Declare a connection, and act on every alert that matches

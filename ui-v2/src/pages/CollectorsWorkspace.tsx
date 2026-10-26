@@ -10,16 +10,18 @@ import {
   Key,
   PowerOff,
   RotateCcw,
+  ShieldAlert,
   Trash2,
   Edit3,
   Terminal,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, type MeResponse } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
+import { AlertConfigDrawer } from '@/components/devices/alert-config-drawer';
 import { ColumnDef } from '@tanstack/react-table';
 
 type CollectorsTab = 'probes' | 'sites';
@@ -480,10 +482,19 @@ function SitesSubTab() {
     queryFn: () => apiFetch<SiteRecord[]>('/admin/api/sites'),
   });
 
+  // The operator's own role. The Event Profile is assigned through an
+  // admin-only endpoint, so the picker has to be gated.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
+  const isAdmin = me?.role === 'admin';
+
   const sites = sitesList ?? [];
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [siteToDelete, setSiteToDelete] = useState<SiteRecord | null>(null);
+  const [alertConfigSite, setAlertConfigSite] = useState<SiteRecord | null>(null);
   const [editingSite, setEditingSite] = useState<Partial<SiteRecord>>({
     name: '',
     address: '',
@@ -584,6 +595,18 @@ function SitesSubTab() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1.5">
+            {/*
+              The per-site alert override. The console had only the GLOBAL
+              thresholds, so a noisy site could not be given its own numbers.
+            */}
+            <button
+              type="button"
+              onClick={() => setAlertConfigSite(row.original)}
+              title="Alert thresholds & routing for this site"
+              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               onClick={() => {
@@ -775,6 +798,22 @@ function SitesSubTab() {
           </div>
         </div>
       </SlideOverDrawer>
+
+      {/*
+        The per-site alert override. The console had only the GLOBAL
+        thresholds, so a noisy site could not be given its own numbers.
+      */}
+      <AlertConfigDrawer
+        open={!!alertConfigSite}
+        onOpenChange={(open) => {
+          if (!open) setAlertConfigSite(null);
+        }}
+        scope="site"
+        id={alertConfigSite?.id ?? 0}
+        name={alertConfigSite?.name ?? ''}
+        // The Event Profile is assigned through an ADMIN-ONLY endpoint.
+        canAssignEventProfile={isAdmin}
+      />
 
       <ConfirmDialog
         open={!!siteToDelete}
