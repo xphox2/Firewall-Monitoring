@@ -43,6 +43,48 @@ export function buildAlertQuery(opts: {
   return params.toString();
 }
 
+/**
+ * Query string for the BULK-BY-FILTER endpoints
+ * (POST /api/alerts/bulk-acknowledge-filter, /bulk-snooze-filter).
+ *
+ * The server accepts device_id, alert_type, severity, acknowledged and
+ * include_snoozed. A SITE filter is NOT one of them, so it is deliberately
+ * NOT sent: the server would ignore it and the action would reach alerts
+ * outside the site the operator is looking at. The console withholds the
+ * cross-page shortcut entirely when a site filter is active rather than build
+ * a request the server cannot scope.
+ *
+ * The acknowledged value comes from the QUEUE (the open tab is
+ * acknowledged=false, the history tab acknowledged=true), not from a
+ * control: the tab already says which set is being worked on.
+ */
+export function buildAlertBulkFilterQuery(
+  filters: AlertFilters,
+  acknowledged: boolean,
+): string {
+  const params = new URLSearchParams();
+  if (filters.deviceId) params.set('device_id', filters.deviceId);
+  if (filters.alertType) params.set('alert_type', filters.alertType);
+  if (filters.severity) params.set('severity', filters.severity);
+  // The list hides snoozed alerts unless this is set, and the by-filter
+  // endpoints honour it too — so the action reaches exactly the set the
+  // operator is shown. Without it the operator was shown N alerts and the
+  // action touched the snoozed ones as well.
+  if (filters.includeSnoozed) params.set('include_snoozed', 'true');
+  params.set('acknowledged', acknowledged ? 'true' : 'false');
+  return params.toString();
+}
+
+/**
+ * Whether the cross-page bulk action can be offered at all.
+ *
+ * False when a site filter is active, because the bulk-by-filter endpoints
+ * cannot filter by site.
+ */
+export function bulkFilterCanScopeBySite(filters: AlertFilters): boolean {
+  return !filters.siteId;
+}
+
 export type AlertState = 'resolved' | 'acknowledged' | 'snoozed' | 'open';
 
 export function alertState(

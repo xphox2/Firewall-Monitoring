@@ -282,6 +282,13 @@ type AlertFilter struct {
 	AlertType    string // "" = any
 	Severity     string // "" = any
 	Acknowledged *bool  // nil = any (typically the caller passes false to ack only unacked rows)
+	// IncludeSnoozed keeps the SNOOZED rows in scope. It defaults to false so
+	// the filter matches the LIST's default, which hides snoozed alerts
+	// (handlers_analytics.go: "snoozed_until IS NULL OR snoozed_until < now").
+	//
+	// Without this the by-filter bulk actions reached alerts the list was
+	// hiding: the operator was shown N alerts and the action touched more.
+	IncludeSnoozed bool
 }
 
 // AcknowledgeAlertsByFilter flips acknowledged=true for all rows matching the
@@ -305,6 +312,9 @@ func (d *Database) AcknowledgeAlertsByFilter(f AlertFilter, notes string) (int64
 	}
 	if f.Acknowledged != nil {
 		q = q.Where("acknowledged = ?", *f.Acknowledged)
+	}
+	if !f.IncludeSnoozed {
+		q = q.Where("snoozed_until IS NULL OR snoozed_until < ?", time.Now())
 	}
 	res := q.Updates(map[string]interface{}{
 		"acknowledged":    true,
@@ -365,6 +375,9 @@ func (d *Database) SnoozeAlertsByFilter(f AlertFilter, until time.Time, by, reas
 	}
 	if f.Acknowledged != nil {
 		q = q.Where("acknowledged = ?", *f.Acknowledged)
+	}
+	if !f.IncludeSnoozed {
+		q = q.Where("snoozed_until IS NULL OR snoozed_until < ?", time.Now())
 	}
 	res := q.Updates(map[string]interface{}{
 		"snoozed_until":  until,

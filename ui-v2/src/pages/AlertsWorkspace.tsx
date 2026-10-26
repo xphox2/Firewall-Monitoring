@@ -20,7 +20,9 @@ import {
   ALERT_RANGES,
   EMPTY_ALERT_FILTERS,
   alertState,
+  buildAlertBulkFilterQuery,
   buildAlertQuery,
+  bulkFilterCanScopeBySite,
   pageRange,
   trendBars,
   type AlertFilters,
@@ -189,6 +191,10 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   const [notesDraft, setNotesDraft] = useState('');
   const [snoozeHours, setSnoozeHours] = useState('1');
   const [bulkSnoozeOpen, setBulkSnoozeOpen] = useState(false);
+  // "Select all N matching" — the cross-page selection. When it is on, the
+  // bulk actions apply to every alert matching the filters, not just the rows
+  // on this page.
+  const [selectAllMatching, setSelectAllMatching] = useState(false);
   const [bulkHours, setBulkHours] = useState('1');
   const [bulkReason, setBulkReason] = useState('');
   const [suggestedRule, setSuggestedRule] = useState<any>(null);
@@ -259,12 +265,30 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   const linkedDetections = alertDetailData?.detections ?? [];
   const sourceAddr = alertDetailData?.alert?.source_addr;
 
+  /*
+   * The by-filter bulk endpoints can only express device_id, alert_type,
+   * severity and acknowledged (internal/api/handlers/handlers_analytics.go:
+   * 1437-1458). A SITE filter is not one of them, so a request built from a
+   * site-filtered view would match alerts the operator cannot see. The legacy
+   * console had the same gap and silently dropped the site; acknowledging
+   * alerts that were never on screen is worse than not offering the
+   * shortcut, so it is withheld with an explanation instead.
+   *
+   * Both helpers live in lib/alerts.ts so the rule is unit-tested.
+   */
+  const bulkCanScopeBySite = bulkFilterCanScopeBySite(filters);
+  const buildBulkFilterQuery = (ack: boolean) =>
+    buildAlertBulkFilterQuery(filters, ack);
+
   const updateFilters = (patch: Partial<AlertFilters>) => {
     // Reset synchronously with the filter change: an effect would render once
     // with the new filters and the stale offset and fire a wasted request.
     setFilters((current) => ({ ...current, ...patch }));
     setPage(0);
     setSelected(new Set());
+    // A filter change invalidates the cross-page selection: it was scoped to
+    // the previous filter.
+    setSelectAllMatching(false);
   };
 
   useEffect(() => {
@@ -305,6 +329,57 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
       }),
     onSuccess: () => {
       toast({ title: `Snoozed ${selected.size} alert(s)`, variant: 'info' });
+      setSelected(new Set());
+      setBulkSnoozeOpen(false);
+      setBulkReason('');
+      setBulkHours('1');
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Bulk snooze failed', description: err.message, variant: 'error' }),
+  });
+
+  // The by-FILTER bulk acknowledge: every alert matching the filters.
+  const bulkAckFilter = useMutation({
+    mutationFn: async () =>
+      apiFetch<{ acknowledged: number }>(
+        `/admin/api/alerts/bulk-acknowledge-filter?${buildBulkFilterQuery(acknowledged)}`,
+        { method: 'POST', body: { notes: bulkReason.trim() } },
+      ),
+    onSuccess: (res) => {
+      toast({
+        title: `Acknowledged ${res.acknowledged} matching alert(s)`,
+        variant: 'success',
+      });
+      setSelectAllMatching(false);
+      setSelected(new Set());
+      setBulkReason('');
+      invalidate();
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Bulk acknowledge failed', description: err.message, variant: 'error' }),
+  });
+
+  // The by-FILTER bulk snooze. This one is NEW: the legacy console had no
+  // bulk-snooze-by-filter UI, but the endpoint was already live.
+  const bulkSnoozeFilter = useMutation({
+    mutationFn: async () =>
+      apiFetch<{ snoozed: number }>(
+        `/admin/api/alerts/bulk-snooze-filter?${buildBulkFilterQuery(acknowledged)}`,
+        {
+          method: 'POST',
+          body: {
+            hours: Math.max(1, Number(bulkHours) || 1),
+            reason: bulkReason.trim(),
+          },
+        },
+      ),
+    onSuccess: (res) => {
+      toast({
+        title: `Snoozed ${res.snoozed} matching alert(s)`,
+        variant: 'info',
+      });
+      setSelectAllMatching(false);
       setSelected(new Set());
       setBulkSnoozeOpen(false);
       setBulkReason('');
@@ -751,14 +826,19 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
 
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2">
-          <span className="text-xs font-semibold text-text">{selected.size} selected</span>
+          <span className="text-xs font-semibold text-text">
+            {selectAllMatching
+              ? `All ${total.toLocaleString()} matching alerts are selected`
+              : `${selected.size} selected`}
+          </span>
           <button
             type="button"
-            onClick={() => bulkAck.mutate()}
-            disabled={bulkAck.isPending}
+            onClick={() => (selectAllMatching ? bulkAckFilter.mutate() : bulkAck.mutate())}
+            disabled={bulkAck.isPending || bulkAckFilter.isPending}
             className="flex items-center gap-1 rounded bg-sig-ok px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-50"
           >
-            <CheckCheck className="h-3 w-3" /> Acknowledge
+            <CheckCheck className="h-3 w-3" />
+            {selectAllMatching ? `Acknowledge all ${total.toLocaleString()}` : 'Acknowledge'}
           </button>
           <button
             type="button"
@@ -769,11 +849,47 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
           </button>
           <button
             type="button"
-            onClick={() => setSelected(new Set())}
+            onClick={() => {
+              setSelected(new Set());
+              setSelectAllMatching(false);
+            }}
             className="ml-auto text-[11px] text-text-dim hover:text-text"
           >
             Clear selection
           </button>
+        </div>
+      )}
+
+      {/*
+        The cross-page selection. It appears once the whole page is selected
+        and there are more matching rows than fit on it — the same shape the
+        legacy console used.
+      */}
+      {selected.size > 0 &&
+        !selectAllMatching &&
+        total > alerts.length &&
+        selected.size === alerts.length && (
+        <div className="rounded-lg border border-border bg-bg-panel px-3 py-2 text-[11px] text-text-dim">
+          {bulkCanScopeBySite ? (
+            <>
+              {selected.size} selected on this page.{' '}
+              <button
+                type="button"
+                onClick={() => setSelectAllMatching(true)}
+                className="text-accent underline"
+              >
+                Select all {total.toLocaleString()} matching the current filter
+              </button>
+            </>
+          ) : (
+            <>
+              {selected.size} selected on this page. Selecting across pages is
+              unavailable while a site filter is active — the bulk endpoint
+              filters by device, type, severity and acknowledgement, not by
+              site, so it would reach alerts outside the site on screen. Clear
+              the site filter to select across pages.
+            </>
+          )}
         </div>
       )}
 
@@ -1060,11 +1176,13 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
             </button>
             <button
               type="button"
-              onClick={() => bulkSnooze.mutate()}
-              disabled={bulkSnooze.isPending}
+              onClick={() => (selectAllMatching ? bulkSnoozeFilter.mutate() : bulkSnooze.mutate())}
+              disabled={bulkSnooze.isPending || bulkSnoozeFilter.isPending}
               className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
             >
-              Snooze
+              {selectAllMatching
+                ? `Snooze all ${total.toLocaleString()} matching`
+                : 'Snooze'}
             </button>
           </div>
         }

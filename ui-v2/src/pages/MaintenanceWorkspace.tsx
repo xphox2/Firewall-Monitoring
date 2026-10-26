@@ -183,6 +183,13 @@ export function MaintenanceWorkspace() {
       queryClient.invalidateQueries({ queryKey: ['maintenance-windows'] });
       queryClient.invalidateQueries({ queryKey: ['maintenance-windows-active'] });
     },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not delete the maintenance window',
+        description: err.message,
+        variant: 'error',
+      });
+    },
   });
 
   const selectedTypes = new Set(

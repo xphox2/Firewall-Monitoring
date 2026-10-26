@@ -204,6 +204,13 @@ function ProbesSubTab() {
     onSuccess: () => {
       toast({ title: 'Heartbeat noop command enqueued', variant: 'info' });
     },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not enqueue the heartbeat command',
+        description: err.message,
+        variant: 'error',
+      });
+    },
   });
 
   const columns = useMemo<ColumnDef<ProbeRecord, unknown>[]>(

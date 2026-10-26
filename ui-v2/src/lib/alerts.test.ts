@@ -2,11 +2,60 @@ import { describe, expect, it } from 'vitest';
 import {
   EMPTY_ALERT_FILTERS,
   alertState,
+  buildAlertBulkFilterQuery,
   buildAlertQuery,
+  bulkFilterCanScopeBySite,
   compactBucket,
   pageRange,
   trendBars,
 } from './alerts';
+
+describe('buildAlertBulkFilterQuery', () => {
+  it('always sends the acknowledgement state', () => {
+    // The queue decides it: the open tab is acknowledged=false, the history
+    // tab acknowledged=true. The server requires at least one filter, and
+    // this one is always present.
+    const open = new URLSearchParams(buildAlertBulkFilterQuery(EMPTY_ALERT_FILTERS, false));
+    expect(open.get('acknowledged')).toBe('false');
+    const history = new URLSearchParams(buildAlertBulkFilterQuery(EMPTY_ALERT_FILTERS, true));
+    expect(history.get('acknowledged')).toBe('true');
+  });
+
+  it('sends the filters the server accepts', () => {
+    const q = new URLSearchParams(
+      buildAlertBulkFilterQuery(
+        { deviceId: '7', siteId: '', severity: 'critical', alertType: 'CPU_HIGH', includeSnoozed: false },
+        false,
+      ),
+    );
+    expect(q.get('device_id')).toBe('7');
+    expect(q.get('severity')).toBe('critical');
+    expect(q.get('alert_type')).toBe('CPU_HIGH');
+  });
+
+  it('NEVER sends site_id — the server ignores it', () => {
+    // The bulk-by-filter endpoint accepts device_id, alert_type, severity
+    // and acknowledged ONLY. A site_id in the query would be ignored, and
+    // the action would reach alerts outside the site on screen.
+    const q = new URLSearchParams(
+      buildAlertBulkFilterQuery(
+        { deviceId: '', siteId: '4', severity: '', alertType: '', includeSnoozed: false },
+        false,
+      ),
+    );
+    expect(q.has('site_id')).toBe(false);
+  });
+});
+
+describe('bulkFilterCanScopeBySite', () => {
+  it('is true when no site filter is active', () => {
+    expect(bulkFilterCanScopeBySite(EMPTY_ALERT_FILTERS)).toBe(true);
+  });
+
+  it('is false when a site filter is active', () => {
+    expect(bulkFilterCanScopeBySite({ ...EMPTY_ALERT_FILTERS, siteId: '4' })).toBe(false);
+  });
+});
 
 describe('buildAlertQuery', () => {
   it('always sends acknowledgement, limit and offset', () => {

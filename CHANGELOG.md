@@ -1,6 +1,80 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.448] - 2026-10-26
+
+### Added — Declare a connection, and act on every alert that matches
+
+- **The V2 console could only DELETE a connection.** The server's create and
+  update endpoints were live and unused, so a link between two monitored
+  devices could not be declared or corrected from the V2 console at all. There
+  is now a connection editor: the endpoints, the type and the notes, with the
+  type list pinned to the server's allowlist.
+  - The form sends the names the server binds. It does not send `id`,
+    `match_method` or `auto_detected` — the server owns those — and it does
+    not send `status` on create, because the server forces `unknown`: a new
+    link has not been observed yet.
+  - A retired device is not offered as an endpoint, because the server
+    rejects it, and the count of hidden devices is stated rather than the
+    choices silently shrinking.
+- **The server's connection update no longer accepts a field it cannot
+  store.** `description` was in the update allowlist, but
+  `models.DeviceConnection` has no such column — only `Notes`. A client that
+  sent it got a 500 on **every** update, because a map update turns the key
+  into a column name. The entry is gone.
+
+- **The V2 console could not act on alerts ACROSS PAGES.** The bulk actions
+  worked on the rows on the current page only, so an operator with 4,000
+  matching alerts had to page through them. The server's by-filter endpoints
+  were live and unused.
+  - Once the whole page is selected and more rows match than fit on it, the
+    console offers "Select all N matching the current filter", and the bulk
+    actions then apply to every matching alert.
+  - **The site filter is deliberately not sent to the bulk endpoint.** The
+    server accepts device, type, severity, acknowledgement and the snooze
+    scope — and ignores a site. A request built from a
+    site-filtered view would therefore reach alerts the operator cannot see.
+    The legacy console had the same gap and silently dropped the site;
+    acknowledging alerts that were never on screen is worse than not
+    offering the shortcut, so the console withholds it and says why.
+  - **The action now reaches exactly the set on screen.** The list hides
+    snoozed alerts, but the by-filter endpoints had no snooze predicate, so
+    the action reached the snoozed rows as well: the operator was told "all
+    12 matching" and 17 rows changed. The endpoints now honour
+    `include_snoozed`, and the console sends it.
+  - Bulk snooze across pages is new: the legacy console never had it, but the
+    endpoint was already there.
+
+### Fixed — Seven actions that failed without saying so
+
+- **A mutation with no error handler fails silently**: the operator presses
+  a button, nothing appears to happen, and the state does not change. Seven
+  of the console's 59 mutations were like that.
+- **The worst of them was revoking an API token.** A failed revoke left the
+  operator believing the token was dead when it was still live. The other six
+  were the device lifecycle (retire and restore), the flow-detection
+  acknowledgement, the maintenance-window delete, the 2FA reset, the report
+  schedule save and the collector heartbeat command.
+- All 59 now report the failure, with the message the server sent.
+
+### Added — Guardrails so these do not come back
+
+- The connection types the console offers are pinned to the server's
+  allowlist. The server rejects anything outside it (the list is the AUDIT-184
+  guard: `connection_type` is rendered by the badge helpers), so a type the
+  server accepts must be offered and one it rejects must not. The server's
+  list is PARSED from its Go source rather than copied here, so the two
+  cannot drift apart unnoticed.
+- Every field the connection editor sends is checked against the columns the
+  model actually has. A field with no column is silently dropped on create
+  and 500s on update, which is exactly what `description` did.
+- Every `useMutation` in the console is checked for an error handler. The
+  check parses the TypeScript and brace-matches each options object, so an
+  `onError` belonging to a neighbouring mutation cannot be mistaken for this
+  one's.
+- The cross-page bulk action is checked to never send a `site_id` the server
+  would ignore.
+
 ## [0.11.447] - 2026-10-25
 
 ### Added — A loading and motion layer for the V2 console

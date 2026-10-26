@@ -213,6 +213,9 @@ function UsersRbacSubTab() {
       toast({ title: 'User 2FA reset', variant: 'info' });
       queryClient.invalidateQueries({ queryKey: ['admin-users'] });
     },
+    onError: (err: Error) => {
+      toast({ title: 'Could not reset 2FA', description: err.message, variant: 'error' });
+    },
   });
 
   const deleteUserMutation = useMutation({
@@ -638,6 +641,11 @@ function ApiTokensSubTab() {
     onSuccess: () => {
       toast({ title: 'API token revoked', variant: 'info' });
       queryClient.invalidateQueries({ queryKey: ['api-tokens'] });
+    },
+    onError: (err: Error) => {
+      // This one matters most: a silently-failed revoke leaves the operator
+      // believing the token is dead when it is still live.
+      toast({ title: 'Could not revoke the token', description: err.message, variant: 'error' });
     },
   });
 
@@ -1169,6 +1177,13 @@ function EmailReportsSubTab() {
     onSuccess: () => {
       toast({ title: 'Report schedule saved', variant: 'success' });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not save the report schedule',
+        description: err.message,
+        variant: 'error',
+      });
     },
   });
 

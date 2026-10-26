@@ -1353,6 +1353,10 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 		filter.Acknowledged = &ack
 		hasAnyFilter = true
 	}
+	// The list hides snoozed alerts unless include_snoozed=true, so the bulk
+	// scope has to follow it: otherwise the operator is shown N alerts and the
+	// action touches the snoozed ones as well.
+	filter.IncludeSnoozed = c.Query("include_snoozed") == "true"
 	if !hasAnyFilter {
 		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
 		return
@@ -1456,6 +1460,10 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 		filter.Acknowledged = &ack
 		hasAnyFilter = true
 	}
+	// The list hides snoozed alerts unless include_snoozed=true, so the bulk
+	// scope has to follow it: otherwise the operator is shown N alerts and the
+	// action touches the snoozed ones as well.
+	filter.IncludeSnoozed = c.Query("include_snoozed") == "true"
 
 	if !hasAnyFilter {
 		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
