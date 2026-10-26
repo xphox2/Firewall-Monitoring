@@ -7,6 +7,7 @@ import { timeBucketSeries } from '@/lib/events';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
+import { SkeletonValue } from '@/components/ui/skeleton';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
@@ -107,7 +108,7 @@ export function SyslogWorkspace() {
     refetchInterval: 15_000,
   });
 
-  const { data: stats, isError: statsError } = useQuery({
+  const { data: stats, isError: statsError, isLoading: statsLoading } = useQuery({
     queryKey: ['syslog-stats', hours],
     queryFn: () => apiFetch<SyslogStats>(`/admin/api/syslog/stats?hours=${hours}`),
     refetchInterval: 30_000,
@@ -235,7 +236,10 @@ export function SyslogWorkspace() {
         <div className="space-y-3">
           <div className="rounded-xl border border-border bg-bg-card p-3.5">
             <div className="text-[10px] uppercase text-text-faint">Messages in {range}</div>
-            <div className="mt-0.5 font-mono text-lg font-bold text-text">{stats?.total ?? 0}</div>
+            <div className="mt-0.5 font-mono text-lg font-bold text-text">
+              <SkeletonValue loading={statsLoading} width="w-12" height="1.25rem" />
+              {statsLoading ? null : (stats?.total ?? 0)}
+            </div>
           </div>
           <BarList title="Severity" rows={severityRows} empty="No severity data." />
         </div>

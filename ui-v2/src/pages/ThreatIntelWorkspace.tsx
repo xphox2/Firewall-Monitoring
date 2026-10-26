@@ -873,12 +873,15 @@ function IndicatorsSection() {
 function StormTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data, isError, error } = useQuery({
+  const { data, isError, error, isLoading } = useQuery({
     queryKey: ['storm-tuning'],
     queryFn: () => apiFetch<{ storm_sources?: number }>('/admin/api/threat-intel/storm-tuning'),
   });
   const [value, setValue] = useState<string | null>(null);
-  const current = value ?? String(data?.storm_sources ?? 25);
+  // While the threshold is loading the field is EMPTY, not 25: a prefilled
+  // number reads as the server's value, and saving it would overwrite the
+  // real threshold with a guess.
+  const current = value ?? (isLoading ? '' : String(data?.storm_sources ?? 25));
   const valid = current.trim() !== '' && Number.isFinite(Number(current));
 
   const save = useMutation({
@@ -916,13 +919,17 @@ function StormTab() {
           min={0}
           max={100000}
           value={current}
+          disabled={isLoading}
           onChange={(e) => setValue(e.target.value)}
-          className="w-40 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+          className="w-40 rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text disabled:opacity-60"
         />
+        {isLoading ? (
+          <span className="mt-1 block text-[11px] text-text-faint">Loading the current threshold…</span>
+        ) : null}
       </label>
       <button
         type="button"
-        disabled={save.isPending || value === null || !valid}
+        disabled={save.isPending || value === null || !valid || isLoading}
         onClick={() => save.mutate()}
         className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
       >

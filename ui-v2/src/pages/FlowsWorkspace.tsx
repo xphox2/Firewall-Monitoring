@@ -20,6 +20,8 @@ import {
   type FlowRange,
 } from '@/lib/flows';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { LongOpStatus } from '@/components/ui/progress-bar';
+import { SkeletonChart } from '@/components/ui/skeleton';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { useToast } from '@/components/ui/toast';
@@ -461,8 +463,23 @@ function TrafficOverview({
 
   if (isLoading && !stats) {
     return (
-      <div className="rounded-xl border border-border bg-bg-card p-8 text-center text-sm text-text-dim">
-        Loading sFlow / NetFlow statistics…
+      <div className="space-y-3">
+        {/*
+          The long-running row. V1's flows page said what it was doing and
+          how long it had been working, because the aggregate can take a
+          minute on a large range and a spinner alone reads as "stuck".
+        */}
+        <LongOpStatus
+          active
+          title={`Flow statistics — ${range}`}
+          step="Aggregating sFlow / NetFlow samples…"
+        />
+        {/*
+          The shape-preserving placeholder. V1's dashboard modules showed
+          their shape while the first payload was in flight rather than
+          collapsing to one centred spinner.
+        */}
+        <SkeletonChart height={220} />
       </div>
     );
   }

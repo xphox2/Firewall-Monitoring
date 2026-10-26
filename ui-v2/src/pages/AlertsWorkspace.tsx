@@ -28,6 +28,7 @@ import {
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
+import { SkeletonValue } from '@/components/ui/skeleton';
 import { ParsedSyslogFields } from '@/components/alerts/parsed-syslog-fields';
 import { isSyslogAlertType } from '@/lib/syslog-parse';
 import { useToast } from '@/components/ui/toast';
@@ -203,7 +204,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
     queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/sites'),
   });
 
-  const { data: stats } = useQuery({
+  const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['alert-stats', hours, filters.deviceId],
     queryFn: () =>
       apiFetch<AlertStats>(
@@ -575,25 +576,29 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Alerts in {range}</div>
           <div className="mt-0.5 font-mono text-xl font-bold text-text">
-            {activeStats?.total ?? 0}
+            <SkeletonValue loading={statsLoading} width="w-12" />
+            {statsLoading ? null : (activeStats?.total ?? 0)}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Critical</div>
           <div className="mt-0.5 font-mono text-xl font-bold text-sig-crit">
-            {severityCounts.critical}
+            <SkeletonValue loading={statsLoading} width="w-10" />
+            {statsLoading ? null : severityCounts.critical}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Warning</div>
           <div className="mt-0.5 font-mono text-xl font-bold text-sig-warn">
-            {severityCounts.warning}
+            <SkeletonValue loading={statsLoading} width="w-10" />
+            {statsLoading ? null : severityCounts.warning}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Info</div>
           <div className="mt-0.5 font-mono text-xl font-bold text-accent">
-            {severityCounts.info}
+            <SkeletonValue loading={statsLoading} width="w-10" />
+            {statsLoading ? null : severityCounts.info}
           </div>
         </div>
       </div>

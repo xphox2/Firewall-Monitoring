@@ -28,6 +28,7 @@ import { useTheme } from '@/lib/theme';
 import { WORKSPACES, resolveV1PathForV2Location } from './navigation';
 import { CommandPalette } from './CommandPalette';
 import { ForcedPasswordChangeModal } from '@/components/ui/step-up-auth-dialog';
+import { SkeletonValue } from '@/components/ui/skeleton';
 
 export function AppShell() {
   const location = useLocation();
@@ -61,7 +62,7 @@ export function AppShell() {
     staleTime: 60_000,
   });
 
-  const { data: summary } = useQuery({
+  const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => apiFetch<DashboardSummary>('/admin/api/dashboard/summary'),
     refetchInterval: 30_000,
@@ -283,9 +284,12 @@ export function AppShell() {
               <Server className="h-3.5 w-3.5 text-sig-ok" />
               <span className="text-text-faint hidden sm:inline">Firewalls:</span>
               <span className="font-mono font-semibold text-sig-ok tabular-nums">
-                {onlineDevices}
+                <SkeletonValue loading={summaryLoading} width="w-8" height="1rem" />
+                {summaryLoading ? null : onlineDevices}
               </span>
-              <span className="text-text-mute font-mono">/ {totalDevices}</span>
+              <span className="font-mono text-text-mute">
+                {summaryLoading ? '' : `/ ${totalDevices}`}
+              </span>
               {offlineDevices > 0 && (
                 <span className="ml-1 rounded bg-sig-crit/15 px-1.5 py-0.2 font-mono text-[10px] font-semibold text-sig-crit">
                   {offlineDevices} down
@@ -300,7 +304,10 @@ export function AppShell() {
             >
               <Radio className="h-3.5 w-3.5 text-accent" />
               <span className="text-text-faint">Collectors:</span>
-              <span className="font-mono font-semibold text-text tabular-nums">{activeProbes}</span>
+              <span className="font-mono font-semibold text-text tabular-nums">
+                <SkeletonValue loading={summaryLoading} width="w-8" height="1rem" />
+                {summaryLoading ? null : activeProbes}
+              </span>
               {staleProbes > 0 && (
                 <span className="ml-1 rounded bg-sig-warn/15 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn">
                   {staleProbes} stale
@@ -316,7 +323,8 @@ export function AppShell() {
               <Terminal className="h-3.5 w-3.5 text-text-faint" />
               <span className="text-text-faint">24h Syslog:</span>
               <span className="font-mono font-semibold text-text tabular-nums">
-                {formatCompactNumber(syslog24h)}
+                <SkeletonValue loading={summaryLoading} width="w-10" height="1rem" />
+                {summaryLoading ? null : formatCompactNumber(syslog24h)}
               </span>
             </button>
 

@@ -22,6 +22,7 @@ import { formatBitsPerSecond } from '@/lib/chart';
 import { bucketToMs } from '@/lib/time-buckets';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { SkeletonStat, SkeletonValue } from '@/components/ui/skeleton';
 import { mergeFeed } from '@/lib/noc';
 
 type OverviewTab = 'health' | 'noc';
@@ -35,13 +36,13 @@ export function OverviewWorkspace() {
     setSearchParams({ tab }, { replace: true });
   };
 
-  const { data: summary } = useQuery({
+  const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ['dashboard-summary'],
     queryFn: () => apiFetch<DashboardSummary>('/admin/api/dashboard/summary'),
     refetchInterval: 30_000,
   });
 
-  const { data: sysHealth } = useQuery({
+  const { data: sysHealth, isLoading: sysHealthLoading } = useQuery({
     queryKey: ['system-health'],
     queryFn: () => apiFetch<SystemHealthSnapshot>('/admin/api/system'),
     refetchInterval: 30_000,
@@ -117,13 +118,18 @@ export function OverviewWorkspace() {
                 <Server className="h-4 w-4 text-sig-ok" />
               </div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="font-display text-2xl font-bold text-sig-ok tabular-nums">
-                  {online}
+                <SkeletonValue loading={summaryLoading} width="w-14" height="2rem" />
+                {summaryLoading ? null : (
+                  <span className="font-display text-2xl font-bold text-sig-ok tabular-nums">{online}</span>
+                )}
+                <span className="font-mono text-xs text-text-mute">
+                  {summaryLoading ? '' : `/ ${total} total`}
                 </span>
-                <span className="font-mono text-xs text-text-mute">/ {total} total</span>
               </div>
               <div className="mt-1 text-[11px] text-text-faint">
-                {offline > 0 ? (
+                {summaryLoading ? (
+                  ''
+                ) : offline > 0 ? (
                   <span className="text-sig-crit font-medium">{offline} offline</span>
                 ) : (
                   'All monitored firewalls reachable'
@@ -140,7 +146,10 @@ export function OverviewWorkspace() {
                 <Radio className="h-4 w-4 text-accent" />
               </div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="font-display text-2xl font-bold text-text tabular-nums">{probes}</span>
+                <SkeletonValue loading={summaryLoading} width="w-14" height="2rem" />
+                {summaryLoading ? null : (
+                  <span className="font-display text-2xl font-bold text-text tabular-nums">{probes}</span>
+                )}
                 <span className="font-mono text-xs text-text-mute">online</span>
               </div>
               <div className="mt-1 text-[11px] text-text-faint">
@@ -159,7 +168,8 @@ export function OverviewWorkspace() {
                 <Terminal className="h-4 w-4 text-accent" />
               </div>
               <div className="mt-2 font-display text-2xl font-bold text-text tabular-nums">
-                {formatCompactNumber(syslog24)}
+                <SkeletonValue loading={summaryLoading} width="w-20" height="2rem" />
+                {summaryLoading ? null : formatCompactNumber(syslog24)}
               </div>
               <div className="mt-1 text-[11px] text-text-faint">Messages ingested (last 24h)</div>
             </div>
@@ -173,14 +183,23 @@ export function OverviewWorkspace() {
                 <BellRing className="h-4 w-4 text-sig-warn" />
               </div>
               <div className="mt-2 font-display text-2xl font-bold text-text tabular-nums">
-                {formatCompactNumber(traps24)}
+                <SkeletonValue loading={summaryLoading} width="w-20" height="2rem" />
+                {summaryLoading ? null : formatCompactNumber(traps24)}
               </div>
               <div className="mt-1 text-[11px] text-text-faint">Trap events received (last 24h)</div>
             </div>
           </div>
 
           {/* Primary Server Runtime Telemetry */}
-          {sysHealth && (
+          {sysHealthLoading && !sysHealth ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[0, 1, 2, 3].map((n) => (
+                <div key={n} className="rounded-lg border border-border bg-bg-card p-3.5">
+                  <SkeletonStat />
+                </div>
+              ))}
+            </div>
+          ) : sysHealth ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-lg border border-border bg-bg-card p-3.5">
                 <div className="text-[11px] text-text-faint flex items-center gap-1.5">
@@ -211,7 +230,7 @@ export function OverviewWorkspace() {
                 </div>
               </div>
             </div>
-          )}
+          ) : null}
 
           <ServerTrend />
 
@@ -724,7 +743,7 @@ function LiveNocWallboard() {
           <span
             className={cn(
               'h-2.5 w-2.5 rounded-full',
-              sseConnected ? 'bg-sig-ok animate-pulse' : 'bg-sig-warn',
+              sseConnected ? 'bg-sig-ok animate-pulse motion-reduce:animate-none' : 'bg-sig-warn',
             )}
           />
           <span className="text-xs font-semibold text-text">

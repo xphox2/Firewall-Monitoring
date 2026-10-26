@@ -1,6 +1,76 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.447] - 2026-10-25
+
+### Added — A loading and motion layer for the V2 console
+
+- **The V2 console had no loading animations and no animated graphs at all.**
+  It had exactly one animated loading primitive — the table skeleton — and
+  every other loading state was static grey text. Nothing in `ui-v2/src`
+  authored an SVG or a canvas, so the traffic particles, the connection
+  bridge, the gauges and the sparklines that made the legacy console feel
+  alive simply did not exist. They are back, ported against V2's token set.
+
+- **The primitives are shared now, not inlined.** `spinner`, `skeleton`,
+  `status-dot`, `gauge`, `loading-overlay` and `progress-bar` live in
+  `ui-v2/src/components/ui/`. The legacy console had nine hand-rolled copies
+  of its spinner and an inline skeleton that only one component knew about.
+  Each one is in use: the status dot in the device list, the gauges on the
+  device detail, the long-running row and the shape-preserving skeleton on
+  the flows page, the overlay over a refetching chart.
+
+- **The loading overlay behaves the way the legacy one did.** It appears only
+  after 250ms, so a fast load never flashes it. It dims the content that is
+  kept on screen rather than replacing it, so changing the time range does not
+  lose the operator's place. It carries `role="status"`, and the host carries
+  `aria-busy` for the whole load — set immediately, not when the overlay
+  appears. The elapsed counter is `aria-live="off"`: it ticks every second,
+  and a polite live region would announce "1s", "2s", "3s" for the entire
+  load. Escape cancels, but only when nothing else owns it: an Escape
+  something else already handled, a dialog's own Escape, and a form field's
+  Escape all win. The Cancel button suppresses `mousedown`, because a blur
+  would commit a pending text edit, start a new load and remove the button
+  from under the click.
+
+- **The traffic particles follow the edges they belong to.** They ride the
+  actual curve of the link (Cytoscape's own control points), not a straight
+  chord, they run only on links that are up, and they are capped at 80. The
+  canvas is torn down with the component, so no loop outlives the map.
+
+- **The connection bridge exists.** The legacy console drew the source and
+  destination joined by a curved path, with dots travelling along it when
+  the link was up, a glow on a healthy link and a slow pulse on a down one.
+  The V2 console had no equivalent graphic, so the graphic is built as well
+  as the motion.
+- **The device detail gained its gauges and the device list its status
+  dots.** The legacy console drew a donut for CPU and memory and pulsed a
+  dot next to a live device; V2 had a plain number and a flat dot.
+
+- **Reduced motion is honoured.** The legacy console scoped its
+  `prefers-reduced-motion` rules per component — deliberately keeping short
+  transitions, because stopping everything makes an interface feel broken
+  rather than calm. V2 now does the same. The particles are the exception
+  that proves the rule: SMIL ignores CSS entirely, so they are switched off
+  in JavaScript instead.
+
+### Fixed — Loading states that showed a number instead of "loading"
+
+- **A metric that read "0" while its query was in flight was a fact, not a
+  placeholder.** The Overview vitals, the topology counters, the alert,
+  syslog and trap stat cards and the shell's fleet strip all rendered a
+  rendered zero, so "0 devices online" was indistinguishable from a real
+  measurement. They now show a placeholder bar of the same height, so the
+  tile says a value is coming.
+- **The storm-digest threshold was prefilled with 25.** The server's value
+  had not arrived yet, and saving the form would have overwritten the real
+  threshold with a guess. The field is empty while loading and the save
+  button is disabled.
+- **A failed query rendered "No matching records".** The shared data view
+  had no error state at all, so a backend failure looked exactly like an
+  empty result set. It now renders the failure, with a retry, and the error
+  state is checked *before* the empty state so the two can never be confused.
+
 ## [0.11.446] - 2026-10-25
 
 ### Fixed — The V2 topology map no longer draws deleted devices

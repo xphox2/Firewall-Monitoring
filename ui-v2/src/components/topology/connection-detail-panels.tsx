@@ -7,6 +7,7 @@ import { formatBitsPerSecond } from '@/lib/chart';
 import { bucketSeconds } from '@/lib/chart';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { DetailSection } from '@/components/ui/detail-section';
+import { ConnectionBridge } from '@/components/topology/connection-bridge';
 
 export interface TunnelRow {
   id?: number;
@@ -174,6 +175,14 @@ export function ConnectionOverview({ detail }: { detail: ConnectionDetail | unde
 
   return (
     <div className="space-y-4">
+      {/* The bridge: the source and destination joined by a live link. */}
+      <ConnectionBridge
+        sourceName={source?.name}
+        destName={dest?.name}
+        status={connection?.status}
+        connectionType={connection?.connection_type}
+      />
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
           {FAMILY_LABEL[detail.family ?? ''] ?? detail.family ?? 'link'}

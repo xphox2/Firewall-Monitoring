@@ -32,6 +32,7 @@ import {
   type ConnectionDetail,
 } from '@/components/topology/connection-detail-panels';
 import { activeTopologyDevices, linkState } from '@/lib/topology';
+import { SkeletonValue } from '@/components/ui/skeleton';
 
 // Cytoscape + fcose are ~400 KB; load them only when the map tab is opened.
 const TopologyMap = lazy(() =>
@@ -206,16 +207,16 @@ function NetworkMapSubTab({
     queryFn: () => apiFetch<any>('/admin/api/connections/vpn-map'),
     refetchInterval: 20_000,
   });
-  const { data: deviceList } = useQuery({
+  const { data: deviceList, isLoading: devicesLoading } = useQuery({
     queryKey: ['devices-for-topology'],
     queryFn: () => apiFetch<TopologyDevice[]>('/admin/api/devices'),
     refetchInterval: 30_000,
   });
-  const { data: siteList } = useQuery({
+  const { data: siteList, isLoading: sitesLoading } = useQuery({
     queryKey: ['sites-for-topology'],
     queryFn: () => apiFetch<TopologySite[]>('/admin/api/sites'),
   });
-  const { data: connList } = useQuery({
+  const { data: connList, isLoading: connsLoading } = useQuery({
     queryKey: ['device-connections'],
     queryFn: () => apiFetch<ConnectionRecord[]>('/admin/api/connections'),
     refetchInterval: 30_000,
@@ -388,32 +389,46 @@ function NetworkMapSubTab({
 
   const upLinks = edges.filter((edge) => linkState(edge.status) === 'up').length;
   const downLinks = edges.filter((edge) => linkState(edge.status) === 'down').length;
+  // The link counters are only meaningful once both link sources have
+  // answered: before that they are a rendered ZERO, which reads as "no links
+  // are down" rather than "not known yet".
+  const linksLoading = connsLoading || sitesLoading;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Devices</div>
-          <div className="text-xl font-mono font-bold text-text mt-0.5">
-            {activeDeviceCount}
+          <div className="mt-0.5 text-xl font-mono font-bold text-text">
+            <SkeletonValue loading={devicesLoading} width="w-10" />
+            {devicesLoading ? null : activeDeviceCount}
           </div>
           {retiredCount > 0 && (
-            <div className="text-[10px] text-text-faint mt-0.5">
+            <div className="mt-0.5 text-[10px] text-text-faint">
               {retiredCount} retired hidden
             </div>
           )}
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Up Links</div>
-          <div className="text-xl font-mono font-bold text-sig-ok mt-0.5">{upLinks}</div>
+          <div className="mt-0.5 text-xl font-mono font-bold text-sig-ok">
+            <SkeletonValue loading={linksLoading} width="w-10" />
+            {linksLoading ? null : upLinks}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Down / Degraded</div>
-          <div className="text-xl font-mono font-bold text-sig-crit mt-0.5">{downLinks}</div>
+          <div className="mt-0.5 text-xl font-mono font-bold text-sig-crit">
+            <SkeletonValue loading={linksLoading} width="w-10" />
+            {linksLoading ? null : downLinks}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Links & Tunnels</div>
-          <div className="text-xl font-mono font-bold text-accent mt-0.5">{edges.length}</div>
+          <div className="mt-0.5 text-xl font-mono font-bold text-accent">
+            <SkeletonValue loading={linksLoading} width="w-10" />
+            {linksLoading ? null : edges.length}
+          </div>
         </div>
       </div>
 

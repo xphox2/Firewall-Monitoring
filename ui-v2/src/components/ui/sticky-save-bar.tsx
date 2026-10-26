@@ -59,7 +59,7 @@ export function StickySaveBar({
     >
       <div className="flex items-center gap-2.5 min-w-0">
         <span className="flex h-2.5 w-2.5 relative shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sig-warn opacity-75" />
+          <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-sig-warn opacity-75" />
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-sig-warn" />
         </span>
         <AlertCircle className="h-4 w-4 text-sig-warn shrink-0 hidden sm:block" />
@@ -85,7 +85,7 @@ export function StickySaveBar({
           className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-60 transition-colors shadow-xs"
         >
           {isSaving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
           ) : (
             <Save className="h-3.5 w-3.5" />
           )}
