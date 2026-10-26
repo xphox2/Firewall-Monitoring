@@ -16,6 +16,21 @@ export interface StepUpAuthDialogProps {
   confirmLabel?: string;
   danger?: boolean;
   totpEnabled?: boolean;
+  /**
+   * Rendered above the credentials.
+   *
+   * A step-up is sometimes only half the confirmation: the permanent device
+   * purge also needs the operator to type the device's name, and the server
+   * compares it exactly. The extra control lives here so the whole
+   * confirmation is read together rather than split across two dialogs.
+   */
+  children?: React.ReactNode;
+  /**
+   * Disables the confirm button. Used when the extra confirmation in
+   * `children` has not been satisfied yet (the device name has to be typed
+   * exactly before a permanent purge can proceed).
+   */
+  confirmDisabled?: boolean;
   onConfirm: (creds: StepUpCredentials) => Promise<void>;
 }
 
@@ -27,6 +42,8 @@ export function StepUpAuthDialog({
   confirmLabel = 'Verify & Continue',
   danger = false,
   totpEnabled = false,
+  children,
+  confirmDisabled = false,
   onConfirm,
 }: StepUpAuthDialogProps) {
   const [password, setPassword] = useState('');
@@ -95,6 +112,8 @@ export function StepUpAuthDialog({
           </div>
 
           <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
+            {children}
+
             <div>
               <label
                 htmlFor="stepup-password"
@@ -161,7 +180,7 @@ export function StepUpAuthDialog({
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || confirmDisabled}
                 className={`inline-flex items-center gap-1.5 rounded-md px-3.5 py-1.5 text-xs font-semibold text-white ${
                   danger
                     ? 'bg-sig-crit hover:opacity-90'

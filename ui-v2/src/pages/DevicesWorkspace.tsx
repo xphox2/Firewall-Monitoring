@@ -21,7 +21,7 @@ import {
   CheckCircle2,
   Download,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, type MeResponse } from '@/lib/api';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StatusDot } from '@/components/ui/status-dot';
@@ -53,6 +53,9 @@ import {
   type ChartSeries,
 } from '@/lib/chart';
 import { useToast } from '@/components/ui/toast';
+import { PurgeDeviceDialog, type PurgeJob } from '@/components/devices/purge-device-dialog';
+import { AlertConfigDrawer } from '@/components/devices/alert-config-drawer';
+import { PublicInterfaceToggle } from '@/components/devices/public-interface-toggle';
 import { ColumnDef } from '@tanstack/react-table';
 
 export interface DeviceRecord {
@@ -71,13 +74,30 @@ export interface DeviceRecord {
   snmp_port?: number;
   snmp_community?: string;
   snmpv3_username?: string;
-  snmpv3_security_level?: string;
   snmpv3_auth_type?: string;
   snmpv3_priv_type?: string;
+  // The credentials. The server masks them on read as "********" and treats a
+  // masked or empty value on write as "leave unchanged", so the console must
+  // never send the mask back.
+  snmpv3_auth_pass?: string;
+  snmpv3_priv_pass?: string;
   ssh_poll_enabled?: boolean;
+  ssh_poll_interval?: number;
   ssh_port?: number;
   ssh_username?: string;
+  ssh_password?: string;
   api_port?: number;
+  api_token?: string;
+  api_insecure_tls?: boolean;
+  location?: string;
+  /**
+   * Whether the device appears on the UNAUTHENTICATED public dashboard.
+   *
+   * The column defaults to TRUE, so a device is published unless an operator
+   * says otherwise - and until the console had a control for it, there was no
+   * way to say otherwise at all.
+   */
+  public_visible?: boolean;
   enabled: boolean;
   retired_at?: string | null;
   last_polled?: string | null;
@@ -88,6 +108,18 @@ export interface DeviceRecord {
   vpn_up?: number;
   vpn_total?: number;
 }
+
+/** The secret fields the editor can set. */
+const SECRET_FIELDS = [
+  'snmp_community',
+  'snmpv3_auth_pass',
+  'snmpv3_priv_pass',
+  'ssh_password',
+  'api_token',
+] as const;
+
+/** The server's mask for a stored secret. */
+const SECRET_MASK = '********';
 
 const CHART_RANGES = ['1h', '6h', '12h', '24h', '7d', '30d', '90d', '365d'] as const;
 
@@ -159,6 +191,16 @@ function DeviceInventoryView() {
     });
   }, [devicesList, lifecycleFilter, search]);
 
+  // The operator's own role. Two device settings are ADMIN-ONLY on the
+  // server (public_visible and api_insecure_tls), so the console has to know
+  // the role to show the control at all — and to disable it with a reason
+  // rather than hide it.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
+  const isAdmin = me?.role === 'admin';
+
   // Tabbed Device Editor Drawer State (replaces the 1,599px #device-modal)
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorTab, setEditorTab] = useState<'general' | 'snmp' | 'credentials' | 'test'>('general');
@@ -205,17 +247,51 @@ function DeviceInventoryView() {
     setEditorOpen(true);
   };
 
+  /**
+   * The body the server is sent.
+   *
+   * Two rules the server enforces and the console has to respect:
+   *
+   * - A secret the operator REVEALED and then edited lives in
+   *   `revealedSecrets`, not in `editingDevice`. Without the merge, a
+   *   revealed secret was silently dropped on save.
+   * - A secret that is still the server's MASK ("********") means "leave it
+   *   alone". Sending the mask back is harmless (the server drops it), but
+   *   stripping it makes the intent explicit and keeps the mask out of the
+   *   request.
+   * - `public_visible` and `api_insecure_tls` are ADMIN-ONLY on the server,
+   *   and the server gates on the PRESENCE of the key, not on a change
+   *   (handlers_devices.go: "if _, has := updates["public_visible"]; has").
+   *   The loaded record carries both, so spreading it would make EVERY
+   *   device edit by a non-admin fail with a 403 — the control would be
+   *   "gated" by breaking the whole save. They are sent only by an admin.
+   */
+  const buildSaveBody = (): Record<string, unknown> => {
+    const body: Record<string, unknown> = { ...editingDevice, ...revealedSecrets };
+    for (const field of SECRET_FIELDS) {
+      if (body[field] === SECRET_MASK) delete body[field];
+    }
+    if (!isAdmin) {
+      // An admin-only field in the body is rejected outright, and the whole
+      // update with it. A non-admin's edit of an ordinary field must not
+      // carry them.
+      delete body.public_visible;
+      delete body.api_insecure_tls;
+    }
+    return body;
+  };
+
   const saveDeviceMutation = useMutation({
     mutationFn: async () => {
       if (editingDevice.id) {
         return apiFetch(`/admin/api/devices/${editingDevice.id}`, {
           method: 'PUT',
-          body: editingDevice,
+          body: buildSaveBody(),
         });
       }
       return apiFetch('/admin/api/devices', {
         method: 'POST',
-        body: editingDevice,
+        body: buildSaveBody(),
       });
     },
     onSuccess: () => {
@@ -302,6 +378,35 @@ function DeviceInventoryView() {
             {formatRelativeTime(row.original.last_polled)}
           </span>
         ),
+      },
+      {
+        accessorKey: 'public_visible',
+        header: 'Public',
+        cell: ({ row }) => {
+          // The public dashboard is UNAUTHENTICATED, and the column defaults
+          // to TRUE. A device that is published has to be visible as such in
+          // the list, or "where did that device go from the public board?"
+          // has no answer.
+          if (row.original.retired_at) {
+            return <span className="text-[10px] uppercase text-text-faint">Retired</span>;
+          }
+          const published = row.original.public_visible !== false;
+          return (
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+                published ? 'bg-sig-warn/15 text-sig-warn' : 'bg-bg-panel text-text-faint',
+              )}
+              title={
+                published
+                  ? 'Published on the unauthenticated public dashboard'
+                  : 'Not published on the public dashboard'
+              }
+            >
+              {published ? 'Public' : 'Private'}
+            </span>
+          );
+        },
       },
       {
         id: 'actions',
@@ -394,6 +499,8 @@ function DeviceInventoryView() {
           ))}
         </div>
       </div>
+
+      <PurgeJobsPanel />
 
       <ResponsiveDataView
         data={filteredDevices}
@@ -563,6 +670,51 @@ function DeviceInventoryView() {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-text-dim mb-1">Location</label>
+                <input
+                  type="text"
+                  value={editingDevice.location ?? ''}
+                  onChange={(e) => setEditingDevice((p) => ({ ...p, location: e.target.value }))}
+                  placeholder="e.g. DC1 Rack 12"
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                />
+              </div>
+            </div>
+
+            {/*
+              The public-dashboard visibility. The column DEFAULTS TO TRUE, so
+              a device is published to the unauthenticated public dashboard
+              unless an operator says otherwise - and until the console had a
+              control for it, there was no way to say otherwise at all.
+              Admin only on the server.
+            */}
+            <label
+              className={cn(
+                'flex items-start gap-2 text-xs',
+                isAdmin ? 'text-text' : 'text-text-faint',
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={editingDevice.public_visible !== false}
+                disabled={!isAdmin}
+                onChange={(e) =>
+                  setEditingDevice((p) => ({ ...p, public_visible: e.target.checked }))
+                }
+                className="mt-0.5 h-4 w-4 rounded accent-accent"
+              />
+              <span>
+                Show on the public dashboard
+                <span className="block text-[10px] text-text-faint">
+                  The public dashboard is UNAUTHENTICATED. The device is published
+                  unless this is cleared.
+                  {!isAdmin ? ' Admin only.' : ''}
+                </span>
+              </span>
+            </label>
+
             <label className="flex items-center gap-2 text-xs text-text pt-2">
               <input
                 type="checkbox"
@@ -640,6 +792,30 @@ function DeviceInventoryView() {
                   />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <DeviceSecretField
+                    label="Auth Password"
+                    field="snmpv3_auth_pass"
+                    editingDevice={editingDevice}
+                    revealedSecrets={revealedSecrets}
+                    onChange={(v) =>
+                      setEditingDevice((p) => ({ ...p, snmpv3_auth_pass: v }))
+                    }
+                    onReveal={setRevealField}
+                    hint="Required for SNMPv3 with an auth protocol."
+                  />
+                  <DeviceSecretField
+                    label="Priv Password"
+                    field="snmpv3_priv_pass"
+                    editingDevice={editingDevice}
+                    revealedSecrets={revealedSecrets}
+                    onChange={(v) =>
+                      setEditingDevice((p) => ({ ...p, snmpv3_priv_pass: v }))
+                    }
+                    onReveal={setRevealField}
+                    hint="Required for SNMPv3 with a privacy protocol."
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-text-dim mb-1">Auth Protocol</label>
                     <select
@@ -705,6 +881,96 @@ function DeviceInventoryView() {
                   className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <DeviceSecretField
+                label="SSH Password"
+                field="ssh_password"
+                editingDevice={editingDevice}
+                revealedSecrets={revealedSecrets}
+                onChange={(v) => setEditingDevice((p) => ({ ...p, ssh_password: v }))}
+                onReveal={setRevealField}
+                hint="Used for the configuration backup and the IPSec provisioning path."
+              />
+              <div>
+                <label className="block text-xs font-medium text-text-dim mb-1">
+                  SSH Poll Interval (seconds)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={editingDevice.ssh_poll_interval ?? 900}
+                  onChange={(e) =>
+                    setEditingDevice((p) => ({ ...p, ssh_poll_interval: Number(e.target.value) }))
+                  }
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+                />
+                <p className="mt-1 text-[10px] text-text-faint">
+                  0 disables the interval. The server default is 900.
+                </p>
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-4 space-y-4">
+              <div>
+                <h3 className="text-xs font-semibold text-text">REST API</h3>
+                <p className="text-[11px] text-text-faint">
+                  The API token is what the IPSec provisioning and configuration
+                  backup paths authenticate with. Without it a device can be
+                  monitored but never configured.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-text-dim mb-1">API Port</label>
+                  <input
+                    type="number"
+                    value={editingDevice.api_port ?? 443}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, api_port: Number(e.target.value) }))}
+                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+                  />
+                </div>
+                <DeviceSecretField
+                  label="API Token"
+                  field="api_token"
+                  editingDevice={editingDevice}
+                  revealedSecrets={revealedSecrets}
+                  onChange={(v) => setEditingDevice((p) => ({ ...p, api_token: v }))}
+                  onReveal={setRevealField}
+                  hint={
+                    editingDevice.vendor === 'opnsense'
+                      ? 'OPNsense stores a key and a secret in this ONE field, separated by a colon. Enter them as "key:secret".'
+                      : undefined
+                  }
+                />
+              </div>
+
+              <label
+                className={cn(
+                  'flex items-start gap-2 text-xs',
+                  isAdmin ? 'text-text' : 'text-text-faint',
+                )}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(editingDevice.api_insecure_tls)}
+                  disabled={!isAdmin}
+                  onChange={(e) =>
+                    setEditingDevice((p) => ({ ...p, api_insecure_tls: e.target.checked }))
+                  }
+                  className="mt-0.5 h-4 w-4 rounded accent-accent"
+                />
+                <span>
+                  Allow a self-signed TLS certificate
+                  {!isAdmin ? (
+                    <span className="block text-[10px] text-text-faint">
+                      Admin only.
+                    </span>
+                  ) : null}
+                </span>
+              </label>
             </div>
           </div>
         )}
@@ -772,8 +1038,202 @@ function DeviceInventoryView() {
   );
 }
 
+/**
+ * The purge jobs across the fleet.
+ *
+ * A purge runs in the BACKGROUND, so the job outlives the dialog that
+ * started it. Without a list the operator had no way to see that a purge was
+ * running, how far it had got, or that one had failed.
+ */
+function PurgeJobsPanel() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const { data: jobs } = useQuery({
+    queryKey: ['purge-jobs'],
+    queryFn: () => apiFetch<PurgeJob[]>('/admin/api/purge-jobs'),
+    refetchInterval: 10_000,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async (id: number) => apiFetch(`/admin/api/devices/${id}/purge/cancel`, { method: 'POST' }),
+    onSuccess: () => {
+      toast({ title: 'Purge cancellation requested', variant: 'info' });
+      queryClient.invalidateQueries({ queryKey: ['purge-jobs'] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not cancel the purge', description: err.message, variant: 'error' }),
+  });
+
+  const rows = (jobs ?? []).filter((job) => job.status === 'pending' || job.status === 'running');
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/5 p-4">
+      <h3 className="text-xs font-semibold text-sig-warn">
+        {rows.length} purge job{rows.length === 1 ? '' : 's'} running
+      </h3>
+      <ul className="mt-2 space-y-1.5">
+        {rows.map((job) => (
+          <li key={job.id} className="flex flex-wrap items-center gap-2 text-[11px] text-text-dim">
+            <span className="font-mono text-text">
+              {job.device_name || `device ${job.device_id}`}
+            </span>
+            <span>
+              {job.rows_deleted.toLocaleString()} row(s) · {job.tables_done}/{job.tables_total}{' '}
+              table(s)
+              {job.current_table ? ` · ${job.current_table}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => cancelMutation.mutate(job.device_id)}
+              disabled={cancelMutation.isPending}
+              className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-0.5 text-[10px] font-medium text-sig-crit disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The purge job for one device, with a cancel.
+ *
+ * A purge runs in the BACKGROUND: the POST only enqueues it, and the worker
+ * deletes the rows table by table. Without this the operator had no way to
+ * see that a purge was running, how far it had got, or to stop it.
+ */
+function PurgeJobPanel({ deviceId }: { deviceId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const { data: job } = useQuery({
+    queryKey: ['device-purge-job', deviceId],
+    queryFn: () => apiFetch<PurgeJob>(`/admin/api/devices/${deviceId}/purge`),
+    retry: false,
+    // Only while it is actually running; a finished job does not need a poll.
+    refetchInterval: (query) => {
+      const status = (query.state.data as PurgeJob | undefined)?.status;
+      return status === 'pending' || status === 'running' ? 3000 : false;
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => apiFetch(`/admin/api/devices/${deviceId}/purge/cancel`, { method: 'POST' }),
+    onSuccess: () => {
+      toast({ title: 'Purge cancellation requested', variant: 'info' });
+      queryClient.invalidateQueries({ queryKey: ['device-purge-job', deviceId] });
+    },
+    onError: (err: Error) =>
+      toast({ title: 'Could not cancel the purge', description: err.message, variant: 'error' }),
+  });
+
+  if (!job) return null;
+
+  const running = job.status === 'pending' || job.status === 'running';
+  return (
+    <div className="rounded-xl border border-border bg-bg-card p-4 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold text-text">Purge job #{job.id}</h3>
+        <span
+          className={cn(
+            'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
+            running
+              ? 'bg-sig-warn/15 text-sig-warn'
+              : job.status === 'done'
+                ? 'bg-sig-ok/15 text-sig-ok'
+                : 'bg-sig-crit/15 text-sig-crit',
+          )}
+        >
+          {job.status}
+        </span>
+      </div>
+      <div className="text-[11px] text-text-dim">
+        {job.rows_deleted.toLocaleString()} row(s) deleted · {job.tables_done}/
+        {job.tables_total} table(s)
+        {job.current_table ? ` · on ${job.current_table}` : ''}
+      </div>
+      <div className="text-[10px] text-text-faint">
+        Requested by {job.requested_by || 'unknown'}
+      </div>
+      {job.error ? <div className="text-[11px] text-sig-crit">{job.error}</div> : null}
+      {running ? (
+        <button
+          type="button"
+          onClick={() => cancelMutation.mutate()}
+          disabled={cancelMutation.isPending}
+          className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1 text-[11px] font-medium text-sig-crit disabled:opacity-50"
+        >
+          Cancel the purge
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function prevIp(p: Partial<DeviceRecord>, ip: string): Partial<DeviceRecord> {
   return { ...p, ip_address: ip };
+}
+
+/**
+ * One credential field: a masked input, a reveal button, and the rule that a
+ * stored secret is never sent back.
+ *
+ * The server masks a stored secret as "********" and treats a masked or empty
+ * value on write as "leave it unchanged", so the field shows the mask and the
+ * operator types over it to replace it.
+ */
+function DeviceSecretField({
+  label,
+  field,
+  editingDevice,
+  revealedSecrets,
+  onChange,
+  onReveal,
+  hint,
+  placeholder,
+}: {
+  label: string;
+  field: string;
+  editingDevice: Partial<DeviceRecord>;
+  revealedSecrets: Record<string, string>;
+  onChange: (value: string) => void;
+  onReveal: (field: string) => void;
+  hint?: string;
+  placeholder?: string;
+}) {
+  const revealed = revealedSecrets[field];
+  const stored = (editingDevice as Record<string, unknown>)[field];
+  const masked = !revealed && stored === SECRET_MASK;
+  return (
+    <div>
+      <label className="block text-xs font-medium text-text-dim mb-1">{label}</label>
+      <div className="flex items-center gap-2">
+        <input
+          type={revealed ? 'text' : 'password'}
+          value={revealed ?? (typeof stored === 'string' ? stored : '')}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
+          autoComplete="new-password"
+          className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+        />
+        {editingDevice.id && (
+          <button
+            type="button"
+            onClick={() => onReveal(field)}
+            title="Reveal the stored value (requires admin password verification)"
+            className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text"
+          >
+            <Eye className="h-3.5 w-3.5" /> Reveal
+          </button>
+        )}
+      </div>
+      {hint ? <p className="mt-1 text-[10px] text-text-faint">{hint}</p> : null}
+    </div>
+  );
 }
 
 // ============================================================================
@@ -794,11 +1254,19 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<DetailTab>('interfaces');
   const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
+  const [alertConfigOpen, setAlertConfigOpen] = useState(false);
 
   const { data: detail, isLoading } = useQuery({
     queryKey: ['device-detail', deviceId],
     queryFn: () => apiFetch<Record<string, any>>(`/admin/api/devices/${deviceId}/detail`),
     refetchInterval: 15_000,
+  });
+
+  // The operator's own account. The purge needs the TOTP code when the
+  // account has 2FA, so the dialog has to know whether to ask for it.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
   });
 
   // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
@@ -1173,6 +1641,17 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                           >
                             {iface.status || 'down'}
                           </span>
+                          {/*
+                            The per-interface public-dashboard choice. It is
+                            a DISPLAY SETTING holding the map for every
+                            device, not the device's public_visible flag.
+                          */}
+                          {iface.name ? (
+                            <PublicInterfaceToggle
+                              deviceId={deviceId}
+                              interfaceName={iface.name}
+                            />
+                          ) : null}
                         </div>
                       </div>
                       <div className="flex items-center justify-between text-[11px] font-mono text-text-dim">
@@ -1369,6 +1848,32 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
             <div className="space-y-4">
               <SecurityStatsPanel stats={securityStats} />
               <LicencePanel licences={licenceInfo} />
+
+              {/*
+                The per-device alert override. The console had only the
+                GLOBAL thresholds, so a noisy device could not be given its
+                own numbers — every device in the fleet raised on the same
+                ones.
+              */}
+              <div className="rounded-xl border border-border bg-bg-card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-semibold text-text">
+                      Alert thresholds & routing
+                    </h3>
+                    <p className="text-[11px] text-text-faint">
+                      Override the global thresholds for this device only.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAlertConfigOpen(true)}
+                    className="rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs font-medium text-text-dim hover:text-text"
+                  >
+                    Alert overrides
+                  </button>
+                </div>
+              </div>
               {!securityStats && licenceInfo.length === 0 && (
                 <div className="rounded-xl border border-border bg-bg-card p-4 text-xs text-text-dim">
                   This device does not report security inspection counters or licences.
@@ -1635,6 +2140,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           {activeTab === 'lifecycle' && (
             <div className="space-y-4">
               <RecentAlertsPanel alerts={recentAlerts} />
+              <PurgeJobPanel deviceId={deviceId} />
               <div className="rounded-xl border border-border bg-bg-card p-5 space-y-4">
               <h2 className="text-sm font-semibold text-text">Device Lifecycle & Permanent Purge</h2>
               <p className="text-xs text-text-dim">
@@ -1674,21 +2180,27 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         </>
       )}
 
-      <StepUpAuthDialog
+      {/*
+        The purge dialog. The previous one sent only the password and the TOTP
+        code, so the server rejected EVERY purge with a 400 on `confirm_name`
+        — the feature was present and unusable. This one collects all three
+        the server asks for and shows the estimate before the operator commits.
+      */}
+      <AlertConfigDrawer
+        open={alertConfigOpen}
+        onOpenChange={setAlertConfigOpen}
+        scope="device"
+        id={deviceId}
+        name={detail?.device?.name ?? `device ${deviceId}`}
+      />
+
+      <PurgeDeviceDialog
         open={purgeDialogOpen}
         onOpenChange={setPurgeDialogOpen}
-        danger
-        title="Permanently Purge Retired Device"
-        description="This action irreversibly deletes this device and all historical telemetry. Enter your admin password to confirm."
-        confirmLabel="Permanently Purge"
-        onConfirm={async ({ password, totp_code }) => {
-          await apiFetch(`/admin/api/devices/${deviceId}/purge`, {
-            method: 'POST',
-            body: { password, totp_code },
-          });
-          toast({ title: 'Device purge job started', variant: 'info' });
-          navigate('/devices');
-        }}
+        deviceId={deviceId}
+        deviceName={detail?.device?.name ?? `device ${deviceId}`}
+        totpEnabled={me?.totp_enabled}
+        onPurged={() => navigate('/devices')}
       />
     </div>
   );
