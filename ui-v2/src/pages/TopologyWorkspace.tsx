@@ -32,6 +32,10 @@ import {
   type ConnectionDetail,
 } from '@/components/topology/connection-detail-panels';
 import { activeTopologyDevices, linkState } from '@/lib/topology';
+import {
+  ConnectionEditor,
+  type ConnectionDevice,
+} from '@/components/topology/connection-editor';
 import { SkeletonValue } from '@/components/ui/skeleton';
 
 // Cytoscape + fcose are ~400 KB; load them only when the map tab is opened.
@@ -77,6 +81,9 @@ interface ConnectionRecord {
   latency_ms?: number;
   source_if_name?: string;
   dest_if_name?: string;
+  // The notes the operator wrote on the link. Editable in the connection
+  // editor, so the list has to carry it.
+  notes?: string;
 }
 
 // The LIST response for an IPSec tunnel intent.
@@ -502,9 +509,18 @@ function ConnectionsSubTab() {
     queryFn: () => apiFetch<ConnectionRecord[]>('/admin/api/connections'),
   });
 
+  // The device list, for the connection editor's endpoint pickers.
+  const { data: deviceList } = useQuery({
+    queryKey: ['devices-for-connections'],
+    queryFn: () => apiFetch<ConnectionDevice[]>('/admin/api/devices'),
+  });
+
   const connections = connList ?? [];
 
   const [selectedConn, setSelectedConn] = useState<ConnectionRecord | null>(null);
+  // The connection being created or edited in the editor drawer.
+  const [connToEdit, setConnToEdit] = useState<ConnectionRecord | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
 
   // Arriving from the map's edge click: open that connection, then drop the
   // one-shot query param so closing the drawer doesn't reopen it.
@@ -596,6 +612,16 @@ function ConnectionsSubTab() {
             </button>
             <button
               type="button"
+              onClick={() => {
+                setConnToEdit(row.original);
+                setEditorOpen(true);
+              }}
+              className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text hover:bg-bg-hover"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
               onClick={() => setConnToDelete(row.original)}
               className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
             >
@@ -618,6 +644,23 @@ function ConnectionsSubTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-text-dim">
+          Declared links between monitored devices. Auto-detected links appear here
+          too, and can be inspected but not edited.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setConnToEdit(null);
+            setEditorOpen(true);
+          }}
+          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent"
+        >
+          New connection
+        </button>
+      </div>
+
       <ResponsiveDataView
         data={connections}
         columns={columns}
@@ -640,6 +683,17 @@ function ConnectionsSubTab() {
             </div>
           </div>
         )}
+      />
+
+      <ConnectionEditor
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        connection={connToEdit}
+        devices={deviceList ?? []}
+        onSaved={() => {
+          queryClient.invalidateQueries({ queryKey: ['device-connections'] });
+          queryClient.invalidateQueries({ queryKey: ['vpn-map-data'] });
+        }}
       />
 
       <SlideOverDrawer

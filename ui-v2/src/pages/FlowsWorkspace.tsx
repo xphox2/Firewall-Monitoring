@@ -959,6 +959,13 @@ function FlowDetectionsSubTab() {
       toast({ title: 'Flow detection acknowledged', variant: 'success' });
       queryClient.invalidateQueries({ queryKey: ['flow-detections'] });
     },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not acknowledge the detection',
+        description: err.message,
+        variant: 'error',
+      });
+    },
   });
 
   const columns = useMemo<ColumnDef<any, unknown>[]>(

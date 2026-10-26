@@ -862,6 +862,13 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
       queryClient.invalidateQueries({ queryKey: ['device-detail', deviceId] });
       queryClient.invalidateQueries({ queryKey: ['devices'] });
     },
+    onError: (err: Error) => {
+      toast({
+        title: 'Could not update the device lifecycle',
+        description: err.message,
+        variant: 'error',
+      });
+    },
   });
 
   const device: DeviceRecord | undefined = detail?.device;

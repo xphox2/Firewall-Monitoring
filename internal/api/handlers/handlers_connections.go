@@ -251,10 +251,12 @@ func (h *Handler) UpdateDeviceConnection(c *gin.Context) {
 		"name":             true,
 		"source_device_id": true,
 		"dest_device_id":   true,
-		"description":      true,
 		"connection_type":  true,
 		"notes":            true,
 		"status":           true,
+		// "description" was listed here but DeviceConnection has NO such
+		// column (only Notes). A client that sent it got a 500 on every
+		// update, because a map update turns the key into a column name.
 	}
 
 	var updates map[string]interface{}
