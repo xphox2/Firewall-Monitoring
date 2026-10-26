@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ShieldAlert, Lock, KeyRound, Loader2, X } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { Input } from '@/components/ui/input';
 
 export interface StepUpCredentials {
   password: string;
@@ -259,13 +260,13 @@ export function ForcedPasswordChangeModal({
               <label htmlFor="fp-current" className="block text-xs font-medium text-text-dim mb-1">
                 Current Password
               </label>
-              <input
+              <Input
                 id="fp-current"
                 type="password"
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
+               
                 required
               />
             </div>
@@ -273,13 +274,13 @@ export function ForcedPasswordChangeModal({
               <label htmlFor="fp-new" className="block text-xs font-medium text-text-dim mb-1">
                 New Password (min 12 chars)
               </label>
-              <input
+              <Input
                 id="fp-new"
                 type="password"
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
+               
                 required
               />
             </div>
@@ -287,13 +288,13 @@ export function ForcedPasswordChangeModal({
               <label htmlFor="fp-confirm" className="block text-xs font-medium text-text-dim mb-1">
                 Confirm New Password
               </label>
-              <input
+              <Input
                 id="fp-confirm"
                 type="password"
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
+               
                 required
               />
             </div>

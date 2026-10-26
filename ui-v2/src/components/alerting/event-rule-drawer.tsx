@@ -14,6 +14,7 @@ import {
   type Draft,
   type EventRuleRecord,
 } from '@/lib/event-rule';
+import { Input, Select, Textarea } from '@/components/ui/input';
 
 /** Re-exported so pages can type their lists from one place. */
 export type { EventRuleRecord } from '@/lib/event-rule';
@@ -243,71 +244,71 @@ export function EventRuleDrawer({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Rule name</span>
-              <input
+              <Input
                 type="text"
                 value={draft.name}
                 onChange={(e) => set('name', e.target.value)}
                 placeholder="Suppress FortiGate admin login failures"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Priority (lower first)</span>
-              <input
+              <Input mono
                 type="number"
                 value={draft.priority}
                 onChange={(e) => set('priority', e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
           </div>
 
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Description</span>
-            <textarea
+            <Textarea className="p-2.5"
               rows={2}
               value={draft.description}
               onChange={(e) => set('description', e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+             
             />
           </label>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Action</span>
-              <select
+              <Select
                 value={draft.action}
                 onChange={(e) => set('action', e.target.value as 'alert' | 'suppress')}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 <option value="alert">Alert (fire)</option>
                 <option value="suppress">Suppress (mute)</option>
-              </select>
+              </Select>
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Source</span>
-              <select
+              <Select
                 value={draft.source}
                 onChange={(e) => set('source', e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 {SOURCES.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Enabled</span>
-              <select
+              <Select
                 value={draft.enabled ? 'yes' : 'no'}
                 onChange={(e) => set('enabled', e.target.value === 'yes')}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 <option value="yes">Enabled</option>
                 <option value="no">Disabled</option>
-              </select>
+              </Select>
             </label>
           </div>
 
@@ -316,10 +317,10 @@ export function EventRuleDrawer({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">Profile (layer)</span>
-                <select
+                <Select
                   value={draft.profileId}
                   onChange={(e) => set('profileId', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                 
                 >
                   {profiles.length === 0 && <option value="">Default</option>}
                   {profiles.map((p) => (
@@ -328,28 +329,28 @@ export function EventRuleDrawer({
                       {(p as any).is_default ? ' (Default)' : ''}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">Vendor</span>
-                <select
+                <Select
                   value={draft.vendor}
                   onChange={(e) => set('vendor', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                 
                 >
                   {VENDORS.map(([value, label]) => (
                     <option key={value} value={value}>
                       {label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">Device</span>
-                <select
+                <Select
                   value={draft.deviceId}
                   onChange={(e) => set('deviceId', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                 
                 >
                   <option value="">Any device</option>
                   {devices
@@ -364,14 +365,14 @@ export function EventRuleDrawer({
                         {d.retired_at ? ' (retired)' : ''}
                       </option>
                     ))}
-                </select>
+                </Select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">Site</span>
-                <select
+                <Select
                   value={draft.siteId}
                   onChange={(e) => set('siteId', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                 
                 >
                   <option value="">Any site</option>
                   {sites.map((s) => (
@@ -379,7 +380,7 @@ export function EventRuleDrawer({
                       {s.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
             <p className="text-[11px] leading-relaxed text-text-faint">
@@ -411,57 +412,57 @@ export function EventRuleDrawer({
               <span className="mb-1 block text-xs font-medium text-text-dim">
                 Temporary rule (hours, blank = permanent)
               </span>
-              <input
+              <Input mono
                 type="number"
                 min={1}
                 value={draft.expiresHours}
                 onChange={(e) => set('expiresHours', e.target.value)}
                 placeholder="e.g. 24"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Alert type</span>
-              <input
+              <Input mono
                 type="text"
                 value={draft.alertType}
                 onChange={(e) => set('alertType', e.target.value)}
                 placeholder="LOG_RULE_MATCH (default)"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Severity</span>
-              <select
+              <Select
                 value={draft.severity}
                 onChange={(e) => set('severity', e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 {SEVERITIES.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Group by field</span>
-              <input
+              <Input mono
                 type="text"
                 value={draft.groupBy}
                 onChange={(e) => set('groupBy', e.target.value)}
                 placeholder="src_ip (rate-limit per source)"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Cooldown (minutes)</span>
-              <input
+              <Input mono
                 type="number"
                 value={draft.cooldown}
                 onChange={(e) => set('cooldown', e.target.value)}
                 placeholder="inherit"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
           </div>
@@ -522,15 +523,23 @@ export function EventRuleDrawer({
           ) : (
             <>
               <div className="flex items-center gap-2 text-[11px] text-text-dim">
-                <span>Match</span>
-                <select
-                  value={draft.joiner}
-                  onChange={(e) => set('joiner', e.target.value as 'and' | 'or')}
-                  className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text"
-                >
-                  <option value="and">ALL of</option>
-                  <option value="or">ANY of</option>
-                </select>
+                {/*
+                  The select had a `<span>Match</span>` beside it, which is
+                  not a label: the control had no accessible name at all.
+                  The text and the control are now wrapped together, so the
+                  association is implicit.
+                */}
+                <label className="inline-flex items-center gap-2">
+                  <span>Match</span>
+                  <select
+                    value={draft.joiner}
+                    onChange={(e) => set('joiner', e.target.value as 'and' | 'or')}
+                    className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text focus:outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  >
+                    <option value="and">ALL of</option>
+                    <option value="or">ANY of</option>
+                  </select>
+                </label>
                 <span>the following conditions</span>
               </div>
 
@@ -651,12 +660,12 @@ export function EventRuleDrawer({
                 <span className="mb-1 block text-xs font-medium text-text-dim">
                   Minimum up time (minutes)
                 </span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.minUpMinutes}
                   onChange={(e) => set('minUpMinutes', e.target.value)}
                   placeholder="60 (default)"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
                 <span className="mt-1 block text-[11px] text-text-faint">
                   Suppress flaps: the state must hold this long before firing. 0 disables the
@@ -665,12 +674,12 @@ export function EventRuleDrawer({
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">Daily cap</span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.dailyCap}
                   onChange={(e) => set('dailyCap', e.target.value)}
                   placeholder="1"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
                 <span className="mt-1 block text-[11px] text-text-faint">
                   Maximum fires per source per day (0 = unlimited).
@@ -683,45 +692,45 @@ export function EventRuleDrawer({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">Mode</span>
-                <select
+                <Select
                   value={draft.metricMode}
                   onChange={(e) => set('metricMode', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+                 
                 >
                   <option value="static">Static threshold</option>
                   <option value="zscore">Z-score vs own baseline</option>
-                </select>
+                </Select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">
                   Threshold (blank = inherit)
                 </span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.threshold}
                   onChange={(e) => set('threshold', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">
                   Clear threshold (hysteresis)
                 </span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.clearThreshold}
                   onChange={(e) => set('clearThreshold', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">Z-score K</span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.zscoreK}
                   onChange={(e) => set('zscoreK', e.target.value)}
                   placeholder="3"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
             </div>
@@ -731,35 +740,35 @@ export function EventRuleDrawer({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">Std-dev K</span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.stddevK}
                   onChange={(e) => set('stddevK', e.target.value)}
                   placeholder="3"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">
                   Sustain (minutes)
                 </span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.minDuration}
                   onChange={(e) => set('minDuration', e.target.value)}
                   placeholder="15"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-dim">
                   Floor (Mbps, 0 disables)
                 </span>
-                <input
+                <Input mono
                   type="number"
                   value={draft.minThroughput}
                   onChange={(e) => set('minThroughput', e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+                 
                 />
               </label>
             </div>

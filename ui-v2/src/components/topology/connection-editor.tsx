@@ -3,6 +3,7 @@ import { apiFetch } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
+import { Input, Select } from '@/components/ui/input';
 
 export interface ConnectionDevice {
   id: number;
@@ -206,23 +207,23 @@ export function ConnectionEditor({
       <div className="space-y-4">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-text-dim">Name</span>
-          <input
+          <Input
             type="text"
             value={form.name}
             onChange={(e) => set('name', e.target.value)}
             placeholder="e.g. HQ to DR site"
-            className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+           
           />
         </label>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Source device</span>
-            <select
+            <Select
               value={form.source_device_id}
               onChange={(e) => set('source_device_id', e.target.value)}
               aria-label="Source device"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">Select a device…</option>
               {selectable.map((device) => (
@@ -231,16 +232,16 @@ export function ConnectionEditor({
                   {device.ip_address ? ` (${device.ip_address})` : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Destination device</span>
-            <select
+            <Select
               value={form.dest_device_id}
               onChange={(e) => set('dest_device_id', e.target.value)}
               aria-label="Destination device"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">Select a device…</option>
               {selectable.map((device) => (
@@ -249,7 +250,7 @@ export function ConnectionEditor({
                   {device.ip_address ? ` (${device.ip_address})` : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
 
@@ -265,35 +266,35 @@ export function ConnectionEditor({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Connection type</span>
-            <select
+            <Select
               value={form.connection_type}
               onChange={(e) => set('connection_type', e.target.value)}
               aria-label="Connection type"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               {CONNECTION_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {type}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
 
           {connection ? (
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Status</span>
-              <select
+              <Select
                 value={form.status}
                 onChange={(e) => set('status', e.target.value)}
                 aria-label="Connection status"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 {CONNECTION_STATUSES.map((status) => (
                   <option key={status} value={status}>
                     {status}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           ) : null}
         </div>

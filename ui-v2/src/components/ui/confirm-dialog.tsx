@@ -1,6 +1,8 @@
+import { useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -30,16 +32,29 @@ export function ConfirmDialog({
   pending = false,
   onConfirm,
 }: ConfirmDialogProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/65 backdrop-blur-[1px]" />
         <Dialog.Content
+          ref={contentRef}
+          // `tabIndex={-1}` makes the panel itself focusable, which is what
+          // the autofocus handler below needs.
+          tabIndex={-1}
           className="fixed left-1/2 top-1/2 z-[60] w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-bg-card p-5 shadow-2xl focus:outline-hidden"
           onOpenAutoFocus={(event) => {
             // Default focus lands on the destructive button; send it to the
             // dialog itself so Enter cannot delete anything by reflex.
+            //
+            // The focus has to be moved EXPLICITLY. Radix skips its own
+            // autofocus when this handler prevents the default, and the
+            // panel is not focusable without `tabIndex={-1}`, so before this
+            // the focus stayed on the trigger — which Radix had just marked
+            // `aria-hidden`. A keyboard user was left on a hidden element,
+            // with the screen reader's cursor nowhere.
             event.preventDefault();
+            contentRef.current?.focus();
           }}
         >
           <div className="flex items-start gap-3">
@@ -60,20 +75,16 @@ export function ConfirmDialog({
           </div>
 
           <div className="mt-5 flex justify-end gap-2">
-            <Dialog.Close className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text">
-              {cancelLabel}
+            <Dialog.Close asChild>
+              <Button variant="secondary">{cancelLabel}</Button>
             </Dialog.Close>
-            <button
-              type="button"
+            <Button
               disabled={pending}
               onClick={onConfirm}
-              className={cn(
-                'rounded-md px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50',
-                destructive ? 'bg-sig-crit' : 'bg-accent',
-              )}
+              variant={destructive ? 'destructive' : 'default'}
             >
               {pending ? 'Working…' : confirmLabel}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

@@ -710,7 +710,7 @@ function ConnectionsSubTab() {
         onTabChange={(id) => setDetailTab(id as typeof detailTab)}
       >
         {connDetailError && (
-          <div className="mb-3 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+          <div className="mb-3 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
             Could not load connection detail. It may have been deleted or the endpoint retired.
           </div>
         )}

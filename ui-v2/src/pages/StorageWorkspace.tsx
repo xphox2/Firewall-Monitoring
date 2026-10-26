@@ -21,9 +21,12 @@ import {
 import { apiFetch, ApiError, type MeResponse } from '@/lib/api';
 import { cn, formatBytes, formatNumber, formatRelativeTime } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
+import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import type { ColumnDef } from '@tanstack/react-table';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog, type StepUpCredentials } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
+import { Textarea } from '@/components/ui/input';
 
 // --- Types matching Go backend ---
 
@@ -315,6 +318,79 @@ const ARCHIVE_LABELS: Record<string, { label: string; hint: string; group: strin
 const S3_ONLY_RE =
   /^ARCHIVE_(S3_(ENDPOINT|REGION|BUCKET|PATH_STYLE|ACCESS_KEY_ID|SECRET_ACCESS_KEY)|OBJECT_LOCK_|ALLOW_)/;
 
+/**
+ * The archived telemetry streams.
+ *
+ * Read-only, so the columns are at module level. The table used to be a raw
+ * `<table>` in a horizontal scroller, so a phone got a sideways scroll for
+ * five columns.
+ */
+const archivedStreamColumns: ColumnDef<any, any>[] = [
+  {
+    accessorKey: 'stream',
+    header: 'Stream',
+    cell: ({ row }) => (
+      <span className="font-semibold capitalize text-text">{row.original.stream}</span>
+    ),
+  },
+  {
+    accessorKey: 'state',
+    header: 'Status',
+    cell: ({ row }) => (
+      <span
+        className={cn(
+          'inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
+          row.original.state === 'ok' && 'bg-sig-ok/15 text-sig-ok',
+          (row.original.state === 'error' || row.original.state === 'stalled') &&
+            'bg-sig-crit/15 text-sig-crit',
+          row.original.state !== 'ok' &&
+            row.original.state !== 'error' &&
+            row.original.state !== 'stalled' &&
+            'bg-bg-panel text-text-dim',
+        )}
+      >
+        {row.original.state}
+      </span>
+    ),
+  },
+  {
+    accessorKey: 'verified_through',
+    header: 'Verified Through',
+    cell: ({ row }) => (
+      <span className="font-mono text-text-dim">
+        {row.original.verified_through
+          ? row.original.verified_through.slice(0, 16).replace('T', ' ') + ' UTC'
+          : '—'}
+      </span>
+    ),
+  },
+  {
+    accessorKey: 'backlog_chunks',
+    header: 'Backlog',
+    cell: ({ row }) => (
+      <span className="font-mono text-text">{row.original.backlog_chunks ?? 0} chunks</span>
+    ),
+  },
+  {
+    accessorKey: 'stored_bytes',
+    header: 'Stored Size',
+    cell: ({ row }) => (
+      <span className="font-mono text-text">{formatBytes(row.original.stored_bytes)}</span>
+    ),
+  },
+];
+
+/**
+ * The effective retention window for one syslog severity.
+ *
+ * The table and the mobile card both show it, so it is computed once.
+ */
+function syslogEffectiveWindow(sev: any): string {
+  if (sev.forever) return 'Kept forever';
+  if (sev.months) return `${sev.months} ${sev.months === 1 ? 'month' : 'months'}`;
+  return `${sev.days} days`;
+}
+
 export function StorageWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = ((searchParams.get('tab') as StorageTab) || 'retention') as StorageTab;
@@ -408,6 +484,187 @@ export function StorageWorkspace() {
 
   const getRetVal = (key: string) =>
     key in retEdits ? retEdits[key] : (retentionBaseline[key] ?? '');
+
+
+  /*
+   * The syslog severity retention rows.
+   *
+   * The columns close over the retention edits, so they live inside the
+   * component. The table used to be a raw `<table>` in a horizontal
+   * scroller, so a phone got a sideways scroll for six columns — and the
+   * "keep days" input was off-screen.
+   */
+  const syslogSeverityColumns: ColumnDef<any, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'severity',
+        header: 'Severity',
+        cell: ({ row }) => (
+          <span className="font-medium whitespace-nowrap text-text">
+            <span className="inline-block w-5 font-mono text-text-faint">{row.original.severity}</span>
+            <span>{row.original.name}</span>
+          </span>
+        ),
+      },
+      {
+        id: 'keep',
+        header: 'Keep (Days)',
+        cell: ({ row }) => {
+          const key = `syslog_retention_days_${row.original.severity}`;
+          return (
+            <input
+              type="number"
+              aria-label={`Keep days for severity ${row.original.name}`}
+              min={0}
+              max={3650}
+              value={getRetVal(key)}
+              onChange={(e) =>
+                setRetEdits((prev) => ({ ...prev, [key]: e.target.value }))
+              }
+              placeholder="inherit"
+              className="w-24 rounded-md border border-border bg-bg-panel px-2 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent"
+            />
+          );
+        },
+      },
+      {
+        id: 'effective',
+        header: 'Effective Window',
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono text-xs text-text">
+            {syslogEffectiveWindow(row.original)}{' '}
+            {row.original.inherited && (
+              <span className="font-sans text-text-faint">(inherited)</span>
+            )}
+          </span>
+        ),
+      },
+      {
+        id: 'volume',
+        header: 'Current Volume',
+        meta: { hideOnTablet: true },
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono text-text-faint">
+            {row.original.tracked
+              ? `~${formatNumber(row.original.est_rows)} rows (${formatBytes(row.original.est_bytes)})`
+              : 'below threshold'}
+          </span>
+        ),
+      },
+      {
+        id: 'ingest',
+        header: 'Daily Ingest',
+        meta: { hideOnTablet: true },
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono text-text-dim">
+            {row.original.rate_available
+              ? `~${formatNumber(row.original.rows_per_day)}/d (${formatBytes(row.original.bytes_per_day)}/d)`
+              : 'measuring...'}
+          </span>
+        ),
+      },
+      {
+        id: 'footprint',
+        header: 'Projected Footprint',
+        meta: { hideOnTablet: true },
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono text-text">
+            {!row.original.rate_available
+              ? '—'
+              : row.original.projected_forever
+                ? 'Unbounded'
+                : `~${formatBytes(row.original.projected_bytes)}`}
+          </span>
+        ),
+      },
+    ],
+    [getRetVal, setRetEdits],
+  );
+
+
+  /*
+   * The archive restore jobs.
+   *
+   * The columns close over the step-up re-auth, so they live inside the
+   * component. The table used to be a raw `<table>` in a horizontal
+   * scroller, so a phone got a sideways scroll for six columns.
+   */
+  const dropRestore = (job: any) => {
+    setStepUpContext({
+      title: `Drop Staged Restore #${job.id}`,
+      description: 'Dropping a staged restore deletes its restored rows from staging.',
+      confirmLabel: 'Drop Restore',
+      danger: true,
+      action: async (creds: any) => {
+        await apiFetch(`/admin/api/archive/restores/${job.id}`, {
+          method: 'DELETE',
+          body: creds,
+        });
+        toast.success(`Dropped restore #${job.id}`);
+        refetchRestores();
+      },
+    });
+    setStepUpOpen(true);
+  };
+
+  const restoreJobColumns: ColumnDef<any, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'id',
+        header: 'ID',
+        cell: ({ row }) => <span className="font-mono">#{row.original.id}</span>,
+      },
+      {
+        accessorKey: 'stream',
+        header: 'Stream',
+        cell: ({ row }) => <span className="font-medium capitalize">{row.original.stream}</span>,
+      },
+      {
+        id: 'window',
+        header: 'Window',
+        cell: ({ row }) => (
+          <span className="font-mono text-text-dim">
+            {row.original.from_day} → {row.original.to_day}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'status',
+        header: 'State',
+        cell: ({ row }) => (
+          <span className="font-mono uppercase" title={row.original.error || undefined}>
+            {row.original.status}
+          </span>
+        ),
+      },
+      {
+        id: 'progress',
+        header: 'Progress',
+        cell: ({ row }) => (
+          <span className="font-mono">
+            {row.original.objects_done}/{row.original.objects_total} objects (
+            {formatNumber(row.original.rows_loaded)} rows)
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={() => dropRestore(row.original)}
+            className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit hover:bg-sig-crit/20"
+          >
+            <Trash2 className="h-3 w-3" />
+            Drop
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
+
 
   const handleSaveRetention = async () => {
     if (dirtyRetentionKeys.length === 0) return;
@@ -1052,78 +1309,42 @@ export function StorageWorkspace() {
                 Loading syslog severity statistics...
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      <th className="px-4 py-2.5">Severity</th>
-                      <th className="px-3 py-2.5">Keep (Days)</th>
-                      <th className="px-3 py-2.5">Effective Window</th>
-                      <th className="px-3 py-2.5 hidden sm:table-cell">Current Volume</th>
-                      <th className="px-3 py-2.5 hidden md:table-cell">Daily Ingest</th>
-                      <th className="px-4 py-2.5 hidden lg:table-cell">Projected Footprint</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {(syslogRetention?.severities || []).map((sev) => {
-                      const key = `syslog_retention_days_${sev.severity}`;
-                      const val = getRetVal(key);
-                      const effectiveTxt = sev.forever
-                        ? 'Kept forever'
-                        : sev.months
-                          ? `${sev.months} ${sev.months === 1 ? 'month' : 'months'}`
-                          : `${sev.days} days`;
-                      return (
-                        <tr key={sev.severity} className="hover:bg-bg-hover">
-                          <td className="px-4 py-2 font-medium text-text whitespace-nowrap">
-                            <span className="inline-block w-5 font-mono text-text-faint">
-                              {sev.severity}
-                            </span>
-                            <span>{sev.name}</span>
-                          </td>
-                          <td className="px-3 py-2">
-                            <input
-                              type="number"
-                              aria-label={`Keep days for severity ${sev.name}`}
-                              min={0}
-                              max={3650}
-                              value={val}
-                              onChange={(e) =>
-                                setRetEdits((prev) => ({ ...prev, [key]: e.target.value }))
-                              }
-                              placeholder="inherit"
-                              className="w-24 rounded-md border border-border bg-bg-panel px-2 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
-                            />
-                          </td>
-                          <td className="px-3 py-2 font-mono text-xs text-text whitespace-nowrap">
-                            {effectiveTxt}{' '}
-                            {sev.inherited && (
-                              <span className="text-text-faint font-sans">(inherited)</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 hidden sm:table-cell text-text-faint font-mono whitespace-nowrap">
-                            {sev.tracked
-                              ? `~${formatNumber(sev.est_rows)} rows (${formatBytes(sev.est_bytes)})`
-                              : 'below threshold'}
-                          </td>
-                          <td className="px-3 py-2 hidden md:table-cell text-text-dim font-mono whitespace-nowrap">
-                            {sev.rate_available
-                              ? `~${formatNumber(sev.rows_per_day)}/d (${formatBytes(sev.bytes_per_day)}/d)`
-                              : 'measuring...'}
-                          </td>
-                          <td className="px-4 py-2 hidden lg:table-cell font-mono text-text whitespace-nowrap">
-                            {!sev.rate_available
-                              ? '—'
-                              : sev.projected_forever
-                                ? 'Unbounded'
-                                : `~${formatBytes(sev.projected_bytes)}`}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveDataView
+                data={syslogRetention?.severities ?? []}
+                columns={syslogSeverityColumns}
+                getRowId={(row) => String(row.severity)}
+                renderMobileCard={(sev) => (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] text-text-faint">{sev.severity}</span>
+                      <span className="text-xs font-medium text-text">{sev.name}</span>
+                    </div>
+                    <div className="font-mono text-[11px] text-text">
+                      {syslogEffectiveWindow(sev)}
+                    </div>
+                    <label className="block">
+                      <span className="mb-1 block text-[10px] font-medium text-text-dim">
+                        Keep (days)
+                      </span>
+                      <input
+                        type="number"
+                        aria-label={`Keep days for severity ${sev.name}`}
+                        min={0}
+                        max={3650}
+                        value={getRetVal(`syslog_retention_days_${sev.severity}`)}
+                        onChange={(e) =>
+                          setRetEdits((prev) => ({
+                            ...prev,
+                            [`syslog_retention_days_${sev.severity}`]: e.target.value,
+                          }))
+                        }
+                        placeholder="inherit"
+                        className="w-24 rounded-md border border-border bg-bg-panel px-2 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      />
+                    </label>
+                  </div>
+                )}
+              />
             )}
           </section>
 
@@ -1242,55 +1463,38 @@ export function StorageWorkspace() {
                   Archived Telemetry Streams
                 </h3>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      <th className="px-4 py-2.5">Stream</th>
-                      <th className="px-3 py-2.5">Status</th>
-                      <th className="px-3 py-2.5">Verified Through</th>
-                      <th className="px-3 py-2.5">Backlog</th>
-                      <th className="px-4 py-2.5">Stored Size</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {archiveStatus.streams.map((s) => (
-                      <tr key={s.stream} className="hover:bg-bg-hover">
-                        <td className="px-4 py-2.5 font-semibold text-text capitalize">
-                          {s.stream}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span
-                            className={cn(
-                              'inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                              s.state === 'ok' && 'bg-sig-ok/15 text-sig-ok',
-                              (s.state === 'error' || s.state === 'stalled') &&
-                                'bg-sig-crit/15 text-sig-crit',
-                              s.state !== 'ok' &&
-                                s.state !== 'error' &&
-                                s.state !== 'stalled' &&
-                                'bg-bg-panel text-text-dim',
-                            )}
-                          >
-                            {s.state}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-text-dim">
-                          {s.verified_through
-                            ? s.verified_through.slice(0, 16).replace('T', ' ') + ' UTC'
-                            : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-text">
-                          {s.backlog_chunks ?? 0} chunks
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-text">
-                          {formatBytes(s.stored_bytes)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveDataView
+                data={archiveStatus.streams}
+                columns={archivedStreamColumns}
+                getRowId={(row) => row.stream}
+                renderMobileCard={(st) => (
+                  <div className="space-y-1">
+                    <div className="text-xs font-semibold capitalize text-text">{st.stream}</div>
+                    <div
+                      className={cn(
+                        'inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
+                        st.state === 'ok' && 'bg-sig-ok/15 text-sig-ok',
+                        (st.state === 'error' || st.state === 'stalled') &&
+                          'bg-sig-crit/15 text-sig-crit',
+                        st.state !== 'ok' &&
+                          st.state !== 'error' &&
+                          st.state !== 'stalled' &&
+                          'bg-bg-panel text-text-dim',
+                      )}
+                    >
+                      {st.state}
+                    </div>
+                    <div className="font-mono text-[11px] text-text-dim">
+                      {st.verified_through
+                        ? st.verified_through.slice(0, 16).replace('T', ' ') + ' UTC'
+                        : '—'}
+                    </div>
+                    <div className="font-mono text-[11px] text-text">
+                      {st.backlog_chunks ?? 0} chunks · {formatBytes(st.stored_bytes)}
+                    </div>
+                  </div>
+                )}
+              />
             </section>
           )}
 
@@ -1319,68 +1523,35 @@ export function StorageWorkspace() {
                 No active or staged archive restore jobs.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      <th className="px-4 py-2.5">ID</th>
-                      <th className="px-3 py-2.5">Stream</th>
-                      <th className="px-3 py-2.5">Window</th>
-                      <th className="px-3 py-2.5">State</th>
-                      <th className="px-3 py-2.5">Progress</th>
-                      <th className="px-4 py-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {restoreList.map((job) => (
-                      <tr key={job.id} className="hover:bg-bg-hover">
-                        <td className="px-4 py-2.5 font-mono">#{job.id}</td>
-                        <td className="px-3 py-2.5 font-medium capitalize">{job.stream}</td>
-                        <td className="px-3 py-2.5 font-mono text-text-dim">
-                          {job.from_day} → {job.to_day}
-                        </td>
-                        <td
-                          className="px-3 py-2.5 font-mono uppercase"
-                          title={job.error || undefined}
-                        >
-                          {job.status}
-                        </td>
-                        <td className="px-3 py-2.5 font-mono">
-                          {job.objects_done}/{job.objects_total} objects (
-                          {formatNumber(job.rows_loaded)} rows)
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setStepUpContext({
-                                title: `Drop Staged Restore #${job.id}`,
-                                description:
-                                  'Dropping a staged restore deletes its restored rows from staging.',
-                                confirmLabel: 'Drop Restore',
-                                danger: true,
-                                action: async (creds) => {
-                                  await apiFetch(`/admin/api/archive/restores/${job.id}`, {
-                                    method: 'DELETE',
-                                    body: creds,
-                                  });
-                                  toast.success(`Dropped restore #${job.id}`);
-                                  refetchRestores();
-                                },
-                              });
-                              setStepUpOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit hover:bg-sig-crit/20"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Drop
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveDataView
+                data={restoreList}
+                columns={restoreJobColumns}
+                getRowId={(row) => String(row.id)}
+                renderMobileCard={(job) => (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium capitalize text-text">{job.stream}</span>
+                      <span className="font-mono text-[11px] text-text-dim">#{job.id}</span>
+                    </div>
+                    <div className="font-mono text-[11px] text-text-dim">
+                      {job.from_day} → {job.to_day}
+                    </div>
+                    <div className="font-mono text-[11px] uppercase text-text">{job.status}</div>
+                    <div className="font-mono text-[11px] text-text">
+                      {job.objects_done}/{job.objects_total} objects (
+                      {formatNumber(job.rows_loaded)} rows)
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => dropRestore(job)}
+                      className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit hover:bg-sig-crit/20"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Drop
+                    </button>
+                  </div>
+                )}
+              />
             )}
           </section>
         </div>
@@ -1714,6 +1885,74 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
     null,
   );
   const [reset, setReset] = useState<{ chunk: ArchiveChunkAttention; reason: string } | null>(null);
+
+  /*
+   * The parked chunks.
+   *
+   * The columns close over the reset dialog, so they live inside the
+   * component.
+   */
+  const parkedChunkColumns: ColumnDef<any, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'id',
+        header: 'Chunk',
+        cell: ({ row }) => <span className="font-mono">#{row.original.id}</span>,
+      },
+      {
+        accessorKey: 'table_name',
+        header: 'Stream',
+        cell: ({ row }) => <span className="font-mono text-text-dim">{row.original.table_name}</span>,
+      },
+      {
+        id: 'period',
+        header: 'Period',
+        cell: ({ row }) => (
+          <span className="font-mono text-text-dim">
+            {row.original.period_start
+              ? new Date(row.original.period_start).toLocaleString()
+              : '—'}
+            {row.original.period_end
+              ? ` → ${new Date(row.original.period_end).toLocaleString()}`
+              : ''}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'attempts',
+        header: 'Attempts',
+        cell: ({ row }) => (
+          <span className="text-right font-mono">{row.original.attempts ?? 0}</span>
+        ),
+      },
+      {
+        accessorKey: 'error',
+        header: 'Error',
+        cell: ({ row }) => (
+          <span
+            className="block max-w-[22rem] truncate text-[10px] text-sig-warn"
+            title={row.original.error}
+          >
+            {row.original.error || '—'}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={() => setReset({ chunk: row.original, reason: '' })}
+            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-text hover:bg-bg-hover"
+          >
+            Reset…
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
   const [stepUp, setStepUp] = useState<{
     title: string;
     description: string;
@@ -1880,49 +2119,32 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
         {parked.length === 0 ? (
           <p className="mt-2 text-[11px] text-text-faint">No parked chunks.</p>
         ) : (
-          <div className="mt-2 overflow-x-auto">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead>
-                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
-                  <th scope="col" className="px-2 py-1.5">Chunk</th>
-                  <th scope="col" className="px-2 py-1.5">Stream</th>
-                  <th scope="col" className="px-2 py-1.5">Period</th>
-                  <th scope="col" className="px-2 py-1.5 text-right">Attempts</th>
-                  <th scope="col" className="px-2 py-1.5">Error</th>
-                  <th scope="col" className="px-2 py-1.5 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {parked.map((chunk) => (
-                  <tr key={chunk.id}>
-                    <td className="px-2 py-1.5 font-mono">#{chunk.id}</td>
-                    <td className="px-2 py-1.5 font-mono text-text-dim">{chunk.table_name}</td>
-                    <td className="px-2 py-1.5 font-mono text-text-dim">
-                      {chunk.period_start ? new Date(chunk.period_start).toLocaleString() : '—'}
-                      {chunk.period_end
-                        ? ` → ${new Date(chunk.period_end).toLocaleString()}`
-                        : ''}
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono">{chunk.attempts ?? 0}</td>
-                    <td
-                      className="max-w-[22rem] truncate px-2 py-1.5 text-[10px] text-sig-warn"
-                      title={chunk.error}
-                    >
-                      {chunk.error || '—'}
-                    </td>
-                    <td className="px-2 py-1.5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setReset({ chunk, reason: '' })}
-                        className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-text hover:bg-bg-hover"
-                      >
-                        Reset…
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="mt-2">
+            <ResponsiveDataView
+              data={parked}
+              columns={parkedChunkColumns}
+              getRowId={(row) => String(row.id)}
+              renderMobileCard={(chunk) => (
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[11px] text-text">#{chunk.id}</span>
+                    <span className="font-mono text-[11px] text-text-dim">{chunk.table_name}</span>
+                  </div>
+                  <div className="font-mono text-[10px] text-text-dim">
+                    {chunk.period_start ? new Date(chunk.period_start).toLocaleString() : '—'}
+                    {chunk.period_end ? ` → ${new Date(chunk.period_end).toLocaleString()}` : ''}
+                  </div>
+                  <div className="font-mono text-[10px] text-sig-warn">{chunk.error || '—'}</div>
+                  <button
+                    type="button"
+                    onClick={() => setReset({ chunk, reason: '' })}
+                    className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-text hover:bg-bg-hover"
+                  >
+                    Reset…
+                  </button>
+                </div>
+              )}
+            />
           </div>
         )}
       </section>
@@ -1954,7 +2176,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Reason</span>
-            <textarea
+            <Textarea className="p-2.5"
               rows={3}
               value={release?.reason ?? ''}
               onChange={(e) =>
@@ -1962,7 +2184,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
               }
               maxLength={500}
               placeholder="Why the gate must be released (audit-logged)"
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+             
             />
           </label>
           <button
@@ -1995,14 +2217,14 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
             <span className="mb-1 block text-xs font-medium text-text-dim">
               Reason (audit-logged)
             </span>
-            <textarea
+            <Textarea className="p-2.5"
               rows={3}
               value={reset?.reason ?? ''}
               onChange={(e) =>
                 setReset((current) => (current ? { ...current, reason: e.target.value } : current))
               }
               maxLength={500}
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+             
             />
           </label>
           <button

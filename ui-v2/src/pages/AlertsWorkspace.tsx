@@ -35,6 +35,8 @@ import { ParsedSyslogFields } from '@/components/alerts/parsed-syslog-fields';
 import { isSyslogAlertType } from '@/lib/syslog-parse';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select, Textarea } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 type AlertsTab = 'open' | 'incidents' | 'history';
 
@@ -752,11 +754,11 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
-        <select
+        <Select className="px-2.5 py-1"
           value={filters.deviceId}
           onChange={(e) => updateFilters({ deviceId: e.target.value })}
           aria-label="Filter by device"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All devices</option>
           {devices.map((d) => (
@@ -764,12 +766,12 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               {d.name}
             </option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select className="px-2.5 py-1"
           value={filters.siteId}
           onChange={(e) => updateFilters({ siteId: e.target.value })}
           aria-label="Filter by site"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All sites</option>
           <option value="unassigned">Unassigned</option>
@@ -778,18 +780,18 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               {s.name}
             </option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select className="px-2.5 py-1"
           value={filters.severity}
           onChange={(e) => updateFilters({ severity: e.target.value })}
           aria-label="Filter by severity"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All severities</option>
           <option value="critical">Critical</option>
           <option value="warning">Warning</option>
           <option value="info">Info</option>
-        </select>
+        </Select>
         <select
           value={filters.alertType}
           onChange={(e) => updateFilters({ alertType: e.target.value })}
@@ -1017,7 +1019,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               {alertDetailLoading ? (
                 <p className="text-[11px] text-text-dim">Loading linked detections…</p>
               ) : alertDetailError ? (
-                <p className="text-[11px] text-sig-crit">Could not load linked detections.</p>
+                <p className="text-[11px] text-sig-crit" role="alert">Could not load linked detections.</p>
               ) : linkedDetections.length === 0 ? (
                 <p className="text-[11px] text-text-faint">No linked flow detections.</p>
               ) : (
@@ -1067,14 +1069,15 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-text-dim">Operator notes</label>
-              <textarea
-                rows={3}
-                maxLength={4000}
-                value={notesDraft}
-                onChange={(e) => setNotesDraft(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
-              />
+              <Field label="Operator notes">
+                <Textarea className="p-2.5"
+                  rows={3}
+                  maxLength={4000}
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                 
+                />
+              </Field>
               <button
                 type="button"
                 onClick={() => saveNotes.mutate()}
@@ -1190,22 +1193,22 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Hours</span>
-            <input
+            <Input mono
               type="number"
               min={1}
               value={bulkHours}
               onChange={(e) => setBulkHours(e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+             
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Reason (optional)</span>
-            <input
+            <Input
               type="text"
               value={bulkReason}
               onChange={(e) => setBulkReason(e.target.value)}
               placeholder="Change window / known maintenance"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             />
           </label>
         </div>

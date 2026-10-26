@@ -26,6 +26,7 @@ import {
   type IndicatorFilters,
   type ThreatLookup,
 } from '@/lib/threat-intel';
+import { Select } from '@/components/ui/input';
 
 type ThreatTab = 'lookup' | 'feeds' | 'storm';
 
@@ -424,7 +425,7 @@ function FeedsTab() {
   return (
     <div className="space-y-4">
       {feedsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load threat feeds: {feedsErrorObj instanceof Error ? feedsErrorObj.message : 'request failed'}
         </div>
       )}
@@ -754,20 +755,20 @@ function IndicatorsSection() {
           placeholder="category"
           className="w-28 rounded border border-border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text"
         />
-        <select
+        <Select className="px-2.5 py-1"
           value={filters.severity}
           onChange={(e) => {
             setFilters((f) => ({ ...f, severity: e.target.value }));
             setPage(0);
           }}
           aria-label="Filter by severity"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All severities</option>
           <option value="critical">Critical</option>
           <option value="warning">Warning</option>
           <option value="info">Info</option>
-        </select>
+        </Select>
         <label className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
           <input
             type="checkbox"
@@ -902,7 +903,7 @@ function StormTab() {
   return (
     <div className="max-w-xl rounded-xl border border-border bg-bg-card p-5 space-y-3">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load the storm threshold: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}

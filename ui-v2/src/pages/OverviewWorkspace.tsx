@@ -447,17 +447,17 @@ function ServerTrend() {
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load the server resource history.
         </div>
       ) : (
         <TimeSeriesChart
           timestamps={chart.timestamps}
           series={[
-            { label: 'CPU', color: '#58A6FF', values: chart.cpu },
-            { label: 'Memory', color: '#A371F7', values: chart.mem },
-            { label: 'Root disk', color: '#3FB950', values: chart.root },
-            { label: 'DB volume', color: '#F0883E', values: chart.data },
+            { label: 'CPU', color: 'var(--fwmon-series-1)', values: chart.cpu },
+            { label: 'Memory', color: 'var(--fwmon-series-5)', values: chart.mem },
+            { label: 'Root disk', color: 'var(--fwmon-series-4)', values: chart.root },
+            { label: 'DB volume', color: 'var(--fwmon-series-7)', values: chart.data },
           ]}
           kind="percent"
           isLoading={isLoading}
@@ -935,18 +935,28 @@ function LiveNocWallboard() {
                 {devices.map((d) => (
                   <tr
                     key={`${d.site_name}-${d.id}`}
-                    className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-hidden"
-                    tabIndex={0}
-                    role="button"
+                    className="hover:bg-bg-hover"
                     onClick={() => navigate(`/devices/${d.id}`)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        navigate(`/devices/${d.id}`);
-                      }
-                    }}
                   >
-                    <td className="px-2 py-1.5 font-semibold text-text">{d.name}</td>
+                    <td className="px-2 py-1.5 font-semibold text-text">
+                      {/*
+                        The device name is the link. The ROW used to carry
+                        role="button", which gives a table row no computed
+                        accessible name at all - its content is spread across
+                        the cells - so a screen reader announced "button" and
+                        nothing else.
+                      */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/devices/${d.id}`);
+                        }}
+                        className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      >
+                        {d.name}
+                      </button>
+                    </td>
                     <td className="px-2 py-1.5 text-[11px] text-text-dim">{d.site_name}</td>
                     <td className="px-2 py-1.5">
                       <span
@@ -1179,7 +1189,7 @@ function SiteDrilldown({
       {isLoading ? (
         <p className="p-6 text-center text-xs text-text-dim">Loading site snapshot…</p>
       ) : isError ? (
-        <p className="p-6 text-center text-xs text-sig-crit">
+        <p className="p-6 text-center text-xs text-sig-crit" role="alert">
           Could not load this site's snapshot.
         </p>
       ) : !filtered ? (
@@ -1233,19 +1243,26 @@ function SiteDrilldown({
                   {(filtered.devices ?? []).map((device) => (
                     <tr
                       key={device.id}
-                      role="button"
-                      tabIndex={0}
-                      className="cursor-pointer hover:bg-bg-hover focus:bg-bg-hover focus:outline-hidden"
+                      className="hover:bg-bg-hover"
                       onClick={() => onOpenDevice(device.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          onOpenDevice(device.id);
-                        }
-                      }}
                     >
                       <td className="px-2 py-1.5">
-                        <div className="font-semibold text-text">{device.name}</div>
+                        {/*
+                          The device name is the control. The ROW used to
+                          carry role="button", which gives a table row no
+                          computed accessible name - its content is spread
+                          across the cells.
+                        */}
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenDevice(device.id);
+                          }}
+                          className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        >
+                          {device.name}
+                        </button>
                         <div className="font-mono text-[10px] text-text-faint">{device.ip}</div>
                       </td>
                       <td className="px-2 py-1.5">

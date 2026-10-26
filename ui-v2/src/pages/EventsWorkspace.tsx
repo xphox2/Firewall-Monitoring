@@ -25,6 +25,7 @@ import { BarList } from '@/components/ui/bar-list';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
+import { Select } from '@/components/ui/input';
 
 type EventsTab = 'stream' | 'analytics' | 'security';
 type TimeWindow = '1h' | '6h' | '12h' | '24h' | '7d' | '30d';
@@ -426,17 +427,17 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
       {/* Compact single-row filter bar so the table starts at y < 380px */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <select
+        <Select className="px-2.5 py-1"
           value={actionFilter}
           onChange={(e) => setActionFilter(e.target.value)}
           aria-label="Filter by firewall action"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All Actions</option>
           <option value="1">Accept / Allow (1)</option>
           <option value="2">Deny / Drop (2)</option>
           <option value="3">Reject / Reset (3)</option>
-        </select>
+        </Select>
 
         <div className="relative flex-1 min-w-[200px]">
           <Search className="h-3.5 w-3.5 text-text-faint absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -711,7 +712,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   return (
     <div className="space-y-4">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load event analytics: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}
@@ -722,7 +723,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
             <TimeSeriesChart
               title={`Policy throughput — hourly (${windowRange})`}
               timestamps={hourlyBytes.timestamps}
-              series={[{ label: 'Throughput', color: '#7DD3FC', values: hourlyBytes.values }]}
+              series={[{ label: 'Throughput', color: 'var(--fwmon-series-1)', values: hourlyBytes.values }]}
               kind="bps"
               emptyMessage="No policy byte telemetry in this window."
             />
@@ -733,7 +734,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
             <TimeSeriesChart
               title={`Denied events — hourly (${windowRange})`}
               timestamps={hourlyDeny.timestamps}
-              series={[{ label: 'Denies', color: '#FCA5A5', values: hourlyDeny.values }]}
+              series={[{ label: 'Denies', color: 'var(--fwmon-series-2)', values: hourlyDeny.values }]}
               kind="count"
               emptyMessage="No denied events in this window."
             />
@@ -745,7 +746,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
               <TimeSeriesChart
                 title={`Policy throughput — daily rollup (${days}d)`}
                 timestamps={dailyBytes.timestamps}
-                series={[{ label: 'Throughput', color: '#7DD3FC', values: dailyBytes.values }]}
+                series={[{ label: 'Throughput', color: 'var(--fwmon-series-1)', values: dailyBytes.values }]}
                 kind="bps"
                 emptyMessage="No rolled-up policy bytes in this window."
               />
@@ -754,7 +755,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
               <TimeSeriesChart
                 title={`Denied events — daily rollup (${days}d)`}
                 timestamps={dailyDeny.timestamps}
-                series={[{ label: 'Denies', color: '#FCA5A5', values: dailyDeny.values }]}
+                series={[{ label: 'Denies', color: 'var(--fwmon-series-2)', values: dailyDeny.values }]}
                 kind="count"
                 emptyMessage="No rolled-up denies in this window."
               />
@@ -1096,21 +1097,21 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   return (
     <div className="space-y-3">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load security events: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
-        <select
+        <Select className="px-2.5 py-1"
           value={classFilter}
           onChange={(e) => {
             setClassFilter(e.target.value);
             setPage(0);
           }}
           aria-label="Filter by event class"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All classes</option>
           {SEC_CLASSES.map((c) => (
@@ -1118,15 +1119,15 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
               {c.label}
             </option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select className="px-2.5 py-1"
           value={severityFilter}
           onChange={(e) => {
             setSeverityFilter(e.target.value);
             setPage(0);
           }}
           aria-label="Filter by severity"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All severities</option>
           {SEC_SEVERITIES.map((s) => (
@@ -1134,7 +1135,7 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
               {s.label}
             </option>
           ))}
-        </select>
+        </Select>
         <button
           type="button"
           onClick={() => {

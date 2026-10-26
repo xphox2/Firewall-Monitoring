@@ -25,6 +25,8 @@ import {
 } from '@/lib/effective-policy';
 import { cn } from '@/lib/utils';
 import { StickySaveBar } from '@/components/ui/sticky-save-bar';
+import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import type { ColumnDef } from '@tanstack/react-table';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
@@ -40,6 +42,7 @@ import {
   type RuleTestResult,
 } from '@/components/alerting/rule-test-result';
 import type { AlertTypeInfo } from '@/lib/event-profiles';
+import { Input, Textarea } from '@/components/ui/input';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
 
@@ -383,6 +386,50 @@ function PolicySimCell({
   );
 }
 
+/**
+ * The scoped overrides.
+ *
+ * Read-only, so the columns are at module level. The table used to be a raw
+ * `<table>` in a horizontal scroller, which meant a phone got a sideways
+ * scroll for a table with four columns — and no keyboard sorting.
+ */
+const scopeOverrideColumns: ColumnDef<any, any>[] = [
+  {
+    accessorKey: 'scope',
+    header: 'Scope',
+    cell: ({ row }) => (
+      <span className="font-mono uppercase text-[11px] text-text-faint">{row.original.scope}</span>
+    ),
+  },
+  {
+    accessorKey: 'scope_name',
+    header: 'Target Name',
+    cell: ({ row }) => <span className="font-semibold text-text">{row.original.scope_name}</span>,
+  },
+  {
+    id: 'alert',
+    header: 'Alert / Metric',
+    cell: ({ row }) => (
+      <span className="font-mono text-text-dim">
+        {row.original.kind === 'disabled'
+          ? `${row.original.alert_type || 'All alerts'} (Disabled)`
+          : row.original.alert_type}
+      </span>
+    ),
+  },
+  {
+    id: 'value',
+    header: 'Override Value',
+    cell: ({ row }) => (
+      <span className="font-mono text-accent">
+        {row.original.value !== undefined && row.original.value !== null
+          ? String(row.original.value)
+          : 'Off'}
+      </span>
+    ),
+  },
+];
+
 export function AlertingWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = ((searchParams.get('tab') as AlertingTab) || 'thresholds') as AlertingTab;
@@ -450,6 +497,7 @@ export function AlertingWorkspace() {
   });
 
   const [ruleDrawerOpen, setRuleDrawerOpen] = useState(false);
+
   const [editingRule, setEditingRule] = useState<EventRuleRecord | null>(null);
   const [ruleToDelete, setRuleToDelete] = useState<EventRuleRecord | null>(null);
   const [ruleToDisable, setRuleToDisable] = useState<EventRuleRecord | null>(null);
@@ -799,6 +847,101 @@ export function AlertingWorkspace() {
 
   const isAdmin = me?.role === 'admin';
 
+  /*
+   * The event rules.
+   *
+   * The columns close over the admin gate and the row actions, so they live
+   * inside the component. The table used to be a raw `<table>` in a
+   * horizontal scroller: a phone got a sideways scroll for six columns, and
+   * the sort was mouse-only.
+   */
+  const eventRuleColumns: ColumnDef<any, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'priority',
+        header: 'Priority',
+        cell: ({ row }) => <span className="font-mono">#{row.original.priority}</span>,
+      },
+      {
+        accessorKey: 'name',
+        header: 'Rule Name',
+        cell: ({ row }) => <span className="font-semibold text-text">{row.original.name}</span>,
+      },
+      {
+        accessorKey: 'action',
+        header: 'Action',
+        cell: ({ row }) => (
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
+              row.original.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
+              row.original.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
+              row.original.action === 'customize' && 'bg-accent/15 text-accent',
+            )}
+          >
+            {row.original.action}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'vendor_scope',
+        header: 'Vendor',
+        cell: ({ row }) => (
+          <span className="font-mono text-text-faint">{row.original.vendor_scope || 'any'}</span>
+        ),
+      },
+      {
+        accessorKey: 'enabled',
+        header: 'Status',
+        cell: ({ row }) => (
+          <button
+            type="button"
+            disabled={!isAdmin}
+            title={isAdmin ? 'Toggle this rule' : 'Admin role required'}
+            onClick={() => toggleRule(row.original)}
+            className={cn(
+              'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
+              row.original.enabled ? 'bg-sig-ok/15 text-sig-ok' : 'bg-bg-panel text-text-mute',
+            )}
+          >
+            {row.original.enabled ? 'Enabled' : 'Disabled'}
+          </button>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="inline-flex items-center gap-1">
+            <button
+              type="button"
+              disabled={!isAdmin}
+              onClick={() => {
+                setEditingRule(row.original);
+                setRuleDrawerOpen(true);
+              }}
+              aria-label={`Edit ${row.original.name}`}
+              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text disabled:opacity-40"
+            >
+              <Edit3 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={!isAdmin}
+              onClick={() => setRuleToDelete(row.original)}
+              aria-label={`Delete ${row.original.name}`}
+              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [isAdmin],
+  );
+
+
   return (
     <div className="space-y-5 pb-20">
       {/* Header & 4 Unified Sub-Tabs */}
@@ -1127,42 +1270,27 @@ export function AlertingWorkspace() {
                 Sites, Devices, Notification Profiles, and Event Profiles that override global defaults.
               </p>
             </div>
-            {!overview?.overrides || overview.overrides.length === 0 ? (
-              <div className="p-6 text-center text-xs text-text-faint">
-                No scoped overrides — global defaults apply across the entire fleet.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      <th className="px-4 py-2.5">Scope</th>
-                      <th className="px-3 py-2.5">Target Name</th>
-                      <th className="px-3 py-2.5">Alert / Metric</th>
-                      <th className="px-4 py-2.5">Override Value</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {overview.overrides.map((ov, i) => (
-                      <tr key={i} className="hover:bg-bg-hover">
-                        <td className="px-4 py-2.5 font-mono uppercase text-[11px] text-text-faint">
-                          {ov.scope}
-                        </td>
-                        <td className="px-3 py-2.5 font-semibold text-text">{ov.scope_name}</td>
-                        <td className="px-3 py-2.5 font-mono text-text-dim">
-                          {ov.kind === 'disabled'
-                            ? `${ov.alert_type || 'All alerts'} (Disabled)`
-                            : ov.alert_type}
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-accent">
-                          {ov.value !== undefined && ov.value !== null ? String(ov.value) : 'Off'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <ResponsiveDataView
+              data={overview?.overrides ?? []}
+              columns={scopeOverrideColumns}
+              emptyTitle="No scoped overrides"
+              emptyDescription="Global defaults apply across the entire fleet."
+              getRowId={(row, index) => `${row.scope}-${row.scope_name}-${index}`}
+              renderMobileCard={(ov) => (
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-text">{ov.scope_name}</div>
+                  <div className="font-mono text-[11px] uppercase text-text-faint">{ov.scope}</div>
+                  <div className="font-mono text-[11px] text-text-dim">
+                    {ov.kind === 'disabled'
+                      ? `${ov.alert_type || 'All alerts'} (Disabled)`
+                      : ov.alert_type}
+                  </div>
+                  <div className="font-mono text-[11px] text-accent">
+                    {ov.value !== undefined && ov.value !== null ? String(ov.value) : 'Off'}
+                  </div>
+                </div>
+              )}
+            />
           </section>
 
           <StickySaveBar
@@ -1345,84 +1473,66 @@ export function AlertingWorkspace() {
                 No custom event rules configured.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                      <th className="px-4 py-2.5">Priority</th>
-                      <th className="px-3 py-2.5">Rule Name</th>
-                      <th className="px-3 py-2.5">Action</th>
-                      <th className="px-3 py-2.5">Vendor</th>
-                      <th className="px-4 py-2.5 text-right">Status</th>
-                      <th className="px-3 py-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/60">
-                    {eventRules.map((r) => (
-                      <tr key={r.id} className="hover:bg-bg-hover">
-                        <td className="px-4 py-2.5 font-mono">#{r.priority}</td>
-                        <td className="px-3 py-2.5 font-semibold text-text">{r.name}</td>
-                        <td className="px-3 py-2.5">
-                          <span
-                            className={cn(
-                              'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                              r.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
-                              r.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
-                              r.action === 'customize' && 'bg-accent/15 text-accent',
-                            )}
-                          >
-                            {r.action}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 font-mono text-text-faint">
-                          {r.vendor_scope || 'any'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right">
-                          <button
-                            type="button"
-                            disabled={!isAdmin}
-                            title={isAdmin ? 'Toggle this rule' : 'Admin role required'}
-                            onClick={() => toggleRule(r)}
-                            className={cn(
-                              'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                              r.enabled
-                                ? 'bg-sig-ok/15 text-sig-ok'
-                                : 'bg-bg-panel text-text-mute',
-                            )}
-                          >
-                            {r.enabled ? 'Enabled' : 'Disabled'}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <div className="inline-flex items-center gap-1">
-                            <button
-                              type="button"
-                              disabled={!isAdmin}
-                              onClick={() => {
-                                setEditingRule(r);
-                                setRuleDrawerOpen(true);
-                              }}
-                              aria-label={`Edit ${r.name}`}
-                              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text disabled:opacity-40"
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!isAdmin}
-                              onClick={() => setRuleToDelete(r)}
-                              aria-label={`Delete ${r.name}`}
-                              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <ResponsiveDataView
+                data={eventRules}
+                columns={eventRuleColumns}
+                getRowId={(row) => String(row.id)}
+                renderMobileCard={(r) => (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-text">{r.name}</span>
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
+                          r.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
+                          r.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
+                          r.action === 'customize' && 'bg-accent/15 text-accent',
+                        )}
+                      >
+                        {r.action}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[11px] text-text-faint">
+                      #{r.priority} · {r.vendor_scope || 'any'}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        title={isAdmin ? 'Toggle this rule' : 'Admin role required'}
+                        onClick={() => toggleRule(r)}
+                        className={cn(
+                          'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
+                          r.enabled ? 'bg-sig-ok/15 text-sig-ok' : 'bg-bg-panel text-text-mute',
+                        )}
+                      >
+                        {r.enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => {
+                          setEditingRule(r);
+                          setRuleDrawerOpen(true);
+                        }}
+                        aria-label={`Edit ${r.name}`}
+                        className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text disabled:opacity-40"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!isAdmin}
+                        onClick={() => setRuleToDelete(r)}
+                        aria-label={`Delete ${r.name}`}
+                        className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              />
             )}
           </section>
 
@@ -1657,13 +1767,13 @@ export function AlertingWorkspace() {
                   >
                     Profile Name
                   </label>
-                  <input
+                  <Input
                     id="pol-name"
                     type="text"
                     value={policyName}
                     onChange={(e) => setPolicyName(e.target.value)}
                     placeholder="e.g. 24x7 NOC Critical Pager"
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
+                   
                   />
                 </div>
                 <div>
@@ -1673,13 +1783,13 @@ export function AlertingWorkspace() {
                   >
                     Description
                   </label>
-                  <input
+                  <Input
                     id="pol-desc"
                     type="text"
                     value={policyDesc}
                     onChange={(e) => setPolicyDesc(e.target.value)}
                     placeholder="Optional notes on which sites/devices use this profile"
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text focus:border-accent focus:outline-hidden"
+                   
                   />
                 </div>
                 <div>
@@ -1734,13 +1844,13 @@ export function AlertingWorkspace() {
                     >
                       Override Email Recipients (comma-separated, blank = global SMTP To)
                     </label>
-                    <input
+                    <Input mono
                       id="pol-recipients"
                       type="text"
                       value={policyRecipients}
                       onChange={(e) => setPolicyRecipients(e.target.value)}
                       placeholder="noc@example.com, oncall@example.com"
-                      className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text focus:border-accent focus:outline-hidden"
+                     
                     />
                   </div>
                 )}
@@ -2006,12 +2116,12 @@ export function AlertingWorkspace() {
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Description</span>
-            <textarea
+            <Textarea className="p-2.5"
               rows={3}
               value={profileForm.description}
               onChange={(e) => setProfileForm((f) => ({ ...f, description: e.target.value }))}
               maxLength={1000}
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
+             
             />
           </label>
         </div>
@@ -2047,12 +2157,12 @@ export function AlertingWorkspace() {
       >
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-text-dim">New profile name</span>
-          <input
+          <Input
             type="text"
             value={cloneName}
             onChange={(e) => setCloneName(e.target.value)}
             maxLength={200}
-            className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+           
           />
         </label>
       </SlideOverDrawer>

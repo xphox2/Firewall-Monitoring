@@ -23,6 +23,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import { AlertConfigDrawer } from '@/components/devices/alert-config-drawer';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select, Textarea } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 type CollectorsTab = 'probes' | 'sites';
 
@@ -408,24 +410,26 @@ function ProbesSubTab() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Collector Name</label>
-            <input
-              type="text"
-              value={probeName}
-              onChange={(e) => setProbeName(e.target.value)}
-              placeholder="us-east-collector-01"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Collector Name">
+              <Input
+                type="text"
+                value={probeName}
+                onChange={(e) => setProbeName(e.target.value)}
+                placeholder="us-east-collector-01"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Location / Datacenter</label>
-            <input
-              type="text"
-              value={probeLocation}
-              onChange={(e) => setProbeLocation(e.target.value)}
-              placeholder="Ashburn, VA (Equinix DC2)"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Location / Datacenter">
+              <Input
+                type="text"
+                value={probeLocation}
+                onChange={(e) => setProbeLocation(e.target.value)}
+                placeholder="Ashburn, VA (Equinix DC2)"
+               
+              />
+            </Field>
           </div>
         </div>
       </SlideOverDrawer>
@@ -460,14 +464,15 @@ function ProbesSubTab() {
           </div>
         }
       >
-        <label className="block text-xs font-medium text-text-dim mb-1">Reason</label>
-        <textarea
-          rows={3}
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-          placeholder="Unknown host / failed change ticket CHG-1234"
-          className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
-        />
+        <Field label="Reason">
+          <Textarea className="p-2.5"
+            rows={3}
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder="Unknown host / failed change ticket CHG-1234"
+           
+          />
+        </Field>
       </SlideOverDrawer>
     </div>
   );
@@ -707,94 +712,101 @@ function SitesSubTab() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Site Name</label>
-            <input
-              type="text"
-              value={editingSite.name ?? ''}
-              onChange={(e) => setEditingSite((p) => ({ ...p, name: e.target.value }))}
-              maxLength={255}
-              placeholder="US-East HQ"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Site Name">
+              <Input
+                type="text"
+                value={editingSite.name ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, name: e.target.value }))}
+                maxLength={255}
+                placeholder="US-East HQ"
+               
+              />
+            </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Region</label>
-              <input
-                type="text"
-                value={editingSite.region ?? ''}
-                onChange={(e) => setEditingSite((p) => ({ ...p, region: e.target.value }))}
-                maxLength={255}
-                placeholder="us-east"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-              />
+              <Field label="Region">
+                <Input
+                  type="text"
+                  value={editingSite.region ?? ''}
+                  onChange={(e) => setEditingSite((p) => ({ ...p, region: e.target.value }))}
+                  maxLength={255}
+                  placeholder="us-east"
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Country</label>
-              <input
-                type="text"
-                value={editingSite.country ?? ''}
-                onChange={(e) => setEditingSite((p) => ({ ...p, country: e.target.value }))}
-                maxLength={255}
-                placeholder="US"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-              />
+              <Field label="Country">
+                <Input
+                  type="text"
+                  value={editingSite.country ?? ''}
+                  onChange={(e) => setEditingSite((p) => ({ ...p, country: e.target.value }))}
+                  maxLength={255}
+                  placeholder="US"
+                 
+                />
+              </Field>
             </div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Timezone</label>
-            <input
-              type="text"
-              value={editingSite.timezone ?? ''}
-              onChange={(e) => setEditingSite((p) => ({ ...p, timezone: e.target.value }))}
-              maxLength={100}
-              placeholder="America/New_York"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-            />
+            <Field label="Timezone">
+              <Input mono
+                type="text"
+                value={editingSite.timezone ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, timezone: e.target.value }))}
+                maxLength={100}
+                placeholder="America/New_York"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Parent site</label>
-            <select
-              value={editingSite.parent_site_id ?? ''}
-              onChange={(e) =>
-                setEditingSite((p) => ({
-                  ...p,
-                  parent_site_id: e.target.value ? Number(e.target.value) : null,
-                }))
-              }
-              aria-label="Parent site"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            >
-              <option value="">No parent (top level)</option>
-              {sites
-                .filter((site) => site.id !== editingSite.id)
-                .map((site) => (
-                  <option key={site.id} value={site.id}>
-                    {site.name}
-                  </option>
-                ))}
-            </select>
+            <Field label="Parent site">
+              <Select
+                value={editingSite.parent_site_id ?? ''}
+                onChange={(e) =>
+                  setEditingSite((p) => ({
+                    ...p,
+                    parent_site_id: e.target.value ? Number(e.target.value) : null,
+                  }))
+                }
+                aria-label="Parent site"
+               
+              >
+                <option value="">No parent (top level)</option>
+                {sites
+                  .filter((site) => site.id !== editingSite.id)
+                  .map((site) => (
+                    <option key={site.id} value={site.id}>
+                      {site.name}
+                    </option>
+                  ))}
+              </Select>
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Geographic Location</label>
-            <input
-              type="text"
-              value={editingSite.address ?? ''}
-              onChange={(e) => setEditingSite((p) => ({ ...p, address: e.target.value }))}
-              maxLength={500}
-              placeholder="New York, NY"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Geographic Location">
+              <Input
+                type="text"
+                value={editingSite.address ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, address: e.target.value }))}
+                maxLength={500}
+                placeholder="New York, NY"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Description</label>
-            <textarea
-              rows={3}
-              value={editingSite.description ?? ''}
-              onChange={(e) => setEditingSite((p) => ({ ...p, description: e.target.value }))}
-              maxLength={1000}
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
-            />
+            <Field label="Description">
+              <Textarea className="p-2.5"
+                rows={3}
+                value={editingSite.description ?? ''}
+                onChange={(e) => setEditingSite((p) => ({ ...p, description: e.target.value }))}
+                maxLength={1000}
+               
+              />
+            </Field>
           </div>
         </div>
       </SlideOverDrawer>

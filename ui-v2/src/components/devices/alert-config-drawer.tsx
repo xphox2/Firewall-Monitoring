@@ -10,6 +10,7 @@ import {
   buildEventProfileBody,
   isValidAlertConfig,
 } from '@/lib/alert-config';
+import { Input, Select } from '@/components/ui/input';
 
 /** The device-level override. `null` means "inherit". */
 export interface DeviceAlertConfig {
@@ -287,10 +288,10 @@ export function AlertConfigDrawer({
             <span className="mb-1 block text-xs font-medium text-text-dim">
               Notification profile
             </span>
-            <select
+            <Select
               value={form.policy_id}
               onChange={(e) => set('policy_id', e.target.value)}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">Inherit</option>
               {(policies ?? []).map((p) => (
@@ -298,7 +299,7 @@ export function AlertConfigDrawer({
                   {p.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
 
           <label className="block">
@@ -337,13 +338,13 @@ export function AlertConfigDrawer({
             <span className="mb-1 block text-xs font-medium text-text-dim">
               Storm digest threshold (distinct sources)
             </span>
-            <input
+            <Input mono
               type="number"
               min={0}
               value={form.storm_sources}
               onChange={(e) => set('storm_sources', e.target.value)}
               placeholder="Unchanged"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+             
             />
             <span className="mt-1 block text-[10px] text-text-faint">
               Blank keeps the current override. 0 disables the digest for this

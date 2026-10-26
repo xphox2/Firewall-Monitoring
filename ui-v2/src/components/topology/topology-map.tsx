@@ -4,6 +4,7 @@ import cytoscape, {
   type EdgeSingular,
   type ElementDefinition,
   type NodeSingular,
+  type StylesheetJson,
 } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { Maximize2, Minus, Plus, RotateCcw, Save } from 'lucide-react';
@@ -57,37 +58,78 @@ const FCOSE_LAYOUT = {
   padding: 24,
 };
 
-const LEGEND = [
-  { label: 'Up / online', colour: '#4ade80' },
-  { label: 'Down / offline', colour: '#f87171' },
-  { label: 'Unknown', colour: '#94a3b8' },
-];
-
-interface RingColours {
+interface MapColours {
+  // The alert rings.
   crit: string;
   warn: string;
   base: string;
+  // The link colours.
+  up: string;
+  down: string;
+  unknown: string;
+  // The graph's surfaces and labels.
+  siteBg: string;
+  siteBorder: string;
+  labelFaint: string;
+  labelDim: string;
+  /** The halo behind a label, so it reads against the card behind it. */
+  halo: string;
+  bundleLabel: string;
+  selected: string;
 }
 
-const RING_FALLBACK: RingColours = { crit: '#f2555a', warn: '#e7b53c', base: '#3b4654' };
+const MAP_FALLBACK: MapColours = {
+  crit: '#f2555a',
+  warn: '#e7b53c',
+  base: '#3b4654',
+  up: '#4ade80',
+  down: '#f87171',
+  unknown: '#94a3b8',
+  siteBg: '#1f2937',
+  siteBorder: '#374151',
+  labelFaint: '#9ca3af',
+  labelDim: '#d1d5db',
+  halo: '#0b1220',
+  bundleLabel: '#cbd5e1',
+  selected: '#38bdf8',
+};
 
-function readRingColours(): RingColours {
+/**
+ * Read the graph's colours from the theme's CSS variables.
+ *
+ * The map used to hardcode sixteen of them, and the Cytoscape instance was
+ * created ONCE — so in light mode the graph rendered with dark-theme colours
+ * on a white card, and never corrected itself. Every colour is now a token,
+ * and the stylesheet is re-applied when the theme changes.
+ */
+function readMapColours(): MapColours {
   try {
     const style = getComputedStyle(document.documentElement);
-    const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+    const read = (name: string, fallback: string) =>
+      style.getPropertyValue(name).trim() || fallback;
     return {
-      crit: read('--fwmon-sig-crit', RING_FALLBACK.crit),
-      warn: read('--fwmon-sig-warn', RING_FALLBACK.warn),
-      base: read('--fwmon-border-strong', RING_FALLBACK.base),
+      crit: read('--fwmon-sig-crit', MAP_FALLBACK.crit),
+      warn: read('--fwmon-sig-warn', MAP_FALLBACK.warn),
+      base: read('--fwmon-border-strong', MAP_FALLBACK.base),
+      up: read('--fwmon-sig-ok', MAP_FALLBACK.up),
+      down: read('--fwmon-sig-crit', MAP_FALLBACK.down),
+      unknown: read('--fwmon-text-faint', MAP_FALLBACK.unknown),
+      siteBg: read('--fwmon-panel-bg', MAP_FALLBACK.siteBg),
+      siteBorder: read('--fwmon-border-strong', MAP_FALLBACK.siteBorder),
+      labelFaint: read('--fwmon-text-faint', MAP_FALLBACK.labelFaint),
+      labelDim: read('--fwmon-text-dim', MAP_FALLBACK.labelDim),
+      halo: read('--fwmon-card-bg', MAP_FALLBACK.halo),
+      bundleLabel: read('--fwmon-text', MAP_FALLBACK.bundleLabel),
+      selected: read('--fwmon-accent', MAP_FALLBACK.selected),
     };
   } catch {
-    return RING_FALLBACK;
+    return MAP_FALLBACK;
   }
 }
 
 function severityRing(
   severity: string | undefined,
-  colours: RingColours = RING_FALLBACK,
+  colours: MapColours = MAP_FALLBACK,
 ): { colour: string; width: number } {
   const value = String(severity ?? '').toLowerCase();
   if (value === 'critical') return { colour: colours.crit, width: 3 };
@@ -287,6 +329,134 @@ export function syncElements(
   return laidOut;
 }
 
+/**
+ * The graph's stylesheet, as a function of the theme's colours.
+ *
+ * It used to be a literal with sixteen hardcoded colours, and the graph
+ * was created once — so in light mode it rendered dark-theme colours on a
+ * white card. It is now rebuilt from the tokens whenever the theme
+ * changes.
+ */
+function mapStyle(colours: MapColours): StylesheetJson {
+  return [
+      {
+        selector: 'node[kind="site"]',
+        style: {
+          shape: 'round-rectangle',
+          'background-color': colours.siteBg,
+          'background-opacity': 0.35,
+          'border-color': colours.siteBorder,
+          'border-width': 1,
+          label: 'data(label)',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'font-size': 10,
+          color: colours.labelFaint,
+          padding: '22px',
+        },
+      },
+      {
+        selector: 'node[kind="device"]',
+        style: {
+          'background-color': 'data(colour)',
+          width: 22,
+          height: 22,
+          'border-width': 'data(ringWidth)',
+          'border-color': 'data(ring)',
+          label: 'data(label)',
+          'text-valign': 'bottom',
+          'text-margin-y': 4,
+          'font-size': 9,
+          color: colours.labelDim,
+          'text-outline-width': 2,
+          'text-outline-color': colours.halo,
+        },
+      },
+      {
+        selector: 'node[kind="external"]',
+        style: {
+          shape: 'diamond',
+          'background-color': 'data(colour)',
+          width: 16,
+          height: 16,
+          label: 'data(label)',
+          'text-valign': 'bottom',
+          'text-margin-y': 3,
+          'font-size': 8,
+          color: colours.labelFaint,
+          'text-outline-width': 2,
+          'text-outline-color': colours.halo,
+        },
+      },
+      {
+        selector: 'edge[kind="connection"]',
+        style: {
+          width: 2,
+          'line-color': 'data(colour)',
+          'curve-style': 'bezier',
+          label: 'data(label)',
+          'font-size': 7,
+          color: colours.labelFaint,
+          'text-rotation': 'autorotate',
+          'text-wrap': 'wrap',
+          'text-max-width': '90px',
+          'text-outline-width': 2,
+          'text-outline-color': colours.halo,
+        },
+      },
+      {
+        selector: 'edge[kind="tunnel"]',
+        style: {
+          width: 1.5,
+          'line-color': 'data(colour)',
+          'line-style': 'dashed',
+          'curve-style': 'bezier',
+          label: 'data(label)',
+          'font-size': 7,
+          color: colours.labelFaint,
+          'text-rotation': 'autorotate',
+          'text-outline-width': 2,
+          'text-outline-color': colours.halo,
+        },
+      },
+      {
+        selector: 'edge.bundle',
+        style: {
+          width: 3.5,
+          'font-size': 8,
+          'font-weight': 'bold',
+          color: colours.bundleLabel,
+        },
+      },
+      {
+        // Expanded: the carrier disappears and its members take over.
+        selector: 'edge.bundle.expanded',
+        style: { display: 'none' },
+      },
+      {
+        // Members exist in the graph from the start (so expanding never
+        // needs a rebuild/re-layout) but are hidden until their bundle opens.
+        selector: 'edge.sublane',
+        style: { display: 'none' },
+      },
+      {
+        selector: 'edge.sublane.shown',
+        style: { display: 'element', 'font-size': 7 },
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          // A halo, not a border override: the alert ring must stay visible
+          // while a node is selected.
+          'overlay-color': colours.selected,
+          'overlay-opacity': 0.25,
+          'overlay-padding': 3,
+        },
+      },
+    
+  ];
+}
+
 export function TopologyMap({
   sites,
   nodes,
@@ -306,6 +476,12 @@ export function TopologyMap({
   onSelectConnection?: (connectionId: number) => void;
 }) {
   const { theme } = useTheme();
+  // The graph's colours, resolved from the theme's CSS variables. They are
+  // state so the elements that carry them (the link colours) are rebuilt when
+  // the theme changes, and a ref so the stylesheet can be applied to the
+  // graph without rebuilding it.
+  const [colours, setColours] = useState<MapColours>(MAP_FALLBACK);
+  const coloursRef = useRef<MapColours>(MAP_FALLBACK);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   // The graph instance in state, so the particle layer can depend on it: the
@@ -327,6 +503,11 @@ export function TopologyMap({
   const [selected, setSelected] = useState<MapNode | null>(null);
   const [dirty, setDirty] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
+
+  const palette = useMemo(
+    () => ({ up: colours.up, down: colours.down, unknown: colours.unknown }),
+    [colours],
+  );
 
   const elements = useMemo<ElementDefinition[]>(() => {
     const els: ElementDefinition[] = [];
@@ -362,7 +543,7 @@ export function TopologyMap({
           label: node.label,
           kind: node.kind,
           status: node.status,
-          colour: linkColour(node.status),
+          colour: linkColour(node.status, palette),
           ring: ring.colour,
           ringWidth: ring.width,
           ip: node.ip,
@@ -379,7 +560,7 @@ export function TopologyMap({
           target: `dev-${edge.target}`,
           label: edge.label,
           kind: edge.kind,
-          colour: linkColour(edge.status),
+          colour: linkColour(edge.status, palette),
           connectionId: edge.connectionId,
           bundleKey: edge.bundle ? edge.id : undefined,
           members: edge.members?.join(','),
@@ -388,7 +569,7 @@ export function TopologyMap({
       });
     }
     return els;
-  }, [sites, nodes, edges, showSites, linkFilter, groupTunnels]);
+  }, [sites, nodes, edges, showSites, linkFilter, groupTunnels, palette]);
 
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   // The graph lives for the component's lifetime, so its event handlers read
@@ -409,122 +590,7 @@ export function TopologyMap({
     const cy = cytoscape({
       container: host,
       elements: [],
-      style: [
-        {
-          selector: 'node[kind="site"]',
-          style: {
-            shape: 'round-rectangle',
-            'background-color': '#1f2937',
-            'background-opacity': 0.35,
-            'border-color': '#374151',
-            'border-width': 1,
-            label: 'data(label)',
-            'text-valign': 'top',
-            'text-halign': 'center',
-            'font-size': 10,
-            color: '#9ca3af',
-            padding: '22px',
-          },
-        },
-        {
-          selector: 'node[kind="device"]',
-          style: {
-            'background-color': 'data(colour)',
-            width: 22,
-            height: 22,
-            'border-width': 'data(ringWidth)',
-            'border-color': 'data(ring)',
-            label: 'data(label)',
-            'text-valign': 'bottom',
-            'text-margin-y': 4,
-            'font-size': 9,
-            color: '#d1d5db',
-            'text-outline-width': 2,
-            'text-outline-color': '#0b1220',
-          },
-        },
-        {
-          selector: 'node[kind="external"]',
-          style: {
-            shape: 'diamond',
-            'background-color': 'data(colour)',
-            width: 16,
-            height: 16,
-            label: 'data(label)',
-            'text-valign': 'bottom',
-            'text-margin-y': 3,
-            'font-size': 8,
-            color: '#9ca3af',
-            'text-outline-width': 2,
-            'text-outline-color': '#0b1220',
-          },
-        },
-        {
-          selector: 'edge[kind="connection"]',
-          style: {
-            width: 2,
-            'line-color': 'data(colour)',
-            'curve-style': 'bezier',
-            label: 'data(label)',
-            'font-size': 7,
-            color: '#9ca3af',
-            'text-rotation': 'autorotate',
-            'text-wrap': 'wrap',
-            'text-max-width': '90px',
-            'text-outline-width': 2,
-            'text-outline-color': '#0b1220',
-          },
-        },
-        {
-          selector: 'edge[kind="tunnel"]',
-          style: {
-            width: 1.5,
-            'line-color': 'data(colour)',
-            'line-style': 'dashed',
-            'curve-style': 'bezier',
-            label: 'data(label)',
-            'font-size': 7,
-            color: '#9ca3af',
-            'text-rotation': 'autorotate',
-            'text-outline-width': 2,
-            'text-outline-color': '#0b1220',
-          },
-        },
-        {
-          selector: 'edge.bundle',
-          style: {
-            width: 3.5,
-            'font-size': 8,
-            'font-weight': 'bold',
-            color: '#cbd5e1',
-          },
-        },
-        {
-          // Expanded: the carrier disappears and its members take over.
-          selector: 'edge.bundle.expanded',
-          style: { display: 'none' },
-        },
-        {
-          // Members exist in the graph from the start (so expanding never
-          // needs a rebuild/re-layout) but are hidden until their bundle opens.
-          selector: 'edge.sublane',
-          style: { display: 'none' },
-        },
-        {
-          selector: 'edge.sublane.shown',
-          style: { display: 'element', 'font-size': 7 },
-        },
-        {
-          selector: 'node:selected',
-          style: {
-            // A halo, not a border override: the alert ring must stay visible
-            // while a node is selected.
-            'overlay-color': '#38bdf8',
-            'overlay-opacity': 0.25,
-            'overlay-padding': 3,
-          },
-        },
-      ],
+      style: mapStyle(coloursRef.current),
       layout: { name: 'preset' } as never,
       wheelSensitivity: 0.2,
       minZoom: 0.15,
@@ -646,15 +712,22 @@ export function TopologyMap({
     // CSS variables would otherwise still hold the previous theme's colours.
     const frame = requestAnimationFrame(() => {
       const cy = cyRef.current;
+      // Resolve the colours first, so the stylesheet below and the elements
+      // (which carry the link colours) agree.
+      const resolved = readMapColours();
+      coloursRef.current = resolved;
+      setColours(resolved);
       if (!cy) return;
-      const colours = readRingColours();
+      // The STYLESHEET is re-applied, not the graph: rebuilding the graph
+      // would reset the pan and zoom on every theme toggle.
+      cy.style(mapStyle(resolved));
       cy.nodes().forEach((node) => {
         const data = node.data();
         if (data.kind === 'site') return;
         const id = Number(data.deviceId);
         const ring = severityRing(
           Number.isFinite(id) ? severityByDevice?.get(id) : undefined,
-          colours,
+          resolved,
         );
         node.data('ring', ring.colour);
         node.data('ringWidth', ring.width);
@@ -821,7 +894,13 @@ export function TopologyMap({
         )}
 
         <div className="pointer-events-none absolute bottom-2 left-2 z-10 flex flex-wrap gap-x-3 gap-y-1 rounded border border-border bg-bg-card/90 px-2 py-1.5">
-          {LEGEND.map((item) => (
+          {(
+            [
+              { label: 'Up / online', colour: colours.up },
+              { label: 'Down / offline', colour: colours.down },
+              { label: 'Unknown', colour: colours.unknown },
+            ]
+          ).map((item) => (
             <span key={item.label} className="flex items-center gap-1 text-[10px] text-text-dim">
               <span
                 className="inline-block h-2 w-2 rounded-full"
