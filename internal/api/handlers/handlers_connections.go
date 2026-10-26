@@ -649,6 +649,25 @@ func (h *Handler) GetVPNMapData(c *gin.Context) {
 	peerCache := make(map[uint]peerLifecycleInfo, 4)
 
 	for _, vpn := range vpnStatuses {
+		// A retired (or purged) device is not part of the live fleet map.
+		//
+		// vpn_status rows are a per-tunnel snapshot of the LAST poll, so a
+		// retired device keeps its tunnels in the table forever. They are not
+		// live facts: the device stopped being polled the moment it was
+		// retired, and its stored status is frozen at retire time. Emitting
+		// them put a decommissioned device back on the map — and the V2
+		// console drew it as a live node, painted with that frozen status.
+		//
+		// deviceByID is built from GetActiveDevices(), so a retired device is
+		// simply absent. A purged device's row is gone too, and its tunnels
+		// must not outlive it.
+		//
+		// This is the server's half of the contract the legacy console kept
+		// client-side with its `activeDevices()` helper.
+		if _, ok := deviceByID[vpn.DeviceID]; !ok {
+			continue
+		}
+
 		key := fmt.Sprintf("%d", vpn.DeviceID)
 		dv, ok := result[key]
 		if !ok {

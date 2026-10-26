@@ -42,8 +42,24 @@ func doGroupChart(t *testing.T, h *Handler, deviceID uint, query string) (int, [
 // the provisioned name but NO counters, and its counter-bearing sibling under a
 // synthesized name with an empty phase1_name. Plus the provisioning record that
 // is what unites them.
+//
+// The two ENDPOINTS are real device rows. The map payload only reports a
+// tunnel for a device that is in the live fleet — a retired or purged device's
+// tunnel rows are a snapshot of its last poll, not a live fact, and the map
+// must not draw them. The fixture used to reference device IDs 1 and 2 without
+// creating them, which only worked because the handler did not filter on
+// device existence.
 func seedGroupedTunnel(t *testing.T, db *database.Database) {
 	t.Helper()
+	for _, d := range []*models.Device{
+		{ID: 1, Name: "fw-a", IPAddress: "192.168.113.1"},
+		{ID: 2, Name: "fw-b", IPAddress: "192.168.150.1"},
+	} {
+		if err := db.Gorm().Create(d).Error; err != nil {
+			t.Fatalf("seed device %d: %v", d.ID, err)
+		}
+	}
+
 	if err := db.Gorm().Create(&models.IPSecTunnel{
 		Name: "fwm-t11", Status: "up", ADeviceID: 1, BDeviceID: 2,
 		AVendor: "fortigate", BVendor: "opnsense",

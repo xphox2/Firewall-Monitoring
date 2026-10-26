@@ -173,6 +173,18 @@ type ipsecTunnelListItem struct {
 	models.IPSecTunnel
 	Deletable bool `json:"deletable"`
 	Editable  bool `json:"editable"`
+	// IKEVersion is the intent's REAL IKE version ("ikev1" / "ikev2").
+	//
+	// It is not a promoted column: the version lives inside the serialized
+	// intent, so the list has to decode it. The alternative was worse than the
+	// decode — the console rendered a hardcoded "IKEv2" for every tunnel,
+	// which is a false statement about the IKEv1 tunnels the validator still
+	// accepts (it warns, but accepts).
+	//
+	// Decoding is cheap: IntentJSON is unmarshalled without touching the
+	// encrypted PSK, and a tunnel whose intent cannot be decoded reports no
+	// version rather than a wrong one.
+	IKEVersion string `json:"ike_version,omitempty"`
 }
 
 // ListIPSecTunnels returns all tunnels (no intent/PSK detail).
@@ -188,11 +200,15 @@ func (h *Handler) ListIPSecTunnels(c *gin.Context) {
 	}
 	items := make([]ipsecTunnelListItem, 0, len(list))
 	for i := range list {
-		items = append(items, ipsecTunnelListItem{
+		item := ipsecTunnelListItem{
 			IPSecTunnel: list[i],
 			Deletable:   ipsecDeletable(&list[i]),
 			Editable:    ipsecEditable(&list[i]),
-		})
+		}
+		if intent, ierr := database.IPSecModelToIntent(&list[i]); ierr == nil {
+			item.IKEVersion = string(intent.IKEVersion)
+		}
+		items = append(items, item)
 	}
 	c.JSON(http.StatusOK, response.Success(items))
 }

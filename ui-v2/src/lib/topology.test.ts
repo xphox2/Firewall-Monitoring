@@ -1,5 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { bundleEdges, linkColour, linkState, normalizePositions, type BundleableEdge } from './topology';
+import {
+  activeTopologyDevices,
+  bundleEdges,
+  linkColour,
+  linkState,
+  normalizePositions,
+  type BundleableEdge,
+} from './topology';
+
+describe('activeTopologyDevices', () => {
+  it('drops retired devices', () => {
+    const devices = [
+      { id: 1, retired_at: null },
+      { id: 2, retired_at: '2026-10-20T10:00:00Z' },
+      { id: 3, retired_at: undefined },
+    ];
+    expect(activeTopologyDevices(devices).map((d) => d.id)).toEqual([1, 3]);
+  });
+
+  it('keeps a device whose retirement is absent, not just null', () => {
+    // The field is optional on the wire: a device that was never retired has
+    // no retired_at key at all. Treating "absent" as retired would empty the
+    // map for every fleet that predates the column.
+    const devices = [{ id: 7 }, { id: 8, retired_at: '' }];
+    expect(activeTopologyDevices(devices).map((d) => d.id)).toEqual([7, 8]);
+  });
+
+  it('returns an empty list for missing data', () => {
+    expect(activeTopologyDevices(undefined)).toEqual([]);
+    expect(activeTopologyDevices(null)).toEqual([]);
+    expect(activeTopologyDevices([])).toEqual([]);
+  });
+
+  it('does not mutate the input', () => {
+    const devices = [{ id: 1, retired_at: null }, { id: 2, retired_at: '2026-10-20T10:00:00Z' }];
+    activeTopologyDevices(devices);
+    expect(devices).toHaveLength(2);
+  });
+});
 
 describe('linkState', () => {
   it('classifies healthy link states', () => {

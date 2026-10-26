@@ -138,6 +138,75 @@ func TestGetDashboardAll_HidesConnectionsToRetiredDevices(t *testing.T) {
 	}
 }
 
+// A retired device's OWN tunnels must not appear in the map payload at all.
+//
+// The case above covers a retired PEER (a live device still reports the
+// tunnel, and the map must show it unmatched). This case is the other
+// direction: the retired device itself still has vpn_status rows, because
+// those rows are a snapshot of its LAST poll and are never cleaned up. The
+// device stopped being polled the moment it was retired, so its tunnels are
+// not live facts — but its stored status is frozen at retire time, so the
+// console drew it as a live node painted with that frozen status.
+//
+// The legacy console filtered these out client-side with `activeDevices()`.
+// The V2 console did not, so deleted devices were drawn on the map.
+func TestGetVPNMapData_ExcludesRetiredDevicesOwnTunnels(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	live, _ := seedConnectionEndpoints(t, h)
+	gone := seedRetiredDevice(t, h)
+
+	now := time.Now()
+	for _, row := range []*models.VPNStatus{
+		{DeviceID: live.ID, TunnelName: "live-tunnel", TunnelType: "ipsec", RemoteIP: "198.51.100.5", Status: "up", Timestamp: now},
+		{DeviceID: gone.ID, TunnelName: "dead-tunnel", TunnelType: "ipsec", RemoteIP: "198.51.100.6", Status: "up", Timestamp: now},
+	} {
+		if err := h.db.Gorm().Create(row).Error; err != nil {
+			t.Fatalf("seed vpn status: %v", err)
+		}
+	}
+
+	router := gin.New()
+	router.GET("/vpn-map", h.GetVPNMapData)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest("GET", "/vpn-map", nil))
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var out struct {
+		Data map[string]struct {
+			Total   int `json:"total"`
+			Tunnels []struct {
+				TunnelName string `json:"tunnel_name"`
+			} `json:"tunnels"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (%d)", err, w.Code)
+	}
+
+	deadKey := fmt.Sprintf("%d", gone.ID)
+	if dv, ok := out.Data[deadKey]; ok {
+		t.Errorf("retired device %d appears in the map payload with %d tunnel(s): %+v", gone.ID, dv.Total, dv.Tunnels)
+	}
+	liveKey := fmt.Sprintf("%d", live.ID)
+	dv, ok := out.Data[liveKey]
+	if !ok {
+		t.Fatalf("live device %d missing from the map payload: %s", live.ID, w.Body.String())
+	}
+	if dv.Total != 1 || dv.Tunnels[0].TunnelName != "live-tunnel" {
+		t.Errorf("live device tunnels = %+v, want the single live tunnel", dv.Tunnels)
+	}
+	// The retired device's tunnel name must not leak through another device's
+	// panel either.
+	for _, dev := range out.Data {
+		for _, tun := range dev.Tunnels {
+			if tun.TunnelName == "dead-tunnel" {
+				t.Errorf("a retired device's tunnel %q leaked into the map payload", tun.TunnelName)
+			}
+		}
+	}
+}
+
 // The production shape: the surviving OPNsense still reports the tunnel that
 // was provisioned to the now-retired FortiGate. The map's VPN panel must show
 // it unmatched, not as a link to the retired device's page.
