@@ -1,6 +1,55 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.446] - 2026-10-25
+
+### Fixed — The V2 topology map no longer draws deleted devices
+
+- **Retired devices are off the map.** The V2 console drew a decommissioned
+  device as a live node, painted green. Retirement is a soft delete — the row
+  survives, because the device page, its alert history and the audit trail all
+  still need it — and `/admin/api/devices` is deliberately **unscoped** for
+  exactly that reason. The map therefore had to apply the fleet filter itself,
+  and it did not. The legacy console did, with an `activeDevices()` helper, so
+  the regression was invisible until the V2 rewrite dropped the helper.
+- **A retired device was painted with a status frozen at retire time.** It
+  stops being polled the moment it is retired, so its stored status never
+  changes: a device retired while online stays *online* forever. That is what
+  made the node green rather than grey — the map was not lying about the
+  status it was given, it was lying about the device being there at all.
+- **Its tunnels were drawn too, from the other end.** A retired device's
+  `vpn_status` rows are a snapshot of its last poll and are never cleaned up,
+  so the map payload carried them as live facts. The server now skips tunnel
+  rows whose device is not in the active fleet, which fixes the V2 console and
+  the legacy console at once. A retired device's own tunnel is no longer
+  reported; a **live** device's tunnel to a retired peer is still reported, and
+  still shown as pointing at a decommissioned peer.
+- **The counter says so.** The Devices tile counts the live fleet and, when
+  there is a difference, says how many retired devices are hidden — so a
+  device that vanished from the map is explained rather than merely absent.
+
+### Fixed — The V2 IPSec table stated an IKE version it did not know
+
+- **Every tunnel was labelled "IKEv2".** The list response carried no IKE
+  version at all, and the console filled the gap with a hardcoded `2`. That is
+  a false statement about an IKEv1 tunnel: the validator accepts IKEv1 (it
+  warns that it is deprecated, RFC 9395) and the deploy path honours whichever
+  version was stored. The server now decodes the real version out of the
+  stored intent and reports it — and reports **nothing** rather than a guess
+  when the intent cannot be decoded.
+- **The "Deploy Saga State" column could not be sorted.** It was keyed on
+  `deploy_state`, a field that is not on the wire — the deploy record is never
+  serialized — so sorting compared nothing with nothing and the column never
+  reordered. The cells rendered correctly by falling back to `status`; the
+  sort did not, because it never looked at `status` at all. It is keyed on
+  `status` now.
+
+### Changed — The map payload no longer carries retired devices' tunnels
+
+- `GET /admin/api/connections/vpn-map` omits the tunnel rows of any device
+  that is not in the active fleet. Retired and purged devices are excluded; the
+  tunnels a **live** device reports to a retired peer are unaffected.
+
 ## [0.11.445] - 2026-10-25
 
 ### Added — Delete a tunnel from the V2 console

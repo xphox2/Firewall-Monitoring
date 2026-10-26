@@ -31,7 +31,7 @@ import {
   ConnectionTunnels,
   type ConnectionDetail,
 } from '@/components/topology/connection-detail-panels';
-import { linkState } from '@/lib/topology';
+import { activeTopologyDevices, linkState } from '@/lib/topology';
 
 // Cytoscape + fcose are ~400 KB; load them only when the map tab is opened.
 const TopologyMap = lazy(() =>
@@ -48,6 +48,10 @@ interface TopologyDevice {
   ip_address?: string;
   site_id?: number | null;
   status?: string;
+  // Retirement is a soft delete: the row survives, but the device is no longer
+  // polled and must not be drawn on the map. /admin/api/devices is unscoped,
+  // so the filter is applied by activeTopologyDevices().
+  retired_at?: string | null;
 }
 
 interface TopologySite {
@@ -74,16 +78,30 @@ interface ConnectionRecord {
   dest_if_name?: string;
 }
 
+// The LIST response for an IPSec tunnel intent.
+//
+// The field names are the model's, not invented ones: the tunnel row promotes
+// its endpoints as a_device_id / b_device_id (internal/models/models.go), and
+// the server appends deletable / editable. The previous names here
+// (endpoint_a_device_id, endpoint_b_device_id, deploy_state) matched NOTHING
+// on the wire, which is why the "Deploy Saga State" column sorted to a no-op
+// and the IKE version rendered as a hardcoded "IKEv2" for every tunnel.
+//
+// ike_version is the intent's REAL version ("ikev1" / "ikev2"), decoded from
+// the stored intent by the server. It is a string, not a number.
 interface IPSecTunnelIntent {
   id: number;
   name: string;
-  endpoint_a_device_id: number;
-  endpoint_a_name?: string;
-  endpoint_b_device_id: number;
-  endpoint_b_name?: string;
-  ike_version?: number;
-  deploy_state?: string;
+  enabled?: boolean;
   status?: string;
+  last_error?: string;
+  a_device_id?: number;
+  b_device_id?: number;
+  a_vendor?: string;
+  b_vendor?: string;
+  ike_version?: string;
+  last_deployed_at?: string;
+  created_at?: string;
   updated_at?: string;
   // deletable is the SERVER's rule (the tunnel carries no deployment), not a
   // status approximation — the deploy record is never serialized, so the
@@ -231,8 +249,15 @@ function NetworkMapSubTab({
   // Rebuild the graph only when the underlying data changes: a refetch that
   // returns structurally identical JSON keeps these references stable (React
   // Query structural sharing), so pan/zoom and selection survive the poll.
-  const { nodes, edges, mapSites, deadPeers } = useMemo(() => {
-    const devices = deviceList ?? [];
+  const { nodes, edges, mapSites, deadPeers, retiredCount, activeDeviceCount } = useMemo(() => {
+    // The fleet filter. /admin/api/devices is deliberately unscoped (a retired
+    // device must still be nameable on its own page), so the map applies the
+    // retirement filter itself — otherwise a decommissioned device is drawn as
+    // a live node, painted with the status frozen at retire time, and its
+    // tunnels are drawn from it.
+    const allDevices = deviceList ?? [];
+    const devices = activeTopologyDevices(allDevices);
+    const retiredCount = allDevices.length - devices.length;
     const sites = siteList ?? [];
     const connections = connList ?? [];
     // GetVPNMapData is keyed by device ID ("7" -> {total, up, down, tunnels}).
@@ -356,6 +381,8 @@ function NetworkMapSubTab({
       edges: links,
       mapSites: siteNodes,
       deadPeers,
+      retiredCount,
+      activeDeviceCount: devices.length,
     };
   }, [deviceList, siteList, connList, mapData]);
 
@@ -368,8 +395,13 @@ function NetworkMapSubTab({
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Devices</div>
           <div className="text-xl font-mono font-bold text-text mt-0.5">
-            {(deviceList ?? []).length}
+            {activeDeviceCount}
           </div>
+          {retiredCount > 0 && (
+            <div className="text-[10px] text-text-faint mt-0.5">
+              {retiredCount} retired hidden
+            </div>
+          )}
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Up Links</div>
@@ -721,7 +753,20 @@ interface IPSecDiscoveryReport {
 }
 
 function ipsecTunnelStatus(t: IPSecTunnelIntent): string {
-  return (t.status || t.deploy_state || 'draft').toLowerCase();
+  // `status` is the field the server sends. There is no `deploy_state` on the
+  // wire — the deploy record is never serialized — so a fallback to it would
+  // have been a fallback to nothing.
+  return (t.status || 'draft').toLowerCase();
+}
+
+// The IKE version the tunnel was actually built with. The server decodes it
+// from the stored intent; an intent that cannot be decoded reports nothing,
+// and nothing is shown rather than a guessed "IKEv2".
+function ipsecTunnelIKE(t: IPSecTunnelIntent): string | null {
+  const raw = (t.ike_version || '').trim().toLowerCase();
+  if (raw === 'ikev1' || raw === '1') return 'IKEv1';
+  if (raw === 'ikev2' || raw === '2') return 'IKEv2';
+  return null;
 }
 
 function IpsecTunnelsSubTab() {
@@ -883,21 +928,29 @@ function IpsecTunnelsSubTab() {
       {
         accessorKey: 'name',
         header: 'Tunnel Intent',
-        cell: ({ row }) => (
-          <div>
-            <div className="font-semibold text-text">{row.original.name}</div>
-            <div className="text-[11px] font-mono text-text-dim">
-              IKEv{row.original.ike_version || 2} • Updated {formatRelativeTime(row.original.updated_at)}
+        cell: ({ row }) => {
+          const ike = ipsecTunnelIKE(row.original);
+          return (
+            <div>
+              <div className="font-semibold text-text">{row.original.name}</div>
+              <div className="text-[11px] font-mono text-text-dim">
+                {ike ? `${ike} • ` : ''}
+                Updated {formatRelativeTime(row.original.updated_at)}
+              </div>
             </div>
-          </div>
-        ),
+          );
+        },
       },
       {
-        accessorKey: 'deploy_state',
+        // `status` is the field the server sends. The old accessorKey was
+        // `deploy_state`, which is not on the wire at all, so sorting this
+        // column compared undefined against undefined and never reordered
+        // anything.
+        accessorKey: 'status',
         header: 'Deploy Saga State',
         cell: ({ row }) => (
           <span className="rounded bg-bg-panel px-2 py-0.5 font-mono text-[10px] uppercase text-text-dim">
-            {row.original.deploy_state || row.original.status || 'draft'}
+            {ipsecTunnelStatus(row.original)}
           </span>
         ),
       },
@@ -1001,7 +1054,7 @@ function IpsecTunnelsSubTab() {
             <div className="flex items-center justify-between">
               <span className="font-semibold text-sm text-text">{t.name}</span>
               <span className="rounded bg-bg-panel px-2 py-0.5 text-[10px] uppercase text-text-dim">
-                {t.deploy_state || 'draft'}
+                {ipsecTunnelStatus(t)}
               </span>
             </div>
           </div>

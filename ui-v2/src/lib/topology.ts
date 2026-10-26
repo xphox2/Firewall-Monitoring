@@ -26,6 +26,32 @@ export function linkColour(status: string | null | undefined): string {
   }
 }
 
+export interface TopologyDeviceLike {
+  id: number;
+  retired_at?: string | null;
+}
+
+/**
+ * The devices that belong on the network map.
+ *
+ * Retirement is a SOFT delete: the row is kept (the device page, its alert
+ * history and the audit trail still need it) but `retired_at` is stamped. A
+ * retired device is no longer polled, so its stored status is FROZEN at retire
+ * time — a device retired while online stays "online" forever. Drawing it puts
+ * a decommissioned device back on the map, painted green.
+ *
+ * `/admin/api/devices` is deliberately UNSCOPED (internal/database/devices.go:
+ * "GetDevice and GetAllDevices are deliberately NOT scoped"), so the map has
+ * to apply the fleet filter itself. The legacy console did the same thing
+ * client-side with its `activeDevices()` helper; without it the V2 map drew
+ * deleted devices.
+ */
+export function activeTopologyDevices<T extends TopologyDeviceLike>(
+  devices: T[] | undefined | null,
+): T[] {
+  return (devices ?? []).filter((device) => !device.retired_at);
+}
+
 export interface BundleableEdge {
   id: string;
   source: string;
