@@ -60,16 +60,20 @@ services:
     # large one: PostgreSQL's buffer manager fills whatever it is allowed,
     # so with a 2g cgroup and a PostgreSQL tuned with ALTER SYSTEM to
     # shared_buffers = 8GB, the OOM killer takes out the WHOLE container -
-    # the API, the poller and PostgreSQL die together (status 137) and the
-    # entrypoint restarts the stack. It happened on 2026-10-27 twice: once
-    # during the daily pg_dump (which reads ~3.6 GB) and once when the limit
-    # was lowered again while the buffer pool was still full.
+    # the API, the poller and PostgreSQL all die together (status 137). It
+    # happened on 2026-10-27 twice: once during the daily pg_dump (which
+    # reads ~3.6 GB) and once when the limit was lowered again while the
+    # buffer pool was still full.
+    #
+    # Docker's `restart: unless-stopped` policy then brings back a fresh
+    # stack. The entrypoint is killed WITH everything else, so PostgreSQL
+    # does NOT get its clean `pg_ctl` shutdown on that path.
     #
     # A deployment with a large database raises this in its .env - the same
     # way it overrides the image - so the limit is part of the deployment's
-    # configuration and not of the tracked file. The swap limit is set with
-    # it: without one, a limit above the host's RAM is a promise the host
-    # cannot keep.
+    # configuration and not of the tracked file. The swap limit travels with
+    # it, and it must be raised too: Docker clamps the swap to the memory
+    # limit, so a raised limit with the default swap silently means NO swap.
     mem_limit: ${FIREWALL_MON_MEM_LIMIT:-2g}
     memswap_limit: ${FIREWALL_MON_MEMSWAP_LIMIT:-4g}
     cpus: ${FIREWALL_MON_CPUS:-2.0}

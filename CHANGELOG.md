@@ -10,7 +10,9 @@ All notable changes to this project are documented in this file.
   whatever it is allowed, so with a 2g cgroup and a PostgreSQL tuned with
   `ALTER SYSTEM` to `shared_buffers = 8GB`, the **OOM killer takes out the
   whole container** — the API, the poller and PostgreSQL all die together
-  (status 137) and the entrypoint restarts the stack.
+  (status 137). Docker's `restart: unless-stopped` policy then brings back
+  a fresh stack, and because the entrypoint is killed with everything else,
+  PostgreSQL does not get its clean `pg_ctl` shutdown on that path.
 - That happened on 2026-10-27, twice: once during the daily `pg_dump` (which
   reads ~3.6 GB) and once when the limit was lowered again while the buffer
   pool was still full.
@@ -19,17 +21,9 @@ All notable changes to this project are documented in this file.
   `FIREWALL_MON_CPUS` — the same way the image already was, so a large
   deployment raises them in its `.env` instead of editing a tracked file.
   The defaults are unchanged: a fresh install is still bounded at 2g.
-
-### Changed — The daily state backup works again
-
-- The image sets `USER fwmon`, so `docker exec` ran the dump as a non-root
-  user and `su-exec` could not `setgroups`: the dump produced an **empty
-  file** while the script still reported success. The daily backup had been
-  silently broken since 2026-10-25, and the last good backup was 2026-10-24.
-- The dump now runs as root inside the container and drops to `postgres`,
-  and a dump under 1 MB is **removed rather than kept** — a backup that
-  cannot restore is worse than no backup, because an empty file looks like a
-  good one.
+- The swap limit must be raised **together** with the memory limit: Docker
+  clamps the swap to the memory limit, so a raised limit with the default
+  swap silently means no swap at all.
 
 ## [0.11.455] - 2026-10-27
 
