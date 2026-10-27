@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   useReactTable,
   getCoreRowModel,
@@ -49,22 +49,37 @@ export interface ResponsiveDataViewProps<TData> {
  *
  * The card's content is caller-provided and may hold its own buttons, so
  * the action's name is taken from the row's identity instead: the first
- * field that names the row. It is a fallback, not a rule - a caller that
- * knows better passes the rowLabel prop.
+ * field that names the row.
+ *
+ * The field list is the console's own vocabulary - a flow names itself by
+ * its addresses, a trap by its type, a syslog row by its host. A row that
+ * none of them name returns null, and the caller falls back to the card's
+ * own text: "Open row 3" is worse than the description the card already
+ * shows.
  */
-function defaultRowLabel(row: unknown, id: string): string {
+function defaultRowLabel(row: unknown): string | null {
   const fields = [
     'name',
     'device_name',
     'hostname',
+    'host',
     'username',
     'title',
     'label',
     'key',
     'alert_type',
+    'trap_type',
     'type',
     'category',
     'severity',
+    'site_name',
+    'collector_name',
+    'address',
+    'src_ip',
+    'dst_ip',
+    'source_ip',
+    'src_addr',
+    'dst_addr',
     'ip_address',
   ];
   const record = row as Record<string, unknown> | null;
@@ -75,7 +90,7 @@ function defaultRowLabel(row: unknown, id: string): string {
       if (typeof value === 'number') return String(value);
     }
   }
-  return `row ${id}`;
+  return null;
 }
 
 function errorMessage(error: unknown): string {
@@ -101,7 +116,32 @@ export function ResponsiveDataView<TData>({
   className,
 }: ResponsiveDataViewProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
+  // The card's own text, for the rows whose fields do not name them.
+  //
+  // Before the action became a real button, the card's CONTENT was its
+  // accessible name, and for the tables with no name-like field (a flow, a
+  // trap, a syslog row) that description was the whole point. It is read
+  // back here so the name does not regress to "Open row 3".
+  const contentRefs = useRef(new Map<string, HTMLDivElement>());
+  const [contentLabels, setContentLabels] = useState<Record<string, string>>({});
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+
+  // Re-read the cards' text whenever the rows change.
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    contentRefs.current.forEach((el, id) => {
+      // textContent, not innerText: the card stack is hidden at the
+      // desktop width, and innerText is empty for a hidden element.
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text) next[id] = text;
+    });
+    setContentLabels((prev) => {
+      const keys = Object.keys(next);
+      const same =
+        keys.length === Object.keys(prev).length && keys.every((k) => prev[k] === next[k]);
+      return same ? prev : next;
+    });
+  }, [data]);
 
   const table = useReactTable({
     data,
@@ -214,12 +254,20 @@ export function ResponsiveDataView<TData>({
                 aria-label={
                   rowLabel
                     ? rowLabel(row.original)
-                    : `Open ${defaultRowLabel(row.original, String(row.id))}`
+                    : `Open ${
+                        defaultRowLabel(row.original) ??
+                        contentLabels[String(row.id)] ??
+                        `row ${row.id}`
+                      }`
                 }
                 className="absolute inset-0 z-0 h-full w-full cursor-pointer rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               />
             ) : null}
             <div
+              ref={(el) => {
+                if (el) contentRefs.current.set(String(row.id), el);
+                else contentRefs.current.delete(String(row.id));
+              }}
               className={cn(
                 'relative z-10',
                 // The press belongs to the stretched button, not to the
