@@ -449,7 +449,7 @@ export function FlowsWorkspace() {
         {(!isValidDstPort(filters.dstPort) ||
           !isLikelyAddress(filters.src) ||
           !isLikelyAddress(filters.dst)) && (
-          <p className="text-[10px] text-sig-warn">
+          <p className="text-[10px] text-sig-warn-text">
             Ignored by the server:{' '}
             {[
               !isValidDstPort(filters.dstPort) ? 'dst port must be 1–65535' : null,
@@ -463,7 +463,7 @@ export function FlowsWorkspace() {
       </div>
 
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load flow statistics: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}
@@ -604,7 +604,7 @@ function TrafficOverview({
       </div>
 
       {stats?.degraded && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-[11px] text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-[11px] text-sig-crit-text">
           <strong>Partial window.</strong> The rolled-up aggregates did not complete in time, so
           the figures cover less than the requested {range} — in the worst case only the last hour
           still held in raw samples. Affected panels:{' '}
@@ -616,7 +616,7 @@ function TrafficOverview({
       )}
 
       {(stats?.partial_blocks ?? []).length > 0 && (
-        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
           Incomplete panels:{' '}
           {(stats?.partial_blocks ?? [])
             .map(
@@ -639,7 +639,7 @@ function TrafficOverview({
             </div>
           )}
           {(stats?.mixed_source_devices ?? []).length > 0 && (
-            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
               Multiple exporters are metering the same traffic on:{' '}
               <span className="font-mono">{stats?.mixed_source_devices?.join(', ')}</span>. Bytes can
               be double-counted until one exporter is disabled.
@@ -949,7 +949,7 @@ function SamplesTab({
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load flow samples: {error instanceof Error ? error.message : 'request failed'}
         </div>
       ) : (
@@ -1078,7 +1078,7 @@ function FlowDetectionsSubTab() {
         accessorKey: 'detector',
         header: 'Detector',
         cell: ({ row }) => (
-          <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+          <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn-text">
             {row.original.detector || 'Anomaly'}
           </span>
         ),
@@ -1101,7 +1101,7 @@ function FlowDetectionsSubTab() {
                 onClick={() => ackMutation.mutate(row.original.id)}
                 className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text hover:bg-bg-hover"
               >
-                <Check className="h-3 w-3 text-sig-ok" /> Ack
+                <Check className="h-3 w-3 text-sig-ok-text" /> Ack
               </button>
             )}
           </div>
@@ -1119,7 +1119,7 @@ function FlowDetectionsSubTab() {
       emptyTitle="No sFlow anomaly detections triggered."
       renderMobileCard={(d) => (
         <div className="flex items-center justify-between text-xs">
-          <span className="font-semibold text-sig-warn">{d.detector || 'Anomaly'}</span>
+          <span className="font-semibold text-sig-warn-text">{d.detector || 'Anomaly'}</span>
           <span className="font-mono text-text">{d.src_addr}</span>
         </div>
       )}

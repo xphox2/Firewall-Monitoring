@@ -41,7 +41,7 @@ export class ErrorBoundary extends Component<Props, State> {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg p-6">
         <div className="w-full max-w-lg rounded-xl border border-sig-crit/30 bg-bg-card p-6">
-          <div className="flex items-center gap-2 text-sig-crit">
+          <div className="flex items-center gap-2 text-sig-crit-text">
             <AlertTriangle className="h-5 w-5" />
             <h1 className="text-sm font-semibold">This workspace failed to render</h1>
           </div>

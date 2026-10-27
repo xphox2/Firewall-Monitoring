@@ -392,7 +392,7 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
             <span
               className={cn(
                 'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                isDeny ? 'bg-sig-crit/15 text-sig-crit' : 'bg-sig-ok/15 text-sig-ok'
+                isDeny ? 'bg-sig-crit/15 text-sig-crit-text' : 'bg-sig-ok/15 text-sig-ok-text'
               )}
             >
               {label}
@@ -526,7 +526,7 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
                 <span
                   className={cn(
                     'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-                    isDeny ? 'bg-sig-crit/15 text-sig-crit' : 'bg-sig-ok/15 text-sig-ok'
+                    isDeny ? 'bg-sig-crit/15 text-sig-crit-text' : 'bg-sig-ok/15 text-sig-ok-text'
                   )}
                 >
                   {label}
@@ -590,7 +590,7 @@ function NetEventInspector({ event }: { event: NetEventRow | undefined }) {
         <span
           className={cn(
             'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-            action.isDeny ? 'bg-sig-crit/15 text-sig-crit' : 'bg-sig-ok/15 text-sig-ok',
+            action.isDeny ? 'bg-sig-crit/15 text-sig-crit-text' : 'bg-sig-ok/15 text-sig-ok-text',
           )}
         >
           {action.label}
@@ -602,7 +602,7 @@ function NetEventInspector({ event }: { event: NetEventRow | undefined }) {
           {directionLabel(event.direction)}
         </span>
         {event.threat_flag ? (
-          <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-crit">
+          <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-crit-text">
             threat-intel match
           </span>
         ) : null}
@@ -781,7 +781,7 @@ function EventAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   return (
     <div className="space-y-4">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load event analytics: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}
@@ -929,8 +929,8 @@ const SEC_SEVERITIES = [
 function severityTone(value: number | null | undefined): string {
   // CEF thresholds: >=7 critical, >=4 warning (matches the classic console).
   const v = value ?? 0;
-  if (v >= 7) return 'bg-sig-crit/15 text-sig-crit';
-  if (v >= 4) return 'bg-sig-warn/15 text-sig-warn';
+  if (v >= 7) return 'bg-sig-crit/15 text-sig-crit-text';
+  if (v >= 4) return 'bg-sig-warn/15 text-sig-warn-text';
   return 'bg-accent/15 text-accent-text';
 }
 
@@ -1091,7 +1091,7 @@ function SecurityAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
     return (
       <div
         role="alert"
-        className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit"
+        className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text"
       >
         Could not load security analytics:{' '}
         {error instanceof Error ? error.message : 'request failed'}
@@ -1355,7 +1355,7 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   return (
     <div className="space-y-3">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load security events: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}

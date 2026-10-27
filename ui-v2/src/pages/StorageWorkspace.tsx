@@ -342,9 +342,9 @@ const archivedStreamColumns: ColumnDef<any, any>[] = [
       <span
         className={cn(
           'inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-          row.original.state === 'ok' && 'bg-sig-ok/15 text-sig-ok',
+          row.original.state === 'ok' && 'bg-sig-ok/15 text-sig-ok-text',
           (row.original.state === 'error' || row.original.state === 'stalled') &&
-            'bg-sig-crit/15 text-sig-crit',
+            'bg-sig-crit/15 text-sig-crit-text',
           row.original.state !== 'ok' &&
             row.original.state !== 'error' &&
             row.original.state !== 'stalled' &&
@@ -632,7 +632,7 @@ export function StorageWorkspace() {
             className={cn(
               'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase whitespace-nowrap',
               row.original.source === 'ui' && 'bg-accent/15 text-accent-text',
-              row.original.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
+              row.original.source === 'env' && 'bg-sig-ok/15 text-sig-ok-text',
               row.original.source === 'default' && 'bg-bg-panel text-text-mute',
             )}
           >
@@ -773,7 +773,7 @@ export function StorageWorkspace() {
           <button
             type="button"
             onClick={() => dropRestore(row.original)}
-            className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit hover:bg-sig-crit/20"
+            className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit-text hover:bg-sig-crit/20"
           >
             <Trash2 className="h-3 w-3" />
             Drop
@@ -1054,7 +1054,7 @@ export function StorageWorkspace() {
             <Database className="h-3.5 w-3.5" />
             <span>Hot Retention Matrix</span>
             {dirtyRetentionKeys.length > 0 && (
-              <span className="ml-1 rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn">
+              <span className="ml-1 rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn-text">
                 {dirtyRetentionKeys.length}
               </span>
             )}
@@ -1104,7 +1104,7 @@ export function StorageWorkspace() {
             <Sliders className="h-3.5 w-3.5" />
             <span>Archive Target Config</span>
             {dirtyArchiveKeys.length > 0 && (
-              <span className="ml-1 rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn">
+              <span className="ml-1 rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn-text">
                 {dirtyArchiveKeys.length}
               </span>
             )}
@@ -1148,7 +1148,7 @@ export function StorageWorkspace() {
                 <span
                   className={cn(
                     'font-mono text-xs font-semibold',
-                    volumeProjection.fits ? 'text-sig-ok' : 'text-sig-crit',
+                    volumeProjection.fits ? 'text-sig-ok-text' : 'text-sig-crit-text',
                   )}
                 >
                   {volumeProjection.fits
@@ -1242,7 +1242,7 @@ export function StorageWorkspace() {
                             className={cn(
                               'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase',
                               f.source === 'ui' && 'bg-accent/15 text-accent-text',
-                              f.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
+                              f.source === 'env' && 'bg-sig-ok/15 text-sig-ok-text',
                               f.source === 'default' && 'bg-bg-panel text-text-mute',
                             )}
                           >
@@ -1424,10 +1424,10 @@ export function StorageWorkspace() {
                   <div
                     className={cn(
                       'rounded-lg p-2.5 shrink-0',
-                      archiveStatus?.health?.verdict === 'healthy' && 'bg-sig-ok/15 text-sig-ok',
+                      archiveStatus?.health?.verdict === 'healthy' && 'bg-sig-ok/15 text-sig-ok-text',
                       archiveStatus?.health?.verdict === 'warning' &&
-                        'bg-sig-warn/15 text-sig-warn',
-                      archiveStatus?.health?.verdict === 'error' && 'bg-sig-crit/15 text-sig-crit',
+                        'bg-sig-warn/15 text-sig-warn-text',
+                      archiveStatus?.health?.verdict === 'error' && 'bg-sig-crit/15 text-sig-crit-text',
                       (!archiveStatus?.health?.verdict ||
                         archiveStatus.health.verdict === 'disabled' ||
                         archiveStatus.health.verdict === 'not_configured') &&
@@ -1522,9 +1522,9 @@ export function StorageWorkspace() {
                     <div
                       className={cn(
                         'inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                        st.state === 'ok' && 'bg-sig-ok/15 text-sig-ok',
+                        st.state === 'ok' && 'bg-sig-ok/15 text-sig-ok-text',
                         (st.state === 'error' || st.state === 'stalled') &&
-                          'bg-sig-crit/15 text-sig-crit',
+                          'bg-sig-crit/15 text-sig-crit-text',
                         st.state !== 'ok' &&
                           st.state !== 'error' &&
                           st.state !== 'stalled' &&
@@ -1593,7 +1593,7 @@ export function StorageWorkspace() {
                     <button
                       type="button"
                       onClick={() => dropRestore(job)}
-                      className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit hover:bg-sig-crit/20"
+                      className="inline-flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] text-sig-crit-text hover:bg-sig-crit/20"
                     >
                       <Trash2 className="h-3 w-3" />
                       Drop
@@ -1627,7 +1627,7 @@ export function StorageWorkspace() {
                 disabled={testingArchive}
                 className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-semibold text-text hover:border-border-strong disabled:opacity-50"
               >
-                <Play className="h-3.5 w-3.5 text-sig-ok" />
+                <Play className="h-3.5 w-3.5 text-sig-ok-text" />
                 <span>{testingArchive ? 'Running Preflight...' : 'Test Connection'}</span>
               </button>
             </div>
@@ -1644,12 +1644,12 @@ export function StorageWorkspace() {
             >
               <div className="flex items-center gap-2 text-xs font-bold text-text">
                 <ShieldCheck
-                  className={cn('h-4 w-4', testResult.ok ? 'text-sig-ok' : 'text-sig-warn')}
+                  className={cn('h-4 w-4', testResult.ok ? 'text-sig-ok-text' : 'text-sig-warn-text')}
                 />
                 <span>{testResult.message || 'Preflight Check Results'}</span>
               </div>
               {testResult.warnings && testResult.warnings.length > 0 && (
-                <ul className="space-y-1 text-xs text-sig-warn pl-6 list-disc">
+                <ul className="space-y-1 text-xs text-sig-warn-text pl-6 list-disc">
                   {testResult.warnings.map((w, idx) => (
                     <li key={idx}>{w}</li>
                   ))}
@@ -1659,7 +1659,7 @@ export function StorageWorkspace() {
                 <ul className="space-y-1 text-xs text-text-dim pl-6 list-disc">
                   {testResult.checks.map((c, idx) => (
                     <li key={idx}>
-                      <strong className={c.ok ? 'text-sig-ok' : 'text-sig-crit'}>
+                      <strong className={c.ok ? 'text-sig-ok-text' : 'text-sig-crit-text'}>
                         {c.ok ? 'PASS' : 'FAIL'}
                       </strong>{' '}
                       — {c.name}: {c.detail}
@@ -1738,7 +1738,7 @@ export function StorageWorkspace() {
                                     className={cn(
                                       'rounded px-1.5 py-0.2 font-mono text-[10px]',
                                       archReverts[f.key]
-                                        ? 'bg-sig-warn/20 text-sig-warn'
+                                        ? 'bg-sig-warn/20 text-sig-warn-text'
                                         : 'bg-accent/15 text-accent-text',
                                     )}
                                   >
@@ -1979,7 +1979,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
         header: 'Error',
         cell: ({ row }) => (
           <span
-            className="block max-w-[22rem] truncate text-[10px] text-sig-warn"
+            className="block max-w-[22rem] truncate text-[10px] text-sig-warn-text"
             title={row.original.error}
           >
             {row.original.error || '—'}
@@ -2112,14 +2112,14 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
                       stream.enabled
-                        ? 'bg-sig-ok/15 text-sig-ok'
+                        ? 'bg-sig-ok/15 text-sig-ok-text'
                         : 'bg-bg-card text-text-faint',
                     )}
                   >
                     {stream.enabled ? 'archiving' : 'off'}
                   </span>
                   {stream.override_active ? (
-                    <span className="text-sig-warn">
+                    <span className="text-sig-warn-text">
                       released until{' '}
                       {stream.override_until
                         ? new Date(stream.override_until).toLocaleString()
@@ -2146,7 +2146,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
                     onClick={() =>
                       setRelease({ stream: stream.stream, hours: '6', reason: '' })
                     }
-                    className="rounded border border-sig-warn/40 bg-sig-warn/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn disabled:opacity-40"
+                    className="rounded border border-sig-warn/40 bg-sig-warn/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn-text disabled:opacity-40"
                   >
                     Release…
                   </button>
@@ -2183,7 +2183,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
                     {chunk.period_start ? new Date(chunk.period_start).toLocaleString() : '—'}
                     {chunk.period_end ? ` → ${new Date(chunk.period_end).toLocaleString()}` : ''}
                   </div>
-                  <div className="font-mono text-[10px] text-sig-warn">{chunk.error || '—'}</div>
+                  <div className="font-mono text-[10px] text-sig-warn-text">{chunk.error || '—'}</div>
                   <button
                     type="button"
                     onClick={() => setReset({ chunk, reason: '' })}

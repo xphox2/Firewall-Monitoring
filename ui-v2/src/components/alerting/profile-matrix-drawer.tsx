@@ -32,9 +32,9 @@ const MODES: Array<{ mode: ToggleMode; label: string }> = [
 ];
 
 const MODE_STYLE: Record<ToggleMode, string> = {
-  on: 'bg-sig-ok/20 text-sig-ok border-sig-ok/40',
+  on: 'bg-sig-ok/20 text-sig-ok-text border-sig-ok/40',
   inherit: 'bg-bg-panel text-text-dim border-border',
-  off: 'bg-sig-crit/20 text-sig-crit border-sig-crit/40',
+  off: 'bg-sig-crit/20 text-sig-crit-text border-sig-crit/40',
 };
 
 export function ProfileMatrixDrawer({ open, onOpenChange, profile, types, onSaved }: Props) {
@@ -189,7 +189,7 @@ export function ProfileMatrixDrawer({ open, onOpenChange, profile, types, onSave
         </div>
 
         {unknownToggles.length > 0 && (
-          <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+          <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
             {unknownToggles.length} stored toggle
             {unknownToggles.length === 1 ? ' uses a type' : 's use types'} the registry no longer
             lists. The server preserves them automatically; they cannot be edited here.

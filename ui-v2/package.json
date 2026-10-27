@@ -11,7 +11,9 @@
     "test": "vitest run",
     "build": "tsc --noEmit && vite build",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:local": "node e2e-local/walk.mjs",
+    "test:e2e:local:features": "node e2e-local/features.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.7",

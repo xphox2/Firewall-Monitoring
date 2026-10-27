@@ -108,7 +108,7 @@ export function IpsecEndForm({
           ))}
         </Select>
         {otherDeviceId !== null && value.deviceId === otherDeviceId ? (
-          <span className="mt-1 block text-[10px] text-sig-crit">
+          <span className="mt-1 block text-[10px] text-sig-crit-text">
             The two ends cannot be the same device.
           </span>
         ) : null}
@@ -238,7 +238,7 @@ export function IpsecEndForm({
             )}
           />
           {idError ? (
-            <span className="mt-1 block text-[10px] text-sig-crit">{idError}</span>
+            <span className="mt-1 block text-[10px] text-sig-crit-text">{idError}</span>
           ) : null}
         </label>
       </div>

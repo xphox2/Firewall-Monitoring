@@ -158,7 +158,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
         <span
           className={cn(
             'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
-            me?.totp_enabled ? 'bg-sig-ok/15 text-sig-ok' : 'bg-bg-panel text-text-dim',
+            me?.totp_enabled ? 'bg-sig-ok/15 text-sig-ok-text' : 'bg-bg-panel text-text-dim',
           )}
         >
           {me?.totp_enabled ? 'Enabled' : 'Off'}
@@ -166,7 +166,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
       </div>
 
       {me && !me.totp_enabled && me.mfa_prompt_dismissed === false && (
-        <div className="space-y-1.5 rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+        <div className="space-y-1.5 rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
           <p>
             No authenticator is enrolled. Declining means a stolen password alone can sign in; you
             can still enable 2FA here at any time.
@@ -175,7 +175,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
             type="button"
             disabled={declining}
             onClick={decline}
-            className="rounded border border-sig-warn/50 bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn disabled:opacity-50"
+            className="rounded border border-sig-warn/50 bg-bg-panel px-2.5 py-1 text-[10px] font-semibold uppercase text-sig-warn-text disabled:opacity-50"
           >
             {declining ? 'Recording…' : 'Don\'t ask again'}
           </button>
@@ -186,7 +186,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
         <button
           type="button"
           onClick={() => setDisableOpen(true)}
-          className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-1.5 text-xs font-semibold text-sig-crit"
+          className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-1.5 text-xs font-semibold text-sig-crit-text"
         >
           Disable 2FA
         </button>
@@ -236,7 +236,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
           </div>
         ) : recoveryCodes ? (
           <div className="space-y-3">
-            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 p-3 text-xs text-sig-warn">
+            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 p-3 text-xs text-sig-warn-text">
               2FA is now enabled. Save these recovery codes — they are shown once and each works
               once if you lose your authenticator.
             </div>
@@ -489,7 +489,7 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
       </div>
 
       {!supported && (
-        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
           This browser does not expose the WebAuthn API (it requires a secure context). Passkeys
           cannot be registered here.
         </div>

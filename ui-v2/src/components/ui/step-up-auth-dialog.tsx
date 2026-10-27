@@ -165,7 +165,7 @@ export function StepUpAuthDialog({
             {error && (
               <div
                 role="alert"
-                className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit"
+                className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text"
               >
                 {error}
               </div>
@@ -310,7 +310,7 @@ export function ForcedPasswordChangeModal({
             </label>
 
             {error && (
-              <div className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+              <div className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
                 {error}
               </div>
             )}

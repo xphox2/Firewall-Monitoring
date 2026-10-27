@@ -314,17 +314,17 @@ function UsersRbacSubTab() {
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.disabled && (
-              <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-crit">
+              <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-crit-text">
                 Disabled
               </span>
             )}
             {row.original.must_change_password && (
-              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn-text">
                 Password change
               </span>
             )}
             {!row.original.disabled && !row.original.must_change_password && (
-              <span className="rounded bg-sig-ok/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-ok">
+              <span className="rounded bg-sig-ok/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-ok-text">
                 Active
               </span>
             )}
@@ -340,7 +340,7 @@ function UsersRbacSubTab() {
               className={cn(
                 'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
                 row.original.totp_enabled
-                  ? 'bg-sig-ok/15 text-sig-ok'
+                  ? 'bg-sig-ok/15 text-sig-ok-text'
                   : 'bg-bg-panel text-text-dim'
               )}
             >
@@ -396,7 +396,7 @@ function UsersRbacSubTab() {
             <button
               type="button"
               onClick={() => setUserToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit hover:bg-sig-crit/20"
+              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit-text hover:bg-sig-crit/20"
               title="Delete user"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -705,9 +705,9 @@ function ApiTokensSubTab() {
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
                   label === 'active'
-                    ? 'bg-sig-ok/15 text-sig-ok'
+                    ? 'bg-sig-ok/15 text-sig-ok-text'
                     : label === 'expired'
-                      ? 'bg-sig-warn/15 text-sig-warn'
+                      ? 'bg-sig-warn/15 text-sig-warn-text'
                       : 'bg-bg-panel text-text-faint',
                 )}
               >
@@ -738,7 +738,7 @@ function ApiTokensSubTab() {
               <button
                 type="button"
                 onClick={() => revokeMutation.mutate(row.original.id)}
-                className="flex items-center gap-1 rounded border border-sig-crit/30 bg-sig-crit/10 px-2.5 py-1 text-xs font-medium text-sig-crit hover:bg-sig-crit/20"
+                className="flex items-center gap-1 rounded border border-sig-crit/30 bg-sig-crit/10 px-2.5 py-1 text-xs font-medium text-sig-crit-text hover:bg-sig-crit/20"
               >
                 <Trash2 className="h-3 w-3" />
                 Revoke
@@ -798,7 +798,7 @@ function ApiTokensSubTab() {
         {mintedSecret && (
           <div className="mt-3 rounded-lg border border-sig-ok/40 bg-sig-ok/10 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
-              <div className="text-xs font-semibold text-sig-ok">
+              <div className="text-xs font-semibold text-sig-ok-text">
                 Copy your new API token now — it will never be shown again:
               </div>
               <code className="block mt-1 font-mono text-xs text-text break-all">
@@ -814,7 +814,7 @@ function ApiTokensSubTab() {
               }}
               className="flex items-center gap-1.5 rounded-md bg-bg-card px-3 py-1.5 text-xs font-semibold text-text border border-border shrink-0"
             >
-              {copied ? <Check className="h-3.5 w-3.5 text-sig-ok" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? <Check className="h-3.5 w-3.5 text-sig-ok-text" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? 'Copied' : 'Copy Token'}
             </button>
           </div>
@@ -1105,13 +1105,13 @@ function DisplayAndFlowsSubTab() {
               ) : null}
             </div>
             {backfillStatus?.error ? (
-              <div className="mt-1 text-[11px] text-sig-crit">{backfillStatus.error}</div>
+              <div className="mt-1 text-[11px] text-sig-crit-text">{backfillStatus.error}</div>
             ) : null}
             {backfillStatus?.hint ? (
               <div className="mt-1 text-[11px] text-text-faint">{backfillStatus.hint}</div>
             ) : null}
             {backfillStatus?.resumable ? (
-              <div className="mt-1 text-[11px] text-sig-warn">
+              <div className="mt-1 text-[11px] text-sig-warn-text">
                 The job can be resumed from where it stopped.
               </div>
             ) : null}
@@ -1635,8 +1635,8 @@ function AuditLogSubTab() {
             className={cn(
               'rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold',
               row.original.status < 400
-                ? 'bg-sig-ok/15 text-sig-ok'
-                : 'bg-sig-crit/15 text-sig-crit'
+                ? 'bg-sig-ok/15 text-sig-ok-text'
+                : 'bg-sig-crit/15 text-sig-crit-text'
             )}
           >
             {row.original.status}

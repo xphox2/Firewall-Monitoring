@@ -151,7 +151,7 @@ export function ProfileAssignmentsDrawer({ open, onOpenChange, profile, onSaved 
                     aria-label={`Unassign site ${site.name}`}
                     disabled={busy}
                     onClick={() => unassignSite.mutate(site.id)}
-                    className="text-text-faint hover:text-sig-crit disabled:opacity-40"
+                    className="text-text-faint hover:text-sig-crit-text disabled:opacity-40"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -205,7 +205,7 @@ export function ProfileAssignmentsDrawer({ open, onOpenChange, profile, onSaved 
                     aria-label={`Unassign device ${device.name}`}
                     disabled={busy}
                     onClick={() => unassignDevice.mutate(device.id)}
-                    className="text-text-faint hover:text-sig-crit disabled:opacity-40"
+                    className="text-text-faint hover:text-sig-crit-text disabled:opacity-40"
                   >
                     <X className="h-3 w-3" />
                   </button>

@@ -367,8 +367,8 @@ export function IpsecWizard({
 
   const findingTone = (f: Finding) =>
     f.severity === 'block'
-      ? 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit'
-      : 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn';
+      ? 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit-text'
+      : 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn-text';
 
   const findingLabel = (f: Finding) => {
     const scope = findingScope(f);
@@ -444,7 +444,7 @@ export function IpsecWizard({
       {error ? (
         <div
           role="alert"
-          className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit"
+          className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text"
         >
           {error}
         </div>
@@ -631,7 +631,7 @@ export function IpsecWizard({
                 
               />
               {form.psk && form.psk !== PSK_MASK && form.psk.length < 20 ? (
-                <span className="mt-1 block text-[10px] text-sig-warn">
+                <span className="mt-1 block text-[10px] text-sig-warn-text">
                   A pre-shared key must be at least 20 characters.
                 </span>
               ) : null}
@@ -652,7 +652,7 @@ export function IpsecWizard({
               Add protected subnets to both ends first.
             </p>
           ) : uncanonicalisable > 0 ? (
-            <p className="text-xs text-sig-warn">
+            <p className="text-xs text-sig-warn-text">
               {uncanonicalisable} path(s) cannot be toggled: their subnet is not
               IPv4, and a path key the server cannot match would silently stay
               enabled. Those paths stay enabled.
@@ -680,8 +680,8 @@ export function IpsecWizard({
                           className={cn(
                             'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-semibold uppercase',
                             p.disabled
-                              ? 'bg-sig-crit/15 text-sig-crit'
-                              : 'bg-sig-ok/15 text-sig-ok',
+                              ? 'bg-sig-crit/15 text-sig-crit-text'
+                              : 'bg-sig-ok/15 text-sig-ok-text',
                           )}
                         >
                           {p.disabled ? <X className="h-3 w-3" /> : <Check className="h-3 w-3" />}
@@ -723,7 +723,7 @@ export function IpsecWizard({
               </ul>
             </div>
           ) : (
-            <p className="text-xs text-sig-ok">No findings — the configuration validates.</p>
+            <p className="text-xs text-sig-ok-text">No findings — the configuration validates.</p>
           )}
 
           {preview?.psk_autogen ? (
@@ -741,7 +741,7 @@ export function IpsecWizard({
           ) : null}
 
           {preview && preview.ends.length === 0 ? (
-            <p className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+            <p className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
               Nothing is rendered while a blocking finding stands — fix the
               findings above and preview again.
             </p>

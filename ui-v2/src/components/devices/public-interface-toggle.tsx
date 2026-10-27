@@ -149,7 +149,7 @@ export function PublicInterfaceToggle({ deviceId, interfaceName, canEdit }: Publ
         'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase transition-colors',
         (!map || !canEdit) && 'cursor-not-allowed opacity-50',
         published
-          ? 'bg-sig-warn/15 text-sig-warn'
+          ? 'bg-sig-warn/15 text-sig-warn-text'
           : 'bg-bg-panel text-text-faint hover:text-text',
       )}
     >

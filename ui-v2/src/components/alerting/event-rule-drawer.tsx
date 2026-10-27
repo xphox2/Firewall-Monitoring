@@ -610,7 +610,7 @@ export function EventRuleDrawer({
                               : d.rows.filter((_, i) => i !== idx),
                         }))
                       }
-                      className="rounded border border-border bg-bg-panel p-1.5 text-text-dim hover:text-sig-crit disabled:opacity-40"
+                      className="rounded border border-border bg-bg-panel p-1.5 text-text-dim hover:text-sig-crit-text disabled:opacity-40"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -811,7 +811,7 @@ export function EventRuleDrawer({
                 </div>
                 <div className="rounded-lg border border-border bg-bg-panel p-3">
                   <div className="text-[10px] uppercase text-text-faint">Rate</div>
-                  <div className="font-mono text-sm text-sig-warn">
+                  <div className="font-mono text-sm text-sig-warn-text">
                     {((Number(preview.rate) || 0) * 100).toFixed(1)}%
                   </div>
                 </div>

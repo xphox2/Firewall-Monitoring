@@ -37,7 +37,7 @@ interface EffectiveConfig {
 
 const LAYER_STYLE: Record<string, string> = {
   device: 'bg-accent/15 text-accent-text',
-  site: 'bg-sig-warn/15 text-sig-warn',
+  site: 'bg-sig-warn/15 text-sig-warn-text',
   default: 'bg-bg-panel text-text-dim',
 };
 
@@ -153,7 +153,7 @@ export function EffectiveCoverageDrawer({
         ) : isLoading ? (
           <p className="p-6 text-center text-xs text-text-dim">Resolving…</p>
         ) : isError ? (
-          <p className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+          <p className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
             Could not resolve the effective configuration for this scope.
           </p>
         ) : (
@@ -208,8 +208,8 @@ export function EffectiveCoverageDrawer({
                               className={cn(
                                 'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
                                 toggle.enabled
-                                  ? 'bg-sig-ok/15 text-sig-ok'
-                                  : 'bg-sig-crit/15 text-sig-crit',
+                                  ? 'bg-sig-ok/15 text-sig-ok-text'
+                                  : 'bg-sig-crit/15 text-sig-crit-text',
                               )}
                             >
                               {toggle.enabled ? 'On' : 'Off'}

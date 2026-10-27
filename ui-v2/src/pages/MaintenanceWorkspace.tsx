@@ -309,7 +309,7 @@ export function MaintenanceWorkspace() {
           const suppress = row.original.suppress_all ?? row.original.suppress_alerts ?? true;
           if (suppress) {
             return (
-              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn-text">
                 All notifications
               </span>
             );
@@ -321,7 +321,7 @@ export function MaintenanceWorkspace() {
           if (types.length === 0) {
             // Legacy row: suppress_all off with no type filter suppresses all.
             return (
-              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn">
+              <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sig-warn-text">
                 All (no type filter)
               </span>
             );
@@ -414,7 +414,7 @@ export function MaintenanceWorkspace() {
       </div>
 
       {activeWindows.length > 0 && (
-        <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/10 p-3.5 flex items-center gap-2.5 text-xs text-sig-warn">
+        <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/10 p-3.5 flex items-center gap-2.5 text-xs text-sig-warn-text">
           <AlertCircle className="h-4 w-4 shrink-0" />
           <div>
             <span className="font-semibold">{activeWindows.length} active maintenance window(s)</span> currently suppressing outbound notifications.
@@ -669,7 +669,7 @@ export function MaintenanceWorkspace() {
                 Suppress only these alert types ({selectedTypes.size} selected). At least one is
                 required: the server treats an empty list as “all types”.
                 {Boolean(editing.id) && selectedTypes.size === 0 && (
-                  <span className="mt-1 block text-sig-warn">
+                  <span className="mt-1 block text-sig-warn-text">
                     This existing window has no type filter, so it suppresses every alert type.
                     Selecting a type narrows it.
                   </span>

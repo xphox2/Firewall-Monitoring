@@ -9,24 +9,24 @@ import {
 } from '@/lib/syslog-parse';
 
 const SEVERITY_TONE: Record<string, string> = {
-  crit: 'bg-sig-crit/15 text-sig-crit',
-  warn: 'bg-sig-warn/15 text-sig-warn',
+  crit: 'bg-sig-crit/15 text-sig-crit-text',
+  warn: 'bg-sig-warn/15 text-sig-warn-text',
   notice: 'bg-accent/15 text-accent-text',
   info: 'bg-bg-panel text-text-dim',
 };
 
 function actionTone(action: string): string {
   const value = action.toLowerCase();
-  if (['accept', 'pass', 'detected'].includes(value)) return 'bg-sig-ok/15 text-sig-ok';
-  if (['deny', 'drop', 'blocked'].includes(value)) return 'bg-sig-crit/15 text-sig-crit';
-  return 'bg-sig-warn/15 text-sig-warn';
+  if (['accept', 'pass', 'detected'].includes(value)) return 'bg-sig-ok/15 text-sig-ok-text';
+  if (['deny', 'drop', 'blocked'].includes(value)) return 'bg-sig-crit/15 text-sig-crit-text';
+  return 'bg-sig-warn/15 text-sig-warn-text';
 }
 
 function appRiskTone(risk: string): string {
   const value = risk.toLowerCase();
-  if (['very-high', 'high'].includes(value)) return 'bg-sig-crit/15 text-sig-crit';
-  if (value === 'medium') return 'bg-sig-warn/15 text-sig-warn';
-  return 'bg-sig-ok/15 text-sig-ok';
+  if (['very-high', 'high'].includes(value)) return 'bg-sig-crit/15 text-sig-crit-text';
+  if (value === 'medium') return 'bg-sig-warn/15 text-sig-warn-text';
+  return 'bg-sig-ok/15 text-sig-ok-text';
 }
 
 /**

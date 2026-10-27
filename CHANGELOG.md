@@ -1,6 +1,55 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.457] - 2026-10-27
+
+### Fixed — The mobile card was a control inside a control
+
+- A card that opens a row carried `role="button"` itself, and the card held
+  the row's own buttons — a **control inside a control**. A screen reader
+  announces the card as a button and the buttons inside it live inside
+  another button; axe's `nested-interactive` rule catches it.
+- The action is now a **real `<button>` that is a sibling** of the card's
+  content, stretched over the card: nothing is nested, the press still
+  opens the row, and the content's own controls are put back so they still
+  work.
+- The action also has a **name** now. The card's content is caller-provided
+  and may hold its own buttons ("Edit"), so the name comes from the row's
+  identity — with a `rowLabel` prop for the callers that know better —
+  and a row that nothing names falls back to **the card's own text**, which
+  is what the name was before.
+
+### Fixed — The tinted chips were below the contrast bar
+
+- The signal colours are chosen for the theme's **surfaces** — a border, an
+  icon, a chart series, a fill. A chip is different: it puts a 15%-tinted
+  background behind the same colour, and the two together are what the eye
+  reads. The critical red measured **4.0:1** on its own tint, the light
+  theme's warn chip **3.6:1** and its crit chip **3.8:1**, where WCAG AA
+  wants 4.5:1. The light theme's green was marginal even as plain text on a
+  white card (4.35:1).
+- The console now has a **text variant** of each signal colour, measured to
+  clear 4.5:1 on the tinted chip *and* on the plain card, in both themes —
+  the same trick the accent already used. A signal colour used as text is
+  always the text variant; the base colours keep doing the borders, the
+  icons and the chart series.
+- The accent link on the preview banner had the same problem (4.37:1 on the
+  banner's tint) and now uses the accent text variant.
+
+### Added — The console can be walked against the real data
+
+- The browser suite drives a **mock** shell, so it never runs the server,
+  the SQL, the migrations or a real row. The two defects above were both
+  invisible to it.
+- `ui-v2/e2e-local/` walks the **real** console against a local instance
+  holding a copy of the production database: every page, at three
+  viewports, in both themes, with the console errors, the failed requests,
+  the horizontal overflow and axe. A second script asks the questions the
+  mock cannot — does the Clear control appear, is the override one write,
+  does the estimate tell the truth, is a toast announced once.
+- They refuse to run against anything but `127.0.0.1`: the features script
+  writes to the database it is pointed at.
+
 ## [0.11.456] - 2026-10-27
 
 ### Fixed — The container's memory limit is now the deployment's choice

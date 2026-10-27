@@ -62,7 +62,7 @@ export function StickySaveBar({
           <span className="animate-ping motion-reduce:animate-none absolute inline-flex h-full w-full rounded-full bg-sig-warn opacity-75" />
           <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-sig-warn" />
         </span>
-        <AlertCircle className="h-4 w-4 text-sig-warn shrink-0 hidden sm:block" />
+        <AlertCircle className="h-4 w-4 text-sig-warn-text shrink-0 hidden sm:block" />
         <span className="text-xs sm:text-sm font-medium text-text truncate">{label}</span>
       </div>
 

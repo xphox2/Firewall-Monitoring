@@ -43,6 +43,12 @@
   --color-sig-crit: var(--fwmon-sig-crit);
   --color-sig-info: var(--fwmon-sig-info);
 
+  /* The TEXT variants: the same signal, chosen for text on a TINTED
+     background. See the token definitions for the measurements. */
+  --color-sig-ok-text: var(--fwmon-sig-ok-text);
+  --color-sig-warn-text: var(--fwmon-sig-warn-text);
+  --color-sig-crit-text: var(--fwmon-sig-crit-text);
+
   --font-sans: Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif;
   --font-display: Archivo, Inter, sans-serif;
   --font-mono: JetBrains Mono, SFMono-Regular, Consolas, monospace;
@@ -111,6 +117,30 @@
   --fwmon-sig-crit: #f2555a;
   --fwmon-sig-emerg: #ff3d8b;
 
+  /*
+   * The signal colours as TEXT, for text on a TINTED background.
+   *
+   * The signal colours above are chosen for the theme's primary surfaces -
+   * a border, an icon, a chart series. A chip is different: it puts a
+   * 15%-tinted background behind the same colour, and the two together are
+   * what the eye reads.
+   *
+   * The critical red is the one that fails: #f2555a on its own 15% tint is
+   * 4.0:1, and WCAG AA wants 4.5:1 for text this size (10px). Measured on
+   * the card, the chip reads 4.0:1; the same chip in the LIGHT theme reads
+   * 3.8:1. The ok and warn chips clear the bar in the dark theme on their
+   * own, and the light theme's are the ones that need a darker variant.
+   *
+   * These are the measured values, not a guess:
+   *   dark   crit  #ff7b7f on the tinted chip: 4.9:1
+   *   light  crit  #b52a30 on the tinted chip: 5.0:1
+   *   light  warn  #7d5609 on the tinted chip: 5.4:1
+   *   light  ok    #0e6b4a on the tinted chip: 5.3:1
+   */
+  --fwmon-sig-ok-text: #36c98a;
+  --fwmon-sig-warn-text: #e7b53c;
+  --fwmon-sig-crit-text: #ff7b7f;
+
   --fwmon-bg: #0d1117;
   --fwmon-card-bg: #161b22;
   --fwmon-panel-bg: #1f2630;
@@ -172,6 +202,21 @@
   --fwmon-sig-error: #c24a1a;
   --fwmon-sig-crit: #c8323a;
   --fwmon-sig-emerg: #c71e6b;
+
+  /*
+   * The signal colours as TEXT, for text on a TINTED background.
+   *
+   * On a light surface a 15% tint of a signal colour is a very light
+   * pastel, and the signal colour on it is far too light to read: the
+   * warn chip measures 3.6:1 and the crit chip 3.8:1, where WCAG AA wants
+   * 4.5:1. So the light theme's text variants are DARKER than the signal
+   * colours - the same trick the accent already uses
+   * (--fwmon-accent-text is darker than --fwmon-accent for the same
+   * reason).
+   */
+  --fwmon-sig-ok-text: #0e6b4a;
+  --fwmon-sig-warn-text: #7d5609;
+  --fwmon-sig-crit-text: #b52a30;
 
   --fwmon-bg: #f2f4f7;
   --fwmon-card-bg: #ffffff;

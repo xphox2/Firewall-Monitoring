@@ -154,7 +154,7 @@ export function PurgeDeviceDialog({
           separate screen. */}
       <div className="space-y-3">
         <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-sig-crit">
+          <div className="flex items-center gap-2 text-xs font-semibold text-sig-crit-text">
             <TriangleAlert className="h-4 w-4 shrink-0" />
             This cannot be undone. There is no restore.
           </div>
@@ -175,7 +175,7 @@ export function PurgeDeviceDialog({
               row(s) across {tables.length} table(s) will be deleted.
             </div>
             {estimate.capped ? (
-              <p className="text-sig-warn">
+              <p className="text-sig-warn-text">
                 At least one table holds more than the estimate shows, so the
                 total is a LOWER BOUND. The purge removes every matching row
                 either way.
@@ -184,7 +184,7 @@ export function PurgeDeviceDialog({
             {(estimate.blockers ?? []).length > 0 ? (
               <div
                 role="alert"
-                className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1.5 text-sig-crit"
+                className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1.5 text-sig-crit-text"
               >
                 <div className="font-semibold">The purge will be refused</div>
                 <ul className="mt-1 list-disc pl-4">
@@ -195,7 +195,7 @@ export function PurgeDeviceDialog({
               </div>
             ) : null}
             {incomplete ? (
-              <p className="text-sig-warn">
+              <p className="text-sig-warn-text">
                 The estimate is INCOMPLETE — at least one table could not be
                 counted. The purge itself is not affected.
               </p>
@@ -209,7 +209,7 @@ export function PurgeDeviceDialog({
                   {tables.map((t) => (
                     <li key={t.table} className="flex justify-between gap-2">
                       <span className="truncate">{t.table}</span>
-                      <span className={cn(t.error ? 'text-sig-warn' : 'text-text-dim')}>
+                      <span className={cn(t.error ? 'text-sig-warn-text' : 'text-text-dim')}>
                         {t.error ? 'not counted' : `${t.rows.toLocaleString()}${t.capped ? '+' : ''}`}
                       </span>
                     </li>
@@ -219,7 +219,7 @@ export function PurgeDeviceDialog({
             ) : null}
             {(estimate.tunnels ?? []).length > 0 ? (
               <div className="rounded border border-sig-warn/40 bg-sig-warn/10 px-2.5 py-1.5">
-                <div className="font-medium text-sig-warn">
+                <div className="font-medium text-sig-warn-text">
                   {estimate.tunnels!.length} IPSec tunnel intent(s) will be removed
                   too:
                 </div>
