@@ -27,6 +27,7 @@ import {
   type ThreatLookup,
 } from '@/lib/threat-intel';
 import { Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 type ThreatTab = 'lookup' | 'feeds' | 'storm';
 
@@ -655,14 +656,14 @@ function IndicatorsSection() {
         header: '',
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <button
+            <Button  variant="danger-icon"
               type="button"
               aria-label={`Delete ${row.original.cidr}`}
               onClick={() => setIndicatorToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -689,16 +690,16 @@ function IndicatorsSection() {
             placeholder="Category / ticket"
             className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
           />
-          <select
+          <Select  className="rounded-md px-3 py-1.5"
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
             aria-label="Indicator severity"
-            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+            
           >
             <option value="warning">Warning</option>
             <option value="critical">Critical</option>
             <option value="info">Info</option>
-          </select>
+          </Select>
           <input
             type="date"
             value={expires}
@@ -928,14 +929,14 @@ function StormTab() {
           <span className="mt-1 block text-[11px] text-text-faint">Loading the current threshold…</span>
         ) : null}
       </label>
-      <button
+      <Button
         type="button"
         disabled={save.isPending || value === null || !valid || isLoading}
         onClick={() => save.mutate()}
-        className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+        
       >
         {save.isPending ? 'Saving…' : 'Save threshold'}
-      </button>
+      </Button>
     </div>
   );
 }

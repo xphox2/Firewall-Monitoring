@@ -23,6 +23,7 @@ import {
   type DiffSeverity,
   type RevisionMeta,
 } from '@/lib/config-diff';
+import { Button } from '@/components/ui/button';
 
 const ROW_PAGE = 1500;
 
@@ -163,13 +164,13 @@ export function ConfigDiffDrawer({
               </a>
             )}
           </div>
-          <button
+          <Button  className="px-4"
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+            
           >
             Close
-          </button>
+          </Button>
         </div>
       }
     >

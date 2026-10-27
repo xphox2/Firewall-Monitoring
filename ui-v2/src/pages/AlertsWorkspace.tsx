@@ -37,6 +37,7 @@ import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { Button } from '@/components/ui/button';
 
 type AlertsTab = 'open' | 'incidents' | 'history';
 
@@ -1177,16 +1178,16 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
             >
               Cancel
             </button>
-            <button
+            <Button
               type="button"
               onClick={() => (selectAllMatching ? bulkSnoozeFilter.mutate() : bulkSnooze.mutate())}
               disabled={bulkSnooze.isPending || bulkSnoozeFilter.isPending}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {selectAllMatching
                 ? `Snooze all ${total.toLocaleString()} matching`
                 : 'Snooze'}
-            </button>
+            </Button>
           </div>
         }
       >

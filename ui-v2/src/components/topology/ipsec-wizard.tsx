@@ -22,6 +22,8 @@ import {
   type ProfileName,
 } from '@/lib/ipsec';
 import { IpsecEndForm, type WizardDevice } from './ipsec-end-form';
+import { Input, Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 export type { WizardDevice };
 
@@ -389,13 +391,13 @@ export function IpsecWizard({
       onTabChange={(id) => setPhase(id as Phase)}
       footer={
         <>
-          <button
+          <Button  variant="secondary"
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text"
+            
           >
             Cancel
-          </button>
+          </Button>
           {phase === 'design' ? (
             <button
               type="button"
@@ -417,17 +419,17 @@ export function IpsecWizard({
             </button>
           ) : null}
           {phase === 'verify' ? (
-            <button
+            <Button
               type="button"
               onClick={save}
               // A preview is REQUIRED, not optional: without one there are
               // no findings, so nothing would stand between an invalid
               // intent and the database.
               disabled={saving || !preview || blocking.length > 0}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create tunnel'}
-            </button>
+            </Button>
           ) : null}
         </>
       }
@@ -477,18 +479,18 @@ export function IpsecWizard({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">Mode</span>
-                <select
+                <Select  className="bg-bg-card px-2.5 py-1.5"
                   value={form.mode}
                   onChange={(e) => setForm((p) => ({ ...p, mode: e.target.value }))}
                   aria-label="Tunnel mode"
-                  className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                  
                 >
                   {(caps?.allowed?.modes ?? [form.mode]).map((m) => (
                     <option key={m} value={m}>
                       {m}
                     </option>
                   ))}
-                </select>
+                </Select>
                 {caps && (caps.allowed?.modes?.length ?? 0) === 1 ? (
                   <span className="mt-1 block text-[10px] text-text-faint">
                     This vendor pair supports one mode only.
@@ -500,13 +502,13 @@ export function IpsecWizard({
                 <span className="mb-1 block text-[11px] font-medium text-text-dim">
                   Crypto profile
                 </span>
-                <select
+                <Select  className="bg-bg-card px-2.5 py-1.5"
                   value={form.profile}
                   onChange={(e) =>
                     setForm((p) => ({ ...p, profile: e.target.value as ProfileName }))
                   }
                   aria-label="Crypto profile"
-                  className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                  
                 >
                   {form.profiles.map((p) => (
                     <option key={p.name} value={p.name}>
@@ -514,7 +516,7 @@ export function IpsecWizard({
                     </option>
                   ))}
                   <option value="custom">Custom</option>
-                </select>
+                </Select>
               </label>
             </div>
 
@@ -524,7 +526,7 @@ export function IpsecWizard({
                   <span className="mb-1 block text-[11px] font-medium text-text-dim">
                     IKE version
                   </span>
-                  <select
+                  <Select  className="bg-bg-card px-2.5 py-1.5"
                     value={form.custom.ike_version}
                     onChange={(e) =>
                       setForm((p) => ({
@@ -533,20 +535,20 @@ export function IpsecWizard({
                       }))
                     }
                     aria-label="IKE version"
-                    className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                    
                   >
                     {(caps?.allowed?.ike_versions ?? ['ikev2']).map((v) => (
                       <option key={v} value={v}>
                         {v}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-text-dim">
                     IKE encryption
                   </span>
-                  <select
+                  <Select  className="bg-bg-card px-2.5 py-1.5"
                     value={form.custom.ike.enc}
                     onChange={(e) =>
                       setForm((p) => ({
@@ -555,7 +557,7 @@ export function IpsecWizard({
                       }))
                     }
                     aria-label="IKE encryption"
-                    className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                    
                   >
                     <option value="">Select…</option>
                     {(caps?.allowed?.encryption ?? []).map((v) => (
@@ -563,13 +565,13 @@ export function IpsecWizard({
                         {v}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-text-dim">
                     IKE integrity
                   </span>
-                  <select
+                  <Select  className="bg-bg-card px-2.5 py-1.5"
                     value={form.custom.ike.integ}
                     onChange={(e) =>
                       setForm((p) => ({
@@ -578,7 +580,7 @@ export function IpsecWizard({
                       }))
                     }
                     aria-label="IKE integrity"
-                    className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                    
                   >
                     <option value="">None (AEAD)</option>
                     {(caps?.allowed?.integrity ?? []).map((v) => (
@@ -586,11 +588,11 @@ export function IpsecWizard({
                         {v}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-text-dim">IKE DH</span>
-                  <select
+                  <Select  className="bg-bg-card px-2.5 py-1.5"
                     value={form.custom.ike.dh}
                     onChange={(e) =>
                       setForm((p) => ({
@@ -599,7 +601,7 @@ export function IpsecWizard({
                       }))
                     }
                     aria-label="IKE DH group"
-                    className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+                    
                   >
                     <option value="">Select…</option>
                     {(caps?.allowed?.dh_groups ?? []).map((v) => (
@@ -607,7 +609,7 @@ export function IpsecWizard({
                         {v}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
               </div>
             ) : null}
@@ -616,7 +618,7 @@ export function IpsecWizard({
               <span className="mb-1 block text-[11px] font-medium text-text-dim">
                 Pre-shared key
               </span>
-              <input
+              <Input  mono className="bg-bg-card px-2.5 py-1.5"
                 type="password"
                 value={form.psk}
                 onChange={(e) => setForm((p) => ({ ...p, psk: e.target.value }))}
@@ -626,7 +628,7 @@ export function IpsecWizard({
                     : 'Leave blank and the server generates one'
                 }
                 autoComplete="new-password"
-                className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text"
+                
               />
               {form.psk && form.psk !== PSK_MASK && form.psk.length < 20 ? (
                 <span className="mt-1 block text-[10px] text-sig-warn">

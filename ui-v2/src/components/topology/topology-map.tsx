@@ -13,6 +13,7 @@ import { useTheme } from '@/lib/theme';
 import { bundleEdges, linkColour, normalizePositions, type MapPosition } from '@/lib/topology';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { TopologyParticles } from '@/components/topology/topology-particles';
+import { Button } from '@/components/ui/button';
 
 cytoscape.use(fcose);
 
@@ -852,30 +853,30 @@ export function TopologyMap({
         </div>
 
         <div className="flex items-center gap-1">
-          <button
+          <Button  variant="icon"
             type="button"
             aria-label="Zoom in"
             onClick={() => zoom(1.25)}
-            className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            
           >
             <Plus className="h-3.5 w-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button  variant="icon"
             type="button"
             aria-label="Zoom out"
             onClick={() => zoom(0.8)}
-            className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            
           >
             <Minus className="h-3.5 w-3.5" />
-          </button>
-          <button
+          </Button>
+          <Button  variant="icon"
             type="button"
             aria-label="Fit to view"
             onClick={() => cyRef.current?.fit(undefined, 40)}
-            className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+            
           >
             <Maximize2 className="h-3.5 w-3.5" />
-          </button>
+          </Button>
         </div>
       </div>
 

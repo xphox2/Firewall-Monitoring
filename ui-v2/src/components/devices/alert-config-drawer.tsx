@@ -11,6 +11,7 @@ import {
   isValidAlertConfig,
 } from '@/lib/alert-config';
 import { Input, Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 /** The device-level override. `null` means "inherit". */
 export interface DeviceAlertConfig {
@@ -250,23 +251,23 @@ export function AlertConfigDrawer({
       size="lg"
       footer={
         <>
-          <button
+          <Button  variant="secondary"
             type="button"
             onClick={reset}
-            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text"
+            
           >
-            <RotateCcw className="mr-1 inline h-3.5 w-3.5" />
+            <RotateCcw className="inline h-3.5 w-3.5" />
             Reset to defaults
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={save}
             disabled={!valid || isLoading}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+            
           >
-            <Save className="mr-1 inline h-3.5 w-3.5" />
+            <Save className="inline h-3.5 w-3.5" />
             Save override
-          </button>
+          </Button>
         </>
       }
     >

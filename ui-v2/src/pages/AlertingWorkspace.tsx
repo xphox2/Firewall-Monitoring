@@ -43,6 +43,8 @@ import {
 } from '@/components/alerting/rule-test-result';
 import type { AlertTypeInfo } from '@/lib/event-profiles';
 import { Input, Textarea } from '@/components/ui/input';
+import { Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 type AlertingTab = 'thresholds' | 'event-rules' | 'notification-profiles' | 'effective';
 
@@ -1545,13 +1547,13 @@ export function AlertingWorkspace() {
             size="lg"
             footer={
               <>
-                <button
+                <Button  variant="secondary"
                   type="button"
                   onClick={() => setTesterOpen(false)}
-                  className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+                  
                 >
                   Close
-                </button>
+                </Button>
                 <button
                   type="button"
                   onClick={handleRunRuleTest}
@@ -1908,11 +1910,11 @@ export function AlertingWorkspace() {
                 Select any monitored firewall to inspect the thresholds, firing model and notification channels that apply at runtime.
               </p>
             </div>
-            <select
+            <Select  className="rounded-md px-3 py-1.5"
               value={simDeviceId}
               onChange={(e) => setSimDeviceId(e.target.value)}
               aria-label="Select device to simulate effective policy"
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
+              
             >
               <option value="">-- Select a Firewall Device --</option>
               {devices.map((d) => (
@@ -1920,18 +1922,18 @@ export function AlertingWorkspace() {
                   {d.name} (#{d.id})
                 </option>
               ))}
-            </select>
-            <select
+            </Select>
+            <Select  className="rounded-md px-3 py-1.5"
               value={simAlertType}
               onChange={(e) => setSimAlertType(e.target.value)}
               aria-label="Alert type to simulate"
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
+              
             >
               <option value="CPU_HIGH">CPU high</option>
               <option value="MEMORY_HIGH">Memory high</option>
               <option value="DISK_HIGH">Disk high</option>
               <option value="SESSIONS_HIGH">Sessions high</option>
-            </select>
+            </Select>
           </div>
 
           {!simDeviceId ? (
@@ -2078,21 +2080,21 @@ export function AlertingWorkspace() {
         size="md"
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setProfileFormOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={!profileForm.name.trim() || profileBusy}
               onClick={saveProfile}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {profileForm.id ? 'Save profile' : 'Create profile'}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -2137,21 +2139,21 @@ export function AlertingWorkspace() {
         size="md"
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setCloneSource(null)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={!cloneName.trim() || profileBusy}
               onClick={cloneProfile}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               Clone profile
-            </button>
+            </Button>
           </div>
         }
       >

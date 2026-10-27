@@ -59,6 +59,7 @@ import { PublicInterfaceToggle } from '@/components/devices/public-interface-tog
 import { ColumnDef } from '@tanstack/react-table';
 import { Input, Select } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { Button } from '@/components/ui/button';
 
 export interface DeviceRecord {
   id: number;
@@ -566,21 +567,21 @@ function DeviceInventoryView() {
               {testConnectionMutation.isPending ? 'Testing…' : 'Test SNMP'}
             </button>
             <div className="flex items-center gap-2">
-              <button
+              <Button  variant="secondary"
                 type="button"
                 onClick={() => setEditorOpen(false)}
-                className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+                
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button  className="px-4"
                 type="button"
                 disabled={!editingDevice.name || !editingDevice.ip_address || saveDeviceMutation.isPending}
                 onClick={() => saveDeviceMutation.mutate()}
-                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
+                
               >
                 {saveDeviceMutation.isPending ? 'Saving…' : 'Save Device'}
-              </button>
+              </Button>
             </div>
           </div>
         }
@@ -2040,15 +2041,15 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                           </td>
                           <td className="px-3 py-2 text-right">
                             <div className="inline-flex items-center gap-1">
-                              <button
+                              <Button  variant="icon"
                                 type="button"
                                 onClick={() => setRevisionToView(rev.id)}
                                 aria-label={`View revision ${rev.id}`}
                                 title="View this revision"
-                                className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                                
                               >
                                 <Eye className="h-3.5 w-3.5" />
-                              </button>
+                              </Button>
                               <a
                                 href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
                               title="Download this revision"
@@ -2056,15 +2057,15 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                             >
                                 <Download className="h-3.5 w-3.5" />
                               </a>
-                              <button
+                              <Button  variant="danger-icon"
                                 type="button"
                                 onClick={() => setRevisionToDelete(rev.id)}
                                 aria-label={`Delete revision ${rev.id}`}
                                 title="Delete this revision"
-                                className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+                                
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
-                              </button>
+                              </Button>
                             </div>
                           </td>
                         </tr>
