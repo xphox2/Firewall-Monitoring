@@ -1,6 +1,36 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.456] - 2026-10-27
+
+### Fixed — The container's memory limit is now the deployment's choice
+
+- The compose file hard-coded `mem_limit: 2g`, which suits a small install.
+  It does **not** suit a large one: PostgreSQL's buffer manager fills
+  whatever it is allowed, so with a 2g cgroup and a PostgreSQL tuned with
+  `ALTER SYSTEM` to `shared_buffers = 8GB`, the **OOM killer takes out the
+  whole container** — the API, the poller and PostgreSQL all die together
+  (status 137) and the entrypoint restarts the stack.
+- That happened on 2026-10-27, twice: once during the daily `pg_dump` (which
+  reads ~3.6 GB) and once when the limit was lowered again while the buffer
+  pool was still full.
+- The limit, the swap limit and the CPU count are now **environment
+  overridable** — `FIREWALL_MON_MEM_LIMIT`, `FIREWALL_MON_MEMSWAP_LIMIT`,
+  `FIREWALL_MON_CPUS` — the same way the image already was, so a large
+  deployment raises them in its `.env` instead of editing a tracked file.
+  The defaults are unchanged: a fresh install is still bounded at 2g.
+
+### Changed — The daily state backup works again
+
+- The image sets `USER fwmon`, so `docker exec` ran the dump as a non-root
+  user and `su-exec` could not `setgroups`: the dump produced an **empty
+  file** while the script still reported success. The daily backup had been
+  silently broken since 2026-10-25, and the last good backup was 2026-10-24.
+- The dump now runs as root inside the container and drops to `postgres`,
+  and a dump under 1 MB is **removed rather than kept** — a backup that
+  cannot restore is worse than no backup, because an empty file looks like a
+  good one.
+
 ## [0.11.455] - 2026-10-27
 
 ### Fixed — A stored credential could never be removed
