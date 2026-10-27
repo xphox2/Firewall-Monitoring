@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -464,7 +465,83 @@ func prepareDeviceUpdates(c *gin.Context, db database.Store, device *models.Devi
 		}
 	}
 
+	// The CLEAR opt-in.
+	//
+	// The mask-or-empty rule above is deliberately conservative: an empty
+	// value means "leave unchanged", because a client that loads a device
+	// and saves it back resends the mask, and writing the mask over the real
+	// secret silently breaks SNMP polling.
+	//
+	// That leaves an operator with no way to REMOVE a credential - an API
+	// token they no longer want, an SSH password that should not be
+	// stored. So clearing is EXPLICIT: a `clear_secrets` array naming the
+	// fields to empty. A round-trip save never sends it, so the safety
+	// property above is untouched.
+	//
+	// The names are validated against the secret fields, so the array can
+	// never be used to write an arbitrary column.
+	cleared, err := applySecretClears(c, updates, filteredUpdates)
+	if err != nil {
+		return nil, false
+	}
+	for _, field := range cleared {
+		log.Printf("device %d: %s cleared by %s", device.ID, field, c.GetString("username"))
+	}
+
 	return filteredUpdates, true
+}
+
+// clearableDeviceSecrets are the device credential fields an operator may
+// explicitly CLEAR. It is the same set the secret handling encrypts, so a
+// name outside it is a 400 rather than a silent no-op.
+var clearableDeviceSecrets = map[string]bool{
+	"snmp_community":   true,
+	"snmpv3_auth_pass": true,
+	"snmpv3_priv_pass": true,
+	"ssh_password":     true,
+	"api_token":        true,
+}
+
+// applySecretClears handles the `clear_secrets` opt-in.
+//
+// It returns the fields it cleared, and writes the 400 itself when the
+// request names a field that is not a clearable secret.
+func applySecretClears(c *gin.Context, updates map[string]interface{}, filteredUpdates map[string]interface{}) ([]string, error) {
+	raw, ok := updates["clear_secrets"]
+	if !ok {
+		return nil, nil
+	}
+	// The key is not a column, so it must never reach the database write.
+	delete(updates, "clear_secrets")
+
+	list, ok := raw.([]interface{})
+	if !ok {
+		c.JSON(http.StatusBadRequest, response.Error("clear_secrets must be an array of field names"))
+		return nil, fmt.Errorf("clear_secrets is not an array")
+	}
+	cleared := make([]string, 0, len(list))
+	for _, item := range list {
+		name, isStr := item.(string)
+		if !isStr || !clearableDeviceSecrets[name] {
+			c.JSON(http.StatusBadRequest, response.Error("clear_secrets may only name a device credential: "+strings.Join(sortedSecretNames(), ", ")))
+			return nil, fmt.Errorf("clear_secrets names an unknown field")
+		}
+		// The clear is applied AFTER the mask-or-empty rules, so it is not
+		// deleted by them.
+		filteredUpdates[name] = ""
+		cleared = append(cleared, name)
+	}
+	return cleared, nil
+}
+
+// sortedSecretNames lists the clearable fields for the error message.
+func sortedSecretNames() []string {
+	names := make([]string, 0, len(clearableDeviceSecrets))
+	for name := range clearableDeviceSecrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // writeDeviceUpdates persists a prepared update map and responds with the

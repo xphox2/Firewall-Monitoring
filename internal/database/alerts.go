@@ -119,6 +119,62 @@ func (d *Database) UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error 
 	return d.db.Create(cfg).Error
 }
 
+// UpsertDeviceAlertConfigWithProfile writes a device's alert config AND its
+// event profile in ONE transaction.
+//
+// The two used to be two requests: the console committed the config, then
+// assigned the profile. A failure between them left the operator with HALF
+// an override applied and a save that reported failure — the classic
+// partial write. One transaction means the override is applied whole or not
+// at all.
+//
+// The event profile is written COLUMN-TARGETED after the config row is in
+// place, so the column is set even when the config row did not exist yet
+// (the create path sets it directly).
+func (d *Database) UpsertDeviceAlertConfigWithProfile(cfg *models.DeviceAlertConfig, profileID *uint) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		var existing models.DeviceAlertConfig
+		err := tx.Where("device_id = ?", cfg.DeviceID).First(&existing).Error
+		switch {
+		case err == nil:
+			cfg.ID = existing.ID
+			if err := tx.Save(cfg).Error; err != nil {
+				return err
+			}
+			return tx.Model(&models.DeviceAlertConfig{}).Where("device_id = ?", cfg.DeviceID).
+				Update("event_profile_id", profileID).Error
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			cfg.EventProfileID = profileID
+			return tx.Create(cfg).Error
+		default:
+			return fmt.Errorf("upsert device alert config (device %d): lookup existing: %w", cfg.DeviceID, err)
+		}
+	})
+}
+
+// UpsertSiteAlertConfigWithProfile is the site's variant of
+// UpsertDeviceAlertConfigWithProfile.
+func (d *Database) UpsertSiteAlertConfigWithProfile(cfg *models.SiteAlertConfig, profileID *uint) error {
+	return d.db.Transaction(func(tx *gorm.DB) error {
+		var existing models.SiteAlertConfig
+		err := tx.Where("site_id = ?", cfg.SiteID).First(&existing).Error
+		switch {
+		case err == nil:
+			cfg.ID = existing.ID
+			if err := tx.Save(cfg).Error; err != nil {
+				return err
+			}
+			return tx.Model(&models.SiteAlertConfig{}).Where("site_id = ?", cfg.SiteID).
+				Update("event_profile_id", profileID).Error
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			cfg.EventProfileID = profileID
+			return tx.Create(cfg).Error
+		default:
+			return fmt.Errorf("upsert site alert config (site %d): lookup existing: %w", cfg.SiteID, err)
+		}
+	})
+}
+
 func (d *Database) DeleteDeviceAlertConfig(deviceID uint) error {
 	return d.db.Where("device_id = ?", deviceID).Delete(&models.DeviceAlertConfig{}).Error
 }

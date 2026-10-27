@@ -335,6 +335,12 @@ type AlertPolicyStore interface {
 	GetDeviceAlertConfig(deviceID uint) (*models.DeviceAlertConfig, error)
 	GetAllDeviceAlertConfigs() ([]models.DeviceAlertConfig, error)
 	UpsertDeviceAlertConfig(cfg *models.DeviceAlertConfig) error
+	// UpsertDeviceAlertConfigWithProfile writes the config AND the event
+	// profile in ONE transaction, so an override is applied whole or not at
+	// all.
+	UpsertDeviceAlertConfigWithProfile(cfg *models.DeviceAlertConfig, profileID *uint) error
+	// UpsertSiteAlertConfigWithProfile is the site's variant.
+	UpsertSiteAlertConfigWithProfile(cfg *models.SiteAlertConfig, profileID *uint) error
 	DeleteDeviceAlertConfig(deviceID uint) error
 	GetSiteAlertConfig(siteID uint) (*models.SiteAlertConfig, error)
 	GetAllSiteAlertConfigs() ([]models.SiteAlertConfig, error)

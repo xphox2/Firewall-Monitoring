@@ -20,6 +20,7 @@ import {
   Trash2,
   CheckCircle2,
   Download,
+  X,
 } from 'lucide-react';
 import { apiFetch, type MeResponse } from '@/lib/api';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
@@ -222,6 +223,37 @@ function DeviceInventoryView() {
   // Step-up secret reveal
   const [revealField, setRevealField] = useState<string | null>(null);
   const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
+
+  // The credentials to REMOVE.
+  //
+  // A secret is stored encrypted and read back masked, so the console
+  // cannot tell "unchanged" from "empty" — and an empty value means
+  // "leave unchanged" on the server, or a round-trip save would destroy
+  // the credential. So removing one is an EXPLICIT request, carried in its
+  // own field so it can never be confused with a value.
+  const [clearSecretTarget, setClearSecretTarget] = useState<string | null>(null);
+  const [pendingClearSecrets, setPendingClearSecrets] = useState<string[]>([]);
+
+  const requestClearSecret = (field: string) => setClearSecretTarget(field);
+
+  const confirmClearSecret = () => {
+    if (!clearSecretTarget) return;
+    setPendingClearSecrets((current) =>
+      current.includes(clearSecretTarget) ? current : [...current, clearSecretTarget],
+    );
+    // The revealed value is gone with the stored one.
+    setRevealedSecrets((current) => {
+      const next = { ...current };
+      delete next[clearSecretTarget];
+      return next;
+    });
+    setClearSecretTarget(null);
+    toast({
+      title: 'The credential will be removed when you save',
+      description: 'The device keeps its other settings.',
+      variant: 'info',
+    });
+  };
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
 
   const openCreateDrawer = () => {
@@ -273,6 +305,15 @@ function DeviceInventoryView() {
     const body: Record<string, unknown> = { ...editingDevice, ...revealedSecrets };
     for (const field of SECRET_FIELDS) {
       if (body[field] === SECRET_MASK) delete body[field];
+    }
+    if (pendingClearSecrets.length > 0) {
+      // The EXPLICIT clear. It is its own field so it can never be confused
+      // with a value, and a save that does not ask for it leaves the stored
+      // credential alone.
+      body.clear_secrets = pendingClearSecrets;
+      // The cleared fields must not also carry a value: the clear wins, but
+      // sending both is asking for two things at once.
+      for (const field of pendingClearSecrets) delete body[field];
     }
     if (!isAdmin) {
       // An admin-only field in the body is rejected outright, and the whole
@@ -818,6 +859,8 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_auth_pass: v }))
                     }
                     onReveal={setRevealField}
+                    onClear={requestClearSecret}
+                    canClear={isAdmin}
                     canReveal={isAdmin}
                     hint="Required for SNMPv3 with an auth protocol."
                   />
@@ -830,6 +873,8 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_priv_pass: v }))
                     }
                     onReveal={setRevealField}
+                    onClear={requestClearSecret}
+                    canClear={isAdmin}
                     canReveal={isAdmin}
                     hint="Required for SNMPv3 with a privacy protocol."
                   />
@@ -914,6 +959,8 @@ function DeviceInventoryView() {
                 revealedSecrets={revealedSecrets}
                 onChange={(v) => setEditingDevice((p) => ({ ...p, ssh_password: v }))}
                 onReveal={setRevealField}
+                onClear={requestClearSecret}
+                canClear={isAdmin}
                 canReveal={isAdmin}
                 hint="Used for the configuration backup and the IPSec provisioning path."
               />
@@ -963,6 +1010,8 @@ function DeviceInventoryView() {
                   revealedSecrets={revealedSecrets}
                   onChange={(v) => setEditingDevice((p) => ({ ...p, api_token: v }))}
                   onReveal={setRevealField}
+                  onClear={requestClearSecret}
+                  canClear={isAdmin}
                   canReveal={isAdmin}
                   hint={
                     editingDevice.vendor === 'opnsense'
@@ -1058,6 +1107,18 @@ function DeviceInventoryView() {
           }
           setRevealField(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={clearSecretTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setClearSecretTarget(null);
+        }}
+        title="Remove the stored credential?"
+        description="The credential is deleted from the device. Any collector or integration using it stops working until a new one is entered."
+        confirmLabel="Remove it"
+        destructive
+        onConfirm={confirmClearSecret}
       />
     </div>
   );
@@ -1224,7 +1285,9 @@ function DeviceSecretField({
   revealedSecrets,
   onChange,
   onReveal,
+  onClear,
   canReveal,
+  canClear,
   hint,
   placeholder,
 }: {
@@ -1234,42 +1297,72 @@ function DeviceSecretField({
   revealedSecrets: Record<string, string>;
   onChange: (value: string) => void;
   onReveal: (field: string) => void;
+  /** Ask for the stored credential to be removed. */
+  onClear: (field: string) => void;
   /** False for an operator: revealing a stored credential is admin-only. */
   canReveal: boolean;
+  /** False for an operator: removing a credential is admin-only. */
+  canClear: boolean;
   hint?: string;
   placeholder?: string;
 }) {
   const revealed = revealedSecrets[field];
   const stored = (editingDevice as Record<string, unknown>)[field];
   const masked = !revealed && stored === SECRET_MASK;
+  const hasStored = typeof stored === 'string' && stored !== '' && stored !== SECRET_MASK;
   return (
     <div>
-      <Field label={label}>
-        <div className="flex items-center gap-2">
-          <input
-            type={revealed ? 'text' : 'password'}
-            value={revealed ?? (typeof stored === 'string' ? stored : '')}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
-            autoComplete="new-password"
-            className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-          />
-          {editingDevice.id && (
-            <button
-              type="button"
-              onClick={() => onReveal(field)}
-              disabled={!canReveal}
-              title={
-                canReveal
-                  ? 'Reveal the stored value (requires admin password verification)'
+      <Field
+        label={label}
+        action={
+          editingDevice.id ? (
+            <div className="flex items-center gap-1.5">
+              {/*
+                The buttons are BESIDE the labelled control, not inside it.
+                A <label> that contains a button is a control inside a
+                control: the label's activation behaviour (click the text,
+                focus the field) also fires for the button.
+              */}
+              {hasStored ? (
+                <button
+                  type="button"
+                  onClick={() => onClear(field)}
+                  disabled={!canClear}
+                  title={
+                    canClear
+                      ? 'Remove the stored credential'
+                      : 'Admin only — removing a credential is an admin action'
+                  }
+                  className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <X className="h-3.5 w-3.5" /> Clear
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onReveal(field)}
+                disabled={!canReveal}
+                title={
+                  canReveal
+                    ? 'Reveal the stored value (requires admin password verification)'
                   : 'Admin only — revealing a stored credential is an admin action'
-              }
-              className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Eye className="h-3.5 w-3.5" /> Reveal
-            </button>
-          )}
-        </div>
+                }
+                className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Eye className="h-3.5 w-3.5" /> Reveal
+              </button>
+            </div>
+          ) : null
+        }
+      >
+        <input
+          type={revealed ? 'text' : 'password'}
+          value={revealed ?? (typeof stored === 'string' ? stored : '')}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
+          autoComplete="new-password"
+          className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+        />
       </Field>
       {hint ? <p className="mt-1 text-[10px] text-text-faint">{hint}</p> : null}
     </div>

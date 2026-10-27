@@ -174,19 +174,24 @@ export function AlertConfigDrawer({
     if (!valid) return;
     const body = buildAlertConfigBody(form, scope);
 
+    // The Event Profile rides along in the SAME request.
+    //
+    // It used to be a second request, and a failure between the two left
+    // HALF an override applied with a save that reported failure. The
+    // server writes both in one transaction now.
+    //
+    // The profile is only sent when it CHANGED: the server treats an
+    // absent profile as "leave it alone", and sending it every time would
+    // make a non-admin's save fail (assigning a profile is admin-only).
+    const profileBody = canAssignEventProfile
+      ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
+      : null;
+    if (profileBody) {
+      body.event_profile_id = profileBody.profile_id;
+    }
+
     try {
       await apiFetch(`/admin/api${path}/alert-config`, { method: 'PUT', body });
-      // The Event Profile has its own admin-only endpoint; the server
-      // refreshes the resolution cache from it, so it is sent separately.
-      const profileBody = canAssignEventProfile
-        ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
-        : null;
-      if (profileBody) {
-        await apiFetch(`/admin/api${path}/event-profile`, {
-          method: 'PUT',
-          body: profileBody,
-        });
-      }
       toast({
         title: scope === 'device' ? 'Device alert override saved' : 'Site alert override saved',
         variant: 'success',

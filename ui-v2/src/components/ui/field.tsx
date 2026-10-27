@@ -22,6 +22,15 @@ export interface FieldProps {
   className?: string;
   /** Applied to the label TEXT, not to the wrapper. */
   labelClassName?: string;
+  /**
+   * A control BESIDE the labelled one — a "Reveal" or "Clear" button.
+   *
+   * It is deliberately OUTSIDE the <label>. A <label> that contains a
+   * button is a control inside a control: the label's activation behaviour
+   * (click the text, focus the field) also fires for the button, so the two
+   * controls fight over the click.
+   */
+  action?: React.ReactNode;
 }
 
 /**
@@ -43,6 +52,7 @@ export function Field({
   error,
   className,
   labelClassName,
+  action,
 }: FieldProps) {
   const id = useId();
   const hintId = hint ? `${id}-hint` : undefined;
@@ -68,14 +78,42 @@ export function Field({
       })
     : children;
 
-  return (
-    <div className={cn('block', className)}>
-      <label className="block">
+  // Without an action the label wraps the control and nothing else, exactly
+  // as before. WITH one, the label wraps only the control and the action
+  // sits beside it — a <label> that contains a button is a control inside
+  // a control.
+  if (!action) {
+    return (
+      <label className={cn('block', className)}>
         <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
           {label}
         </span>
         {control}
+        {hint ? (
+          <span id={hintId} className="mt-1 block text-[10px] text-text-faint">
+            {hint}
+          </span>
+        ) : null}
+        {error ? (
+          <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit">
+            {error}
+          </span>
+        ) : null}
       </label>
+    );
+  }
+
+  return (
+    <div className={cn('block', className)}>
+      <div className="flex items-end gap-2">
+        <label className="min-w-0 flex-1">
+          <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
+            {label}
+          </span>
+          {control}
+        </label>
+        {action}
+      </div>
       {hint ? (
         <span id={hintId} className="mt-1 block text-[10px] text-text-faint">
           {hint}
