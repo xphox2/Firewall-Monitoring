@@ -14,12 +14,16 @@ import {
   buildFlowQuery,
   bytesToBpsPoints,
   exportFlowsCsv,
+  APP_CATEGORY_OPTIONS,
+  FLOW_DIRECTIONS,
+  FLOW_EXPORT_LIMIT,
   isLikelyAddress,
   isValidDstPort,
   type FlowFilters,
   type FlowRange,
 } from '@/lib/flows';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { LongOpStatus } from '@/components/ui/progress-bar';
 import { SkeletonChart } from '@/components/ui/skeleton';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
@@ -167,6 +171,16 @@ export function FlowsWorkspace() {
     queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/devices'),
   });
 
+  const { data: sites = [] } = useQuery({
+    queryKey: ['flow-sites'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/sites'),
+  });
+
+  const { data: probes = [] } = useQuery({
+    queryKey: ['flow-probes'],
+    queryFn: () => apiFetch<Array<{ id: number; name: string }>>('/admin/api/probes'),
+  });
+
   const {
     data: stats,
     isLoading,
@@ -241,6 +255,7 @@ export function FlowsWorkspace() {
         </div>
       </div>
 
+      <RefreshButton queryKeys={[['flow-samples'], ['flow-stats'], ['flow-devices']]} label="Refresh" />
       <div className="space-y-2 rounded-lg border border-border bg-bg-card p-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-0.5 rounded-md border border-border bg-bg-panel p-0.5">
@@ -270,6 +285,32 @@ export function FlowsWorkspace() {
             {devices.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            className="px-2.5 py-1"
+            value={filters.siteId}
+            onChange={(e) => setFilters((f) => ({ ...f, siteId: e.target.value }))}
+            aria-label="Filter by site"
+          >
+            <option value="">All sites</option>
+            {sites.map((site) => (
+              <option key={site.id} value={String(site.id)}>
+                {site.name}
+              </option>
+            ))}
+          </Select>
+          <Select
+            className="px-2.5 py-1"
+            value={filters.probeId}
+            onChange={(e) => setFilters((f) => ({ ...f, probeId: e.target.value }))}
+            aria-label="Filter by probe"
+          >
+            <option value="">All probes</option>
+            {probes.map((probe) => (
+              <option key={probe.id} value={String(probe.id)}>
+                {probe.name}
               </option>
             ))}
           </Select>
@@ -338,6 +379,59 @@ export function FlowsWorkspace() {
             placeholder="dst port"
             inputMode="numeric"
             aria-label="Filter by destination port"
+            className="w-24 rounded border border-border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text"
+          />
+          <input
+            type="text"
+            value={filters.servicePort}
+            onChange={(e) => setFilters((f) => ({ ...f, servicePort: e.target.value }))}
+            placeholder="service port"
+            inputMode="numeric"
+            aria-label="Filter by service port"
+            className="w-28 rounded border border-border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text"
+          />
+          <Select
+            className="px-2.5 py-1"
+            value={filters.appCategory}
+            onChange={(e) => setFilters((f) => ({ ...f, appCategory: e.target.value }))}
+            aria-label="Filter by application category"
+          >
+            <option value="">Any category</option>
+            {APP_CATEGORY_OPTIONS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </Select>
+          <Select
+            className="px-2.5 py-1"
+            value={filters.direction}
+            onChange={(e) => setFilters((f) => ({ ...f, direction: e.target.value }))}
+            aria-label="Filter by direction"
+          >
+            <option value="">Any direction</option>
+            {FLOW_DIRECTIONS.map((d) => (
+              <option key={d.value} value={d.value}>
+                {d.label}
+              </option>
+            ))}
+          </Select>
+          <input
+            type="text"
+            value={filters.dstCountry}
+            onChange={(e) => setFilters((f) => ({ ...f, dstCountry: e.target.value }))}
+            placeholder="dst country"
+            maxLength={2}
+            aria-label="Filter by destination country"
+            className="w-24 rounded border border-border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text uppercase"
+          />
+          <input
+            type="text"
+            value={filters.dstAsn}
+            onChange={(e) => setFilters((f) => ({ ...f, dstAsn: e.target.value }))}
+            placeholder="dst ASN"
+            inputMode="numeric"
+            aria-label="Filter by destination ASN"
             className="w-24 rounded border border-border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text"
           />
           <button
@@ -743,7 +837,7 @@ function SamplesTab({
     setExporting(true);
     try {
       const rows = await apiFetch<FlowSample[]>(
-        `/admin/api/flows?${buildFlowQuery(filters, hours, { limit: 5000 })}`,
+        `/admin/api/flows?${buildFlowQuery(filters, hours, { limit: FLOW_EXPORT_LIMIT })}`,
       );
       const list = Array.isArray(rows) ? rows : [];
       const csv = exportFlowsCsv(list as unknown as Array<Record<string, unknown>>);
@@ -761,8 +855,8 @@ function SamplesTab({
       toast({
         title: `${list.length} flow samples exported`,
         description:
-          list.length >= 5000
-            ? 'Capped at 5,000 rows for the current filters.'
+          list.length >= FLOW_EXPORT_LIMIT
+            ? `Capped at ${FLOW_EXPORT_LIMIT.toLocaleString()} rows for the current filters.`
             : 'All matching samples in the current window.',
         variant: 'success',
       });
@@ -850,7 +944,7 @@ function SamplesTab({
           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text disabled:opacity-50"
         >
           <Download className="h-3.5 w-3.5" />
-          {exporting ? 'Exporting…' : 'Export CSV (5,000)'}
+          {exporting ? 'Exporting…' : 'Export CSV (10,000)'}
         </button>
       </div>
 

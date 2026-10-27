@@ -25,6 +25,7 @@ import { AlertConfigDrawer } from '@/components/devices/alert-config-drawer';
 import { ColumnDef } from '@tanstack/react-table';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { ProbeDeployDrawer } from '@/components/collectors/probe-deploy-drawer';
 
 type CollectorsTab = 'probes' | 'sites';
 
@@ -120,6 +121,15 @@ export function CollectorsWorkspace() {
 }
 
 function ProbesSubTab() {
+  // Issuing a registration key is ADMIN-ONLY on the server
+  // (cmd/api/main.go's adminOnlyRoutes). Without the role the control is
+  // visible to an operator who then gets a 403.
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<MeResponse>('/admin/api/me'),
+  });
+  const isAdmin = me?.role === 'admin';
+
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -135,6 +145,10 @@ function ProbesSubTab() {
   const [probeName, setProbeName] = useState('');
   const [probeLocation, setProbeLocation] = useState('');
   const [mintedKey, setMintedKey] = useState<string | null>(null);
+  // The collector's deploy information. The legacy console had a "Deploy
+  // Info" modal; the console could rotate a key but never show the
+  // environment block.
+  const [deployProbe, setDeployProbe] = useState<ProbeRecord | null>(null);
   // RejectProbe requires a reason; the old one-click POST sent an empty body
   // and always 400'd.
   const [rejectTarget, setRejectTarget] = useState<ProbeRecord | null>(null);
@@ -304,9 +318,19 @@ function ProbesSubTab() {
             </button>
             <button
               type="button"
-              onClick={() => actionMutation.mutate({ id: row.original.id, action: 'regenerate-key' })}
+              onClick={() => setDeployProbe(row.original)}
               className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text"
-              title="Rotate registration key"
+              title="Show the collector's environment"
+            >
+              <Terminal className="h-3 w-3 inline mr-1" />
+              Deploy Info
+            </button>
+            <button
+              type="button"
+              disabled={!isAdmin}
+              onClick={() => actionMutation.mutate({ id: row.original.id, action: 'regenerate-key' })}
+              className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+              title={isAdmin ? 'Rotate registration key' : 'Admin role required'}
             >
               <Key className="h-3 w-3 inline mr-1" />
               Rotate Key
@@ -474,6 +498,19 @@ function ProbesSubTab() {
           />
         </Field>
       </SlideOverDrawer>
+
+      <ProbeDeployDrawer
+        open={!!deployProbe}
+        onOpenChange={(open) => {
+          if (!open) setDeployProbe(null);
+        }}
+        probe={deployProbe}
+        // The collector is pointed at the server the console is served
+        // from, so that is the URL it has to reach.
+        serverUrl={window.location.origin}
+        // Issuing a registration key is admin-only.
+        canIssueKey={isAdmin}
+      />
     </div>
   );
 }

@@ -4,23 +4,80 @@ export { bucketToMs } from './time-buckets';
 
 export interface FlowFilters {
   deviceId: string;
+  probeId: string;
+  siteId: string;
   protocol: string;
   src: string;
   dst: string;
   dstPort: string;
+  servicePort: string;
+  appCategory: string;
+  direction: string;
+  dstCountry: string;
+  dstAsn: string;
   flowSource: string;
   firewallEvent: string;
 }
 
 export const EMPTY_FLOW_FILTERS: FlowFilters = {
   deviceId: '',
+  probeId: '',
+  siteId: '',
   protocol: '',
   src: '',
   dst: '',
   dstPort: '',
+  servicePort: '',
+  appCategory: '',
+  direction: '',
+  dstCountry: '',
+  dstAsn: '',
   flowSource: '',
   firewallEvent: '',
 };
+
+/**
+ * The flow directions, as the server numbers them.
+ *
+ * `classify.Direction`: 0 unknown, 1 inbound (external → internal),
+ * 2 outbound (internal → external), 3 internal (both endpoints internal),
+ * 4 external (both endpoints external).
+ */
+export const FLOW_DIRECTIONS = [
+  { value: '1', label: 'Inbound' },
+  { value: '2', label: 'Outbound' },
+  { value: '3', label: 'Internal' },
+  { value: '4', label: 'External' },
+  { value: '0', label: 'Unknown' },
+];
+
+/**
+ * The application categories, as the server numbers them.
+ *
+ * The column is `classify.Category` (a uint8) and the server parses the
+ * filter with `ParseUint(cat, 10, 8)` — so a category NAME is silently
+ * dropped and the filter never applies. The control has to offer the
+ * numeric ids.
+ */
+export const APP_CATEGORY_OPTIONS = [
+  { value: '0', label: 'Unknown' },
+  { value: '1', label: 'Web' },
+  { value: '2', label: 'DNS' },
+  { value: '3', label: 'Email' },
+  { value: '4', label: 'File share' },
+  { value: '5', label: 'VPN' },
+  { value: '6', label: 'Database' },
+  { value: '7', label: 'Remote access' },
+  { value: '8', label: 'Streaming' },
+  { value: '9', label: 'VoIP' },
+  { value: '10', label: 'Backup' },
+  { value: '11', label: 'Management' },
+  { value: '12', label: 'P2P' },
+  { value: '13', label: 'ICMP' },
+];
+
+/** The `limit` ceiling of `GET /admin/api/flows` (`flowSamplesLimitMax`). */
+export const FLOW_EXPORT_LIMIT = 10000;
 
 export const FLOW_RANGES = [
   { value: '1h', hours: 1 },
@@ -95,6 +152,14 @@ export function isLikelyAddress(value: string): boolean {
   return true;
 }
 
+/** A TCP/UDP port: 1..65535. */
+export function isValidPort(value: string): boolean {
+  const trimmed = String(value ?? '').trim();
+  if (!/^\d{1,5}$/.test(trimmed)) return false;
+  const n = Number(trimmed);
+  return n >= 1 && n <= 65535;
+}
+
 /** Query string shared by /flows/stats and /flows (samples). */
 export function buildFlowQuery(
   filters: FlowFilters,
@@ -105,6 +170,8 @@ export function buildFlowQuery(
   if (opts.limit != null) params.set('limit', String(opts.limit));
   if (opts.offset != null) params.set('offset', String(Math.max(0, opts.offset)));
   if (filters.deviceId) params.set('device_id', filters.deviceId);
+  if (filters.probeId) params.set('probe_id', filters.probeId);
+  if (filters.siteId) params.set('site_id', filters.siteId);
   if (filters.protocol) params.set('protocol', filters.protocol);
   // Only send values the server will actually honour; otherwise the filter
   // row would claim a constraint that is not applied.
@@ -115,6 +182,30 @@ export function buildFlowQuery(
   }
   if (filters.flowSource) params.set('flow_source', filters.flowSource);
   if (filters.firewallEvent) params.set('firewall_event', filters.firewallEvent);
+  // The service port: a uint16, so 0 and 65536 are not ports.
+  if (filters.servicePort.trim() && isValidPort(filters.servicePort)) {
+    params.set('service_port', filters.servicePort.trim());
+  }
+  // The app category is the server's NUMERIC id, not a name: the handler
+  // parses it with ParseUint, so a name is silently dropped and the filter
+  // never applies.
+  if (filters.appCategory.trim() && /^\d{1,3}$/.test(filters.appCategory.trim())) {
+    params.set('app_category', filters.appCategory.trim());
+  }
+  // The direction is the server's numeric id, not its name. The ids are
+  // 0..4 (classify.Direction), so 5 is not a direction and is not sent.
+  if (filters.direction.trim() && /^[0-4]$/.test(filters.direction.trim())) {
+    params.set('direction', filters.direction.trim());
+  }
+  // The country is an ISO alpha-2 code.
+  const country = filters.dstCountry.trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(country)) params.set('dst_country', country);
+  // The ASN is a uint32, so anything above 4,294,967,295 is out of range
+  // and the server would silently ignore it.
+  if (filters.dstAsn.trim() && /^\d{1,10}$/.test(filters.dstAsn.trim())) {
+    const asn = Number(filters.dstAsn.trim());
+    if (asn <= 4294967295) params.set('dst_asn', String(asn));
+  }
   return params.toString();
 }
 

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ScrollText, Search, Filter } from 'lucide-react';
+import { ScrollText, Search } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { timeBucketSeries } from '@/lib/events';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
 import { SkeletonValue } from '@/components/ui/skeleton';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
+import { buildSyslogQuery, LIST_PAGE_SIZE, type SyslogFilters } from '@/lib/list-filters';
+import { EventFilterBar } from '@/components/events/event-filter-bar';
+import { EventPager } from '@/components/events/event-pager';
 import { ColumnDef } from '@tanstack/react-table';
 import { Select } from '@/components/ui/input';
 
@@ -88,6 +92,9 @@ export function SyslogWorkspace() {
   const [searchQuery, setSearchQuery] = useState('');
   const [range, setRange] = useState<Range>('24h');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [deviceId, setDeviceId] = useState('');
+  const [probeId, setProbeId] = useState('');
+  const [page, setPage] = useState(0);
   // Full-text search is a LIKE scan over the retention window (the handler says
   // so itself). Debounce so typing "severity" does not fire eight scans.
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -98,12 +105,27 @@ export function SyslogWorkspace() {
 
   const hours = RANGES.find((r) => r.value === range)?.hours ?? 24;
 
+  /*
+   * The server's filters for `GET /admin/api/syslog`: probe_id, device_id,
+   * severity, search. The console offered only the severity and the search.
+   *
+   * `severity` is a CEILING here — the server returns everything at or
+   * below it — so the label says so.
+   */
+  const syslogFilters = useMemo<SyslogFilters>(
+    () => ({
+      severity: severityFilter,
+      search: debouncedSearch,
+      deviceId,
+      probeId,
+    }),
+    [severityFilter, debouncedSearch, deviceId, probeId],
+  );
+
   const { data: syslogRes, isLoading } = useQuery({
-    queryKey: ['raw-syslog', hours, severityFilter, debouncedSearch],
+    queryKey: ['raw-syslog', hours, syslogFilters, page],
     queryFn: () => {
-      const params = new URLSearchParams({ limit: '100', hours: String(hours) });
-      if (severityFilter !== '') params.set('severity', severityFilter);
-      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+      const params = buildSyslogQuery(syslogFilters, hours, LIST_PAGE_SIZE, page * LIST_PAGE_SIZE);
       return apiFetch<any>(`/admin/api/syslog?${params.toString()}`);
     },
     refetchInterval: 15_000,
@@ -124,6 +146,10 @@ export function SyslogWorkspace() {
   const messages: SyslogRow[] = Array.isArray(syslogRes)
     ? syslogRes
     : syslogRes?.messages ?? syslogRes?.items ?? syslogRes?.data ?? [];
+  // The server reports the total and whether it was CAPPED (the count stops
+  // at 10,000, so a capped total is a lower bound).
+  const syslogTotal: number | undefined = Array.isArray(syslogRes) ? undefined : syslogRes?.total;
+  const syslogCapped: boolean = !Array.isArray(syslogRes) && Boolean(syslogRes?.total_capped);
 
   const chart = useMemo(() => timeBucketSeries(stats?.over_time), [stats]);
   // by_severity keys are display names ("Emergency", "Critical", …) from the
@@ -246,13 +272,22 @@ export function SyslogWorkspace() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
-        <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <Select className="px-2.5 py-1"
+      <EventFilterBar
+        filters={{ deviceId, probeId }}
+        onChange={(next) => {
+          setDeviceId(next.deviceId ?? '');
+          setProbeId(next.probeId ?? '');
+          setPage(0);
+        }}
+      >
+        <Select
+          className="px-2.5 py-1"
           value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
+          onChange={(e) => {
+            setSeverityFilter(e.target.value);
+            setPage(0);
+          }}
           aria-label="Filter by syslog severity"
-         
         >
           <option value="">All Severities (0-7)</option>
           {Object.entries(SEVERITY_NAMES).map(([k, v]) => (
@@ -272,7 +307,9 @@ export function SyslogWorkspace() {
             className="w-full rounded border border-border bg-bg-panel pl-8 pr-3 py-1 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
         </div>
-      </div>
+      
+        <RefreshButton queryKeys={[['raw-syslog'], ['syslog-stats']]} label="Refresh" />
+      </EventFilterBar>
 
       <ResponsiveDataView
         data={messages}
@@ -294,6 +331,15 @@ export function SyslogWorkspace() {
           </div>
         )}
       />
+
+      <EventPager
+        page={page}
+        total={syslogTotal}
+        pageSize={LIST_PAGE_SIZE}
+        onChange={setPage}
+        capped={syslogCapped}
+      />
+
 
       <SlideOverDrawer
         open={Boolean(selectedId)}

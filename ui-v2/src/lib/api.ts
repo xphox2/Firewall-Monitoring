@@ -169,10 +169,41 @@ export async function apiFetch<T = unknown>(
     !('page' in payload) &&
     !('items' in payload)
   ) {
-    return (payload as { data: T }).data;
+    return unwrapEnvelope<T>(payload as Record<string, unknown>);
   }
 
   return payload as T;
+}
+
+/**
+ * Unwrap the `{ success, data, ... }` envelope, KEEPING the sibling keys.
+ *
+ * Four handlers put metadata BESIDE `data` rather than inside it, and the
+ * old unwrap dropped it on the floor:
+ *
+ *   - `GET /admin/api/normalize/backfill/status` → `history`, `resumable`,
+ *     `hint`;
+ *   - `POST /admin/api/normalize/backfill` → `estimate`;
+ *   - `POST /admin/api/archive/restores` → `estimate`;
+ *   - `GET /admin/api/display-settings` → `is_admin`.
+ *
+ * So the backfill panel could not show its history or its resume hint, and
+ * the backfill and restore confirmations lost their row/disk estimate.
+ *
+ * The siblings are MERGED INTO the unwrapped `data` when `data` is a plain
+ * object. An array `data` (traps, flows, the settings list) is returned
+ * untouched: there is nothing to merge into, and the siblings of those
+ * endpoints are not part of any contract.
+ */
+export function unwrapEnvelope<T>(payload: Record<string, unknown>): T {
+  const { success, error, message, data, ...siblings } = payload;
+  void success;
+  void error;
+  void message;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return { ...(data as Record<string, unknown>), ...siblings } as T;
+  }
+  return data as T;
 }
 
 // --- Core Shared API Types ---

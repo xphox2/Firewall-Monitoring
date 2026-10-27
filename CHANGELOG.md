@@ -1,6 +1,137 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.452] - 2026-10-27
+
+### Fixed — The API client was throwing away part of every response
+
+- The client unwrapped the `{ success, data, ... }` envelope and returned
+  `data` alone, so **every key beside `data` was dropped**. Four handlers
+  put metadata there, and none of it could ever reach the console:
+  - the backfill status lost its `history`, its `resumable` flag and its
+    `hint`;
+  - the backfill and archive-restore confirmations lost their
+    `estimate`;
+  - the display settings lost their `is_admin` flag.
+
+  The siblings are now merged into the unwrapped payload, so the console
+  gets the whole response. An array payload is returned untouched.
+
+### Fixed — The backfill panel always read "idle"
+
+- The panel read `state`, `processed`, `total` and `last_error`. The
+  server's model has **`status`, `rows_scanned`, `rows_written` and
+  `error`** — there is no such field as `state`, so the status line read
+  "idle" no matter what the job was doing. It now shows the real status,
+  the row counts and the error, plus the history, the resume state and the
+  next-step hint that the response carries.
+
+### Fixed — A malformed address took the whole event stream down
+
+- The console's address check accepted **any string containing a colon** as
+  an IPv6 address. The server validates with `netip` and answers a
+  malformed value with a `400` — so an operator who typed
+  `10.0.0.1:443` into the destination field got a refused request and a
+  blank stream, which is the exact failure the check exists to prevent.
+  The check now matches `netip`: a leading-zero octet is rejected, the
+  hex groups are counted, an embedded port is not an address, and the
+  prefix length is bounded by its family.
+
+### Fixed — The Security Analytics window ignored the hours
+
+- The tab sent both `hours` and `days`, and the server gives `days`
+  precedence whenever it is set — so the **1h, 6h, 12h and 24h windows all
+  showed the same "since UTC midnight"** range. The sub-24h windows now
+  send `hours`, and only the multi-day ones send `days`.
+
+### Fixed — The application-category filter did nothing
+
+- The filter was a free-text field, but the server parses it with
+  `ParseUint` against a `classify.Category` column — so a category NAME was
+  silently dropped and the filter never applied. It is now a list of the
+  server's own category ids, and a value that is not one of them is not
+  sent.
+
+### Fixed — A control that answered 403
+
+- Issuing a collector registration key is **admin-only** on the server, but
+  the button was visible to an operator. It is now disabled for a
+  non-admin, with the reason.
+
+### Added — The activity filter, and a Clear that clears everything
+
+- The server accepts an `activity` filter on both event streams and the
+  console did not offer it. It is there now.
+- "Clear" on a filter bar only cleared the bar's own fields, so the action
+  and the source address — which the page holds elsewhere — survived it.
+  It now resets everything the operator can see.
+
+### Added — The event and security filters the server already supported
+
+- The net-event stream offered **two** of the server's eight filters, and
+  the security-event stream **two** of its eleven. There was no way to
+  narrow either stream by device, probe, site or rule. All of them are
+  there now.
+- Two rules the server enforces are honoured: a **numeric** filter that
+  does not parse is a `400` (not a no-match), so it is omitted rather than
+  sent; and an address that is not an address is a `400`, so it is omitted
+  too. The console would otherwise have shown a filter that silently did
+  nothing — or refused the request.
+
+### Added — The security analytics
+
+- `GET /admin/api/security-events/analytics` was implemented on the server
+  and **never called by the console**: the Security tab was a list and
+  nothing else. There is now a Security Analytics tab with the findings,
+  admin-login, config-change and VPN-session trends, the top signatures,
+  the top admin users and source addresses, the top configuration paths and
+  admins, the top tunnels and their peers, and the WAN health readings.
+
+### Added — Pagination for the event, syslog and trap lists
+
+- The net-event stream showed the first hundred rows and no way to reach
+  the rest. The syslog and trap lists were the same. They now page.
+- The pager says **"of at least N"** when the server reports that the
+  count was capped, because a capped count is a lower bound and saying
+  "of 10,000" when it is "of more than 10,000" would be a lie.
+
+### Added — The seven flow filters that were missing, and the whole export
+
+- The flow console offered seven of the server's sixteen filters: there
+  was no way to narrow a flow by **site, probe, service port, application
+  category, direction, destination country or destination ASN**. All of
+  them are there now.
+- **The CSV export was capped at 5,000 rows — half of what the server
+  allows and half of what the legacy console exported.** It now exports
+  the server's full 10,000.
+
+### Added — The report exports
+
+- The report preview had no export at all. There is now an **Export PDF**
+  and an **Export HTML** button.
+- There is no server-side PDF: the legacy console printed the preview
+  iframe, so the PDF is the browser's own print of the report, and the HTML
+  is a Blob download of the same markup.
+- The preview now takes the server's **period, theme and layout**
+  parameters, so the daily dark web report is not the only one that can be
+  seen.
+
+### Added — The collector's deploy information
+
+- The console could rotate a registration key but never show the
+  environment the collector needs. There is now a **Deploy Info** drawer
+  with the environment block, a copy button and a way to issue a new key.
+- The key is shown **once, at creation** — every later read returns the
+  redaction mask, which is truthy, so the drawer says so rather than
+  rendering `********` as if it were a copyable key.
+
+### Added — A manual refresh
+
+- The console polled every ten to thirty seconds, but there was no way to
+  ask for a fresh reading: an operator watching an incident had to wait
+  for the next poll. The event, syslog, trap and flow pages now have a
+  **Refresh** button that re-fetches the page's queries at once.
+
 ## [0.11.451] - 2026-10-26
 
 ### Fixed — The console was not usable with a keyboard or a screen reader

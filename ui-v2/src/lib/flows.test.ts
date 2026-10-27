@@ -23,10 +23,17 @@ describe('buildFlowQuery', () => {
       buildFlowQuery(
         {
           deviceId: '7',
+          probeId: '3',
+          siteId: '2',
           protocol: '6',
           src: ' 203.0.113.5 ',
           dst: '198.51.100.9',
           dstPort: '443',
+          servicePort: '500',
+          appCategory: '1',
+          direction: '2',
+          dstCountry: 'us',
+          dstAsn: '64500',
           flowSource: '0',
           firewallEvent: '3',
         },
@@ -42,6 +49,14 @@ describe('buildFlowQuery', () => {
     expect(q.get('dst_port')).toBe('443');
     expect(q.get('flow_source')).toBe('0');
     expect(q.get('firewall_event')).toBe('3');
+    expect(q.get('probe_id')).toBe('3');
+    expect(q.get('site_id')).toBe('2');
+    expect(q.get('service_port')).toBe('500');
+    expect(q.get('app_category')).toBe('1');
+    expect(q.get('direction')).toBe('2');
+    // The country is upper-cased: the server stores it upper-case.
+    expect(q.get('dst_country')).toBe('US');
+    expect(q.get('dst_asn')).toBe('64500');
     expect(q.get('limit')).toBe('200');
     expect(q.get('offset')).toBe('400');
   });
@@ -185,5 +200,59 @@ describe('exportFlowsCsv', () => {
     expect(csv).toContain("'=HYPERLINK");
     expect(csv).toContain("'+1");
     expect(csv).toContain("'\t@SUM(A1)");
+  });
+});
+
+
+describe('buildFlowQuery — the new filters', () => {
+  it('OMITS a service port that is not a port', () => {
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, servicePort: '0' }, 24)).has('service_port')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, servicePort: '65536' }, 24)).has('service_port')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, servicePort: '443' }, 24)).get('service_port')).toBe('443');
+  });
+
+  it('OMITS a direction that is not the server\'s numeric id', () => {
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, direction: 'outbound' }, 24)).has('direction')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, direction: '2' }, 24)).get('direction')).toBe('2');
+  });
+
+  it('OMITS a country that is not an ISO alpha-2 code', () => {
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstCountry: 'USA' }, 24)).has('dst_country')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstCountry: 'us' }, 24)).get('dst_country')).toBe('US');
+  });
+
+  it('OMITS an ASN that is not a number', () => {
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstAsn: 'AS64500' }, 24)).has('dst_asn')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstAsn: '64500' }, 24)).get('dst_asn')).toBe('64500');
+  });
+});
+
+
+describe('buildFlowQuery — the app category is a numeric id', () => {
+  it('OMITS a category NAME — the server parses it with ParseUint', () => {
+    // The handler does `strconv.ParseUint(cat, 10, 8)`, so "web" is
+    // silently dropped and the filter never applies. A control that accepts
+    // a name is a control that does nothing.
+    const base = { ...EMPTY_FLOW_FILTERS };
+    const q = new URLSearchParams(buildFlowQuery({ ...base, appCategory: 'web' }, 24));
+    expect(q.has('app_category')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, appCategory: '1' }, 24)).get('app_category')).toBe('1');
+  });
+
+  it('OMITS a direction that is not one of the five ids', () => {
+    // The ids are 0..4 (classify.Direction). 5 is not a direction.
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, direction: '5' }, 24)).has('direction')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, direction: '4' }, 24)).get('direction')).toBe('4');
+  });
+
+  it('OMITS an ASN above the uint32 ceiling', () => {
+    const base = { ...EMPTY_FLOW_FILTERS };
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstAsn: '4294967296' }, 24)).has('dst_asn')).toBe(false);
+    expect(new URLSearchParams(buildFlowQuery({ ...base, dstAsn: '4294967295' }, 24)).get('dst_asn')).toBe('4294967295');
   });
 });
