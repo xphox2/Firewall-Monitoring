@@ -544,7 +544,10 @@ export function StorageWorkspace() {
       {
         id: 'volume',
         header: 'Current Volume',
-        meta: { hideOnTablet: true },
+        // The legacy table hid this below `lg`, so it starts there - not
+        // at `xl`, which is where the shared view's blanket option hides a
+        // column.
+        meta: { hideUntil: 'sm' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text-faint">
             {row.original.tracked
@@ -556,7 +559,7 @@ export function StorageWorkspace() {
       {
         id: 'ingest',
         header: 'Daily Ingest',
-        meta: { hideOnTablet: true },
+        meta: { hideUntil: 'md' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text-dim">
             {row.original.rate_available
@@ -568,7 +571,7 @@ export function StorageWorkspace() {
       {
         id: 'footprint',
         header: 'Projected Footprint',
-        meta: { hideOnTablet: true },
+        meta: { hideUntil: 'lg' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text">
             {!row.original.rate_available
@@ -610,7 +613,10 @@ export function StorageWorkspace() {
       {
         id: 'category',
         header: 'Category',
-        meta: { hideOnTablet: true },
+        // The legacy table hid this below `lg`, so it starts there - not at
+        // `xl`, which is where the shared view's blanket option hides a
+        // column.
+        meta: { hideUntil: 'lg' },
         accessorFn: (row) => categorizeRetentionKey(row.key),
         cell: ({ row }) => (
           <span className="whitespace-nowrap text-text-faint">

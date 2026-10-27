@@ -255,8 +255,11 @@ func TestV2AdminOnlyWritesAreGated(t *testing.T) {
 	if !strings.Contains(drawer, "disabled={!canAssignEventProfile}") {
 		t.Error("the Event Profile select is not disabled for an operator - it would offer a control that answers 403")
 	}
-	if !strings.Contains(drawer, "canAssignEventProfile\n        ? buildEventProfileBody") {
-		t.Error("the alert-config save does not skip the event-profile write for an operator - the write would 403 after the alert-config PUT had already committed")
+	// The profile is only put in the body when the operator may assign
+	// one: the server refuses the whole save otherwise, and a non-admin's
+	// ordinary override must still go through.
+	if !regexp.MustCompile(`canAssignEventProfile\s*\?\s*buildEventProfileBody`).MatchString(drawer) {
+		t.Error("the alert-config save does not skip the event-profile write for an operator - the server refuses the whole save when an operator asks for a profile, so their ordinary override would be lost")
 	}
 	for _, f := range []string{"pages/DevicesWorkspace.tsx", "pages/CollectorsWorkspace.tsx"} {
 		if !strings.Contains(readV2(t, f), "canAssignEventProfile={isAdmin}") {
@@ -319,9 +322,19 @@ func TestV2AlertConfigUsesTheEventProfileEndpoint(t *testing.T) {
 		t.Error("lib/alert-config.ts has no buildEventProfileBody — the Event Profile still needs somewhere to go")
 	}
 
+	// The profile rides in the ALERT-CONFIG body, and the server writes
+	// both in one transaction. It used to be a second request, and a
+	// failure between them left HALF an override applied with a save that
+	// reported failure.
+	//
+	// The check is on the CALL, not on the string: a comment that names
+	// the old endpoint would otherwise satisfy it.
 	drawer := readV2(t, "components/devices/alert-config-drawer.tsx")
-	if !strings.Contains(drawer, "/event-profile") {
-		t.Error("the alert-config drawer does not use the /event-profile endpoint")
+	if strings.Contains(stripComments(drawer), "/event-profile") {
+		t.Error("the alert-config drawer still writes the event profile through its own endpoint - the two writes are not atomic")
+	}
+	if !strings.Contains(drawer, "body.event_profile_id") {
+		t.Error("the alert-config save does not put the event profile in the alert-config body - the server cannot write both in one transaction")
 	}
 }
 

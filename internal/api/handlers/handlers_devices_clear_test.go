@@ -108,6 +108,24 @@ func TestPrepareDeviceUpdates_ClearsSecretsOnlyWhenAsked(t *testing.T) {
 		}
 	})
 
+	t.Run("clear_secrets is admin-only", func(t *testing.T) {
+		// The device update route is operator-level, and the console
+		// hides the Clear control from an operator — so without a check
+		// here, the control is the only thing between an operator and a
+		// cleared credential.
+		c, _ := jsonReq(http.MethodPut, "/admin/api/devices/1", `{}`)
+		c.Set("role", auth.RoleOperator)
+		_, ok := prepareDeviceUpdates(c, db, dev, map[string]interface{}{
+			"clear_secrets": []interface{}{"api_token"},
+		})
+		if ok {
+			t.Error("an operator cleared a credential — removing one is admin-only")
+		}
+		if c.Writer.Status() != http.StatusForbidden {
+			t.Errorf("answered %d, want 403", c.Writer.Status())
+		}
+	})
+
 	t.Run("clear_secrets must be an array", func(t *testing.T) {
 		c, _ := jsonReq(http.MethodPut, "/admin/api/devices/1", `{}`)
 		c.Set("role", auth.RoleAdmin)

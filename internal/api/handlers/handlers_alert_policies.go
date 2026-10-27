@@ -692,12 +692,14 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 	// Assigning a profile is ADMIN-ONLY (the event-profile routes are in
 	// adminOnlyRoutes), so a non-admin asking for one is refused rather
 	// than silently ignored.
-	profileID, ok := h.eventProfileFromBody(c, db, raw)
+	profileID, present, ok := h.eventProfileFromBody(c, db, raw)
 	if !ok {
 		return
 	}
 
-	if profileID != nil {
+	if present {
+		// The body asked for a profile - to set it or to clear it - so it
+		// is written in the SAME transaction as the config.
 		if err := db.UpsertDeviceAlertConfigWithProfile(cfg, profileID); err != nil {
 			httputil.InternalError(c, "Failed to save device alert config", err)
 			return
@@ -746,35 +748,43 @@ func readJSONBody(c *gin.Context) (map[string]interface{}, bool) {
 //
 // The field is optional and it is NOT a column of the alert-config row's
 // own payload: the profile is a separate assignment. So it is read from the
-// RAW body, not from the bound struct, and it is only applied when the
-// caller is allowed to assign a profile.
+// RAW body, not from the bound struct.
 //
-// It returns (nil, true) when the body does not ask for a profile, and
-// (nil, false) after writing the 403 itself.
-func (h *Handler) eventProfileFromBody(c *gin.Context, db database.Store, raw map[string]interface{}) (*uint, bool) {
+// It returns (profileID, present, ok):
+//   - present is false when the body does not ask for a profile at all, so
+//     the assignment is left alone;
+//   - present is true when it does, INCLUDING an explicit null, which
+//     CLEARS the assignment;
+//   - ok is false after the handler wrote the 403/400 itself.
+//
+// The ADMIN GATE covers the null as well as the value. That matters: the
+// alert-config route is operator-level, and an explicit null would
+// otherwise clear an override that only an admin may touch.
+func (h *Handler) eventProfileFromBody(c *gin.Context, db database.Store, raw map[string]interface{}) (*uint, bool, bool) {
 	value, present := raw["event_profile_id"]
 	if !present {
-		return nil, true
+		return nil, false, true
+	}
+	// Assigning a profile - or clearing one - is admin-only.
+	if !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		c.JSON(http.StatusForbidden, response.Error("Only admins can assign an event profile"))
+		return nil, false, false
 	}
 	// An explicit null clears the assignment.
 	if value == nil {
-		return nil, true
+		return nil, true, true
 	}
 	profileID, isNum := value.(float64)
 	if !isNum {
 		c.JSON(http.StatusBadRequest, response.Error("event_profile_id must be a number or null"))
-		return nil, false
-	}
-	if !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
-		c.JSON(http.StatusForbidden, response.Error("Only admins can assign an event profile"))
-		return nil, false
+		return nil, false, false
 	}
 	id := uint(profileID)
 	if msg := validateAssignProfile(db, &id); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
-		return nil, false
+		return nil, false, false
 	}
-	return &id, true
+	return &id, true, true
 }
 
 // validateAlertConfigThresholds enforces sensible ranges shared by both the
@@ -879,11 +889,11 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 
 	// The event profile, in the SAME transaction - the site's variant of the
 	// device's. See UpsertDeviceAlertConfig for the rationale.
-	profileID, ok := h.eventProfileFromBody(c, db, raw)
+	profileID, present, ok := h.eventProfileFromBody(c, db, raw)
 	if !ok {
 		return
 	}
-	if profileID != nil {
+	if present {
 		if err := db.UpsertSiteAlertConfigWithProfile(cfg, profileID); err != nil {
 			httputil.InternalError(c, "Failed to save site alert config", err)
 			return

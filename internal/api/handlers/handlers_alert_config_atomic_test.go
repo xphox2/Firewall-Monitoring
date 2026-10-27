@@ -107,6 +107,41 @@ func TestUpsertDeviceAlertConfig_ProfileIsAtomic(t *testing.T) {
 		}
 	})
 
+	t.Run("a non-admin cannot CLEAR the profile either", func(t *testing.T) {
+		// The alert-config route is operator-level, and the struct's own
+		// JSON tag binds `event_profile_id: null` into the config, so the
+		// plain save would write NULL. Without the gate, an operator
+		// could clear an override that only an admin may touch.
+		c, rec := alertConfigReq(t, "4", map[string]interface{}{
+			"event_profile_id": nil,
+		})
+		c.Set("role", auth.RoleOperator)
+		h.UpsertDeviceAlertConfig(c)
+
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("a non-admin's profile CLEAR answered %d, want 403 — clearing an assignment is admin-only", rec.Code)
+		}
+	})
+
+	t.Run("an admin clears the profile with an explicit null", func(t *testing.T) {
+		c, rec := alertConfigReq(t, "1", map[string]interface{}{
+			"event_profile_id": nil,
+		})
+		c.Set("role", auth.RoleAdmin)
+		h.UpsertDeviceAlertConfig(c)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the save was refused: %d %s", rec.Code, rec.Body.String())
+		}
+		cfg, err := db.GetDeviceAlertConfig(1)
+		if err != nil {
+			t.Fatalf("read the config back: %v", err)
+		}
+		if cfg.EventProfileID != nil {
+			t.Errorf("the event profile was not cleared: %v", *cfg.EventProfileID)
+		}
+	})
+
 	t.Run("an unknown profile is refused", func(t *testing.T) {
 		c, rec := alertConfigReq(t, "3", map[string]interface{}{"event_profile_id": 999999})
 		c.Set("role", auth.RoleAdmin)

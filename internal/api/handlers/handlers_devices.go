@@ -519,6 +519,17 @@ func applySecretClears(c *gin.Context, updates map[string]interface{}, filteredU
 		c.JSON(http.StatusBadRequest, response.Error("clear_secrets must be an array of field names"))
 		return nil, fmt.Errorf("clear_secrets is not an array")
 	}
+	// Removing a credential is ADMIN-ONLY.
+	//
+	// The console hides the Clear control from an operator, but the device
+	// update route is operator-level, so without a check here the control
+	// would be the only thing standing between an operator and a cleared
+	// credential. This mirrors the two neighbouring admin gates.
+	if len(list) > 0 && !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		c.JSON(http.StatusForbidden, response.Error("Only admins can remove a device credential"))
+		return nil, fmt.Errorf("clear_secrets is admin-only")
+	}
+
 	cleared := make([]string, 0, len(list))
 	for _, item := range list {
 		name, isStr := item.(string)

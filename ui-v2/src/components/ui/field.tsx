@@ -83,12 +83,19 @@ export function Field({
   // sits beside it — a <label> that contains a button is a control inside
   // a control.
   if (!action) {
+    // The label wraps ONLY the label text and the control. The hint and the
+    // error sit OUTSIDE it: inside a <label> they are folded into the
+    // accessible name, so the field is announced as "Auth Password
+    // Required for SNMPv3 with an auth protocol" - a description smuggled
+    // into the name.
     return (
-      <label className={cn('block', className)}>
-        <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
-          {label}
-        </span>
-        {control}
+      <div className={cn('block', className)}>
+        <label className="block">
+          <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
+            {label}
+          </span>
+          {control}
+        </label>
         {hint ? (
           <span id={hintId} className="mt-1 block text-[10px] text-text-faint">
             {hint}
@@ -99,7 +106,7 @@ export function Field({
             {error}
           </span>
         ) : null}
-      </label>
+      </div>
     );
   }
 

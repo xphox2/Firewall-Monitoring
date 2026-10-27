@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch, type MeResponse } from '@/lib/api';
+import { hasStoredCredential, isMaskedSecret } from '@/lib/device-secrets';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StatusDot } from '@/components/ui/status-dot';
@@ -1308,8 +1309,14 @@ function DeviceSecretField({
 }) {
   const revealed = revealedSecrets[field];
   const stored = (editingDevice as Record<string, unknown>)[field];
-  const masked = !revealed && stored === SECRET_MASK;
-  const hasStored = typeof stored === 'string' && stored !== '' && stored !== SECRET_MASK;
+  const masked = isMaskedSecret(stored, Boolean(revealed));
+  // The server masks every credential it HOLDS and leaves an empty string
+  // for a field it does not, so a non-empty value means there is one.
+  //
+  // Reading the mask as "empty" is what made the Clear control
+  // unreachable for the case it exists for: a credential the device ALREADY
+  // holds. It only appeared after the operator typed a new value.
+  const hasStored = hasStoredCredential(stored);
   return (
     <div>
       <Field

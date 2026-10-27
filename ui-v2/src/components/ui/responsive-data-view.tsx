@@ -201,6 +201,15 @@ export function ResponsiveDataView<TData>({
                     const sorted = header.column.getIsSorted();
                     const hideOnTablet = (header.column.columnDef.meta as { hideOnTablet?: boolean } | undefined)
                       ?.hideOnTablet;
+                    // A column can also say where it STARTS: a column the
+                    // legacy table hid below `lg` must not vanish below
+                    // `xl` just because the shared view only had one
+                    // breakpoint.
+                    const hideUntil = (
+                      header.column.columnDef.meta as
+                        | { hideUntil?: 'sm' | 'md' | 'lg' | 'xl' }
+                        | undefined
+                    )?.hideUntil;
                     return (
                       <th
                         key={header.id}
@@ -225,7 +234,8 @@ export function ResponsiveDataView<TData>({
                         className={cn(
                           'px-3.5 py-2.5 select-none whitespace-nowrap',
                           canSort && 'hover:text-text',
-                          hideOnTablet && 'hidden xl:table-cell',
+                          (hideOnTablet || hideUntil) &&
+                            `hidden ${hideUntil ?? 'xl'}:table-cell`,
                         )}
                       >
                         <div className="inline-flex items-center gap-1">

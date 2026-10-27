@@ -106,9 +106,11 @@ const EMPTY: FormState = {
  *   stored value rather than zeroing it. The form therefore sends only the
  *   fields the operator actually changed.
  * - `policy_id` and `event_profile_id` are pointers: null means "inherit".
- * - The Event Profile is NOT set here. V1 assigns it through the dedicated
- *   admin-only `/event-profile` endpoint, and the server caches the
- *   resolution — so it is sent separately, below.
+ * - The Event Profile rides in the SAME body. V1 assigned it through a
+ *   second, admin-only endpoint, and the server caches the resolution. Two
+ *   requests meant a failure between them left HALF an override applied with
+ *   a save that reported failure; the server writes both in one
+ *   transaction now.
  * - `storm_sources` is a site-only tri-state: blank inherits, 0 disables the
  *   digest for that site, and a positive number sets the threshold.
  */
