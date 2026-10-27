@@ -106,9 +106,11 @@ const EMPTY: FormState = {
  *   stored value rather than zeroing it. The form therefore sends only the
  *   fields the operator actually changed.
  * - `policy_id` and `event_profile_id` are pointers: null means "inherit".
- * - The Event Profile is NOT set here. V1 assigns it through the dedicated
- *   admin-only `/event-profile` endpoint, and the server caches the
- *   resolution — so it is sent separately, below.
+ * - The Event Profile rides in the SAME body. V1 assigned it through a
+ *   second, admin-only endpoint, and the server caches the resolution. Two
+ *   requests meant a failure between them left HALF an override applied with
+ *   a save that reported failure; the server writes both in one
+ *   transaction now.
  * - `storm_sources` is a site-only tri-state: blank inherits, 0 disables the
  *   digest for that site, and a positive number sets the threshold.
  */
@@ -174,19 +176,24 @@ export function AlertConfigDrawer({
     if (!valid) return;
     const body = buildAlertConfigBody(form, scope);
 
+    // The Event Profile rides along in the SAME request.
+    //
+    // It used to be a second request, and a failure between the two left
+    // HALF an override applied with a save that reported failure. The
+    // server writes both in one transaction now.
+    //
+    // The profile is only sent when it CHANGED: the server treats an
+    // absent profile as "leave it alone", and sending it every time would
+    // make a non-admin's save fail (assigning a profile is admin-only).
+    const profileBody = canAssignEventProfile
+      ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
+      : null;
+    if (profileBody) {
+      body.event_profile_id = profileBody.profile_id;
+    }
+
     try {
       await apiFetch(`/admin/api${path}/alert-config`, { method: 'PUT', body });
-      // The Event Profile has its own admin-only endpoint; the server
-      // refreshes the resolution cache from it, so it is sent separately.
-      const profileBody = canAssignEventProfile
-        ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
-        : null;
-      if (profileBody) {
-        await apiFetch(`/admin/api${path}/event-profile`, {
-          method: 'PUT',
-          body: profileBody,
-        });
-      }
       toast({
         title: scope === 'device' ? 'Device alert override saved' : 'Site alert override saved',
         variant: 'success',

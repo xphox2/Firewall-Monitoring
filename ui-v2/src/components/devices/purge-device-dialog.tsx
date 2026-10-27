@@ -18,6 +18,18 @@ export interface PurgeEstimateTable {
 export interface PurgeEstimate {
   tables?: PurgeEstimateTable[];
   total?: number;
+  /**
+   * True when a table's count hit the cap, so `total` is a LOWER BOUND.
+   * The real number of rows may be much larger.
+   */
+  capped?: boolean;
+  /**
+   * The conditions that would make the purge answer 409 — an IPSec tunnel
+   * that is deploying or rolling back, or a job already queued. The estimate
+   * is what the operator reads BEFORE they commit, so the blockers belong
+   * here rather than in the failure.
+   */
+  blockers?: string[];
   tunnels?: Array<{ id: number; name: string; peer_device: string }>;
 }
 
@@ -158,9 +170,30 @@ export function PurgeDeviceDialog({
             <div className="text-text-dim">
               <span className="font-mono font-semibold text-text">
                 {(estimate.total ?? 0).toLocaleString()}
+                {estimate.capped ? '+' : ''}
               </span>{' '}
               row(s) across {tables.length} table(s) will be deleted.
             </div>
+            {estimate.capped ? (
+              <p className="text-sig-warn">
+                At least one table holds more than the estimate shows, so the
+                total is a LOWER BOUND. The purge removes every matching row
+                either way.
+              </p>
+            ) : null}
+            {(estimate.blockers ?? []).length > 0 ? (
+              <div
+                role="alert"
+                className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1.5 text-sig-crit"
+              >
+                <div className="font-semibold">The purge will be refused</div>
+                <ul className="mt-1 list-disc pl-4">
+                  {estimate.blockers!.map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {incomplete ? (
               <p className="text-sig-warn">
                 The estimate is INCOMPLETE — at least one table could not be

@@ -237,6 +237,17 @@ type DevicePurgeEstimate struct {
 	Tables  []DevicePurgeEstimateTable  `json:"tables"`
 	Total   int64                       `json:"total"`
 	Tunnels []DevicePurgeEstimateTunnel `json:"tunnels"`
+	// Capped is true when ANY table's count hit the cap, which makes Total a
+	// LOWER BOUND: the real number of rows is at least Total, and possibly
+	// much more. Without this flag a caller would render "of 100,000" for a
+	// table that holds 134 million rows.
+	Capped bool `json:"capped"`
+	// Blockers are the conditions that would make the purge answer 409 — an
+	// IPSec tunnel in a state where the cross-device deletion is refused, or
+	// a job already queued for this device. The estimate is what the
+	// operator reads BEFORE they commit, so the blockers belong here rather
+	// than in the failure.
+	Blockers []string `json:"blockers,omitempty"`
 }
 
 // EstimateDevicePurge counts, per table in the purge plan, the rows keyed to
@@ -269,6 +280,10 @@ func (d *Database) EstimateDevicePurge(deviceID uint) (*DevicePurgeEstimate, err
 		}
 		est.Tables = append(est.Tables, row)
 		est.Total += row.Rows
+		if row.Capped {
+			// The total is now a lower bound.
+			est.Capped = true
+		}
 	}
 	tunnels, err := d.ListIPSecTunnelsForDevice(deviceID)
 	if err != nil {

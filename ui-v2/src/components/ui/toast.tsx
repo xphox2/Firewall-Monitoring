@@ -65,13 +65,21 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast, success, error, warning }}>
       {children}
-      <div
-        aria-live="polite"
-        className="fixed top-14 right-4 z-[90] flex flex-col gap-2 w-[calc(100vw-2rem)] sm:w-96 pointer-events-none"
-      >
+      {/*
+        The toast list is NOT a live region.
+
+        Each toast carries `role="status"`, which is itself a polite live
+        region. A live region INSIDE a live region announces the message
+        TWICE: once for the container seeing new content, and once for the
+        toast's own region. So the container is a positioning wrapper and
+        the toast is the only live region.
+      */}
+      <div className="fixed top-14 right-4 z-[90] flex flex-col gap-2 w-[calc(100vw-2rem)] sm:w-96 pointer-events-none">
         {items.map((item) => (
           <div
             key={item.id}
+            // The ONE live region: a status message. Announced once, when
+            // it is inserted.
             role="status"
             className={cn(
               'pointer-events-auto flex items-start gap-3 rounded-lg border p-3.5 shadow-lg transition-all bg-bg-card border-border text-text',

@@ -22,6 +22,15 @@ export interface FieldProps {
   className?: string;
   /** Applied to the label TEXT, not to the wrapper. */
   labelClassName?: string;
+  /**
+   * A control BESIDE the labelled one — a "Reveal" or "Clear" button.
+   *
+   * It is deliberately OUTSIDE the <label>. A <label> that contains a
+   * button is a control inside a control: the label's activation behaviour
+   * (click the text, focus the field) also fires for the button, so the two
+   * controls fight over the click.
+   */
+  action?: React.ReactNode;
 }
 
 /**
@@ -43,6 +52,7 @@ export function Field({
   error,
   className,
   labelClassName,
+  action,
 }: FieldProps) {
   const id = useId();
   const hintId = hint ? `${id}-hint` : undefined;
@@ -68,14 +78,49 @@ export function Field({
       })
     : children;
 
+  // Without an action the label wraps the control and nothing else, exactly
+  // as before. WITH one, the label wraps only the control and the action
+  // sits beside it — a <label> that contains a button is a control inside
+  // a control.
+  if (!action) {
+    // The label wraps ONLY the label text and the control. The hint and the
+    // error sit OUTSIDE it: inside a <label> they are folded into the
+    // accessible name, so the field is announced as "Auth Password
+    // Required for SNMPv3 with an auth protocol" - a description smuggled
+    // into the name.
+    return (
+      <div className={cn('block', className)}>
+        <label className="block">
+          <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
+            {label}
+          </span>
+          {control}
+        </label>
+        {hint ? (
+          <span id={hintId} className="mt-1 block text-[10px] text-text-faint">
+            {hint}
+          </span>
+        ) : null}
+        {error ? (
+          <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit">
+            {error}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div className={cn('block', className)}>
-      <label className="block">
-        <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
-          {label}
-        </span>
-        {control}
-      </label>
+      <div className="flex items-end gap-2">
+        <label className="min-w-0 flex-1">
+          <span className={cn('mb-1 block text-xs font-medium text-text-dim', labelClassName)}>
+            {label}
+          </span>
+          {control}
+        </label>
+        {action}
+      </div>
       {hint ? (
         <span id={hintId} className="mt-1 block text-[10px] text-text-faint">
           {hint}

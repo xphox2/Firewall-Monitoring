@@ -279,5 +279,42 @@ func (h *Handler) EstimateDevicePurge(c *gin.Context) {
 		httputil.InternalError(c, "Failed to estimate purge", err)
 		return
 	}
+
+	// The blockers.
+	//
+	// The purge refuses an IPSec tunnel that is deploying or rolling back:
+	// the plan's ipsec_tunnels entry is a CROSS-DEVICE deletion, so it would
+	// otherwise bypass DeleteIPSecTunnel's active-deployment guard while a
+	// saga is writing the peer's config. And a device that already has a
+	// queued job is refused too.
+	//
+	// Both are 409s on the PURGE, and the estimate is what the operator
+	// reads BEFORE they commit - so the blockers belong here, where they can
+	// be acted on, rather than in the failure.
+	tunnels, err := db.ListIPSecTunnelsForDevice(id)
+	if err != nil {
+		httputil.InternalError(c, "Failed to check IPSec tunnels", err)
+		return
+	}
+	for _, t := range tunnels {
+		if ipsecPurgeBlockingStatuses[t.Status] {
+			est.Blockers = append(est.Blockers, fmt.Sprintf(
+				"IPSec tunnel %q is %s - a purge is refused while a tunnel is deploying or rolling back",
+				t.Name, t.Status,
+			))
+		}
+	}
+	active, err := db.GetActiveDevicePurgeJob(id)
+	if err != nil {
+		httputil.InternalError(c, "Failed to check purge jobs", err)
+		return
+	}
+	if active != nil {
+		est.Blockers = append(est.Blockers, fmt.Sprintf(
+			"a purge job is already %s for this device - one purge at a time",
+			active.Status,
+		))
+	}
+
 	c.JSON(http.StatusOK, response.Success(est))
 }

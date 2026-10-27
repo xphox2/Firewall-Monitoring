@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"firewall-mon/internal/alerts"
 	"firewall-mon/internal/api/response"
 	"firewall-mon/internal/archive/status"
+	"firewall-mon/internal/auth"
 	"firewall-mon/internal/database"
 	"firewall-mon/internal/httputil"
 	"firewall-mon/internal/models"
@@ -659,6 +663,14 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 	if err != nil {
 		cfg = &models.DeviceAlertConfig{DeviceID: id, AlertsEnabled: true}
 	}
+	// The body is read TWICE: once raw, to see whether it asks for an event
+	// profile (which is a separate assignment, not a column of the config
+	// payload), and once into the config, which keeps the bind-onto-the-
+	// existing-row behaviour that a partial edit depends on.
+	raw, ok := readJSONBody(c)
+	if !ok {
+		return
+	}
 	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
@@ -670,13 +682,109 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := db.UpsertDeviceAlertConfig(cfg); err != nil {
+	// The event profile, in the SAME transaction.
+	//
+	// It used to be a second request: the console committed the config,
+	// then assigned the profile. A failure between them left HALF an
+	// override applied, with a save that reported failure. One transaction
+	// means the override is applied whole or not at all.
+	//
+	// Assigning a profile is ADMIN-ONLY (the event-profile routes are in
+	// adminOnlyRoutes), so a non-admin asking for one is refused rather
+	// than silently ignored.
+	profileID, present, ok := h.eventProfileFromBody(c, db, raw)
+	if !ok {
+		return
+	}
+
+	if present {
+		// The body asked for a profile - to set it or to clear it - so it
+		// is written in the SAME transaction as the config.
+		if err := db.UpsertDeviceAlertConfigWithProfile(cfg, profileID); err != nil {
+			httputil.InternalError(c, "Failed to save device alert config", err)
+			return
+		}
+	} else if err := db.UpsertDeviceAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
 	}
 	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Success(cfg))
+}
+
+// readJSONBody reads the request body as a generic map, so a handler can
+// look for a field that is NOT part of the struct it binds.
+//
+// The body is left in place for the later bind: c.ShouldBindJSON reads it
+// again, and gin's body is buffered, so the second read sees the same
+// bytes.
+func readJSONBody(c *gin.Context) (map[string]interface{}, bool) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return nil, false
+	}
+	// Reading the body CONSUMES it, and the caller binds it again, so it is
+	// put back. Without this the bind sees an empty body and every request
+	// is refused.
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if len(body) == 0 {
+		return map[string]interface{}{}, true
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
+		return nil, false
+	}
+	if raw == nil {
+		raw = map[string]interface{}{}
+	}
+	return raw, true
+}
+
+// eventProfileFromBody reads the OPTIONAL event_profile_id out of an
+// alert-config body.
+//
+// The field is optional and it is NOT a column of the alert-config row's
+// own payload: the profile is a separate assignment. So it is read from the
+// RAW body, not from the bound struct.
+//
+// It returns (profileID, present, ok):
+//   - present is false when the body does not ask for a profile at all, so
+//     the assignment is left alone;
+//   - present is true when it does, INCLUDING an explicit null, which
+//     CLEARS the assignment;
+//   - ok is false after the handler wrote the 403/400 itself.
+//
+// The ADMIN GATE covers the null as well as the value. That matters: the
+// alert-config route is operator-level, and an explicit null would
+// otherwise clear an override that only an admin may touch.
+func (h *Handler) eventProfileFromBody(c *gin.Context, db database.Store, raw map[string]interface{}) (*uint, bool, bool) {
+	value, present := raw["event_profile_id"]
+	if !present {
+		return nil, false, true
+	}
+	// Assigning a profile - or clearing one - is admin-only.
+	if !auth.RoleAtLeast(c.GetString("role"), auth.RoleAdmin) {
+		c.JSON(http.StatusForbidden, response.Error("Only admins can assign an event profile"))
+		return nil, false, false
+	}
+	// An explicit null clears the assignment.
+	if value == nil {
+		return nil, true, true
+	}
+	profileID, isNum := value.(float64)
+	if !isNum {
+		c.JSON(http.StatusBadRequest, response.Error("event_profile_id must be a number or null"))
+		return nil, false, false
+	}
+	id := uint(profileID)
+	if msg := validateAssignProfile(db, &id); msg != "" {
+		c.JSON(http.StatusBadRequest, response.Error(msg))
+		return nil, false, false
+	}
+	return &id, true, true
 }
 
 // validateAlertConfigThresholds enforces sensible ranges shared by both the
@@ -760,6 +868,14 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 	if err != nil {
 		cfg = &models.SiteAlertConfig{SiteID: id}
 	}
+	// The body is read TWICE: once raw, to see whether it asks for an event
+	// profile (a separate assignment, not a column of the config payload),
+	// and once into the config, which keeps the bind-onto-the-existing-row
+	// behaviour a partial edit depends on.
+	raw, ok := readJSONBody(c)
+	if !ok {
+		return
+	}
 	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
@@ -771,7 +887,18 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 		return
 	}
 
-	if err := db.UpsertSiteAlertConfig(cfg); err != nil {
+	// The event profile, in the SAME transaction - the site's variant of the
+	// device's. See UpsertDeviceAlertConfig for the rationale.
+	profileID, present, ok := h.eventProfileFromBody(c, db, raw)
+	if !ok {
+		return
+	}
+	if present {
+		if err := db.UpsertSiteAlertConfigWithProfile(cfg, profileID); err != nil {
+			httputil.InternalError(c, "Failed to save site alert config", err)
+			return
+		}
+	} else if err := db.UpsertSiteAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
 	}

@@ -20,8 +20,10 @@ import {
   Trash2,
   CheckCircle2,
   Download,
+  X,
 } from 'lucide-react';
 import { apiFetch, type MeResponse } from '@/lib/api';
+import { hasStoredCredential, isMaskedSecret } from '@/lib/device-secrets';
 import { cn, formatBytes, formatRelativeTime } from '@/lib/utils';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StatusDot } from '@/components/ui/status-dot';
@@ -222,6 +224,37 @@ function DeviceInventoryView() {
   // Step-up secret reveal
   const [revealField, setRevealField] = useState<string | null>(null);
   const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
+
+  // The credentials to REMOVE.
+  //
+  // A secret is stored encrypted and read back masked, so the console
+  // cannot tell "unchanged" from "empty" — and an empty value means
+  // "leave unchanged" on the server, or a round-trip save would destroy
+  // the credential. So removing one is an EXPLICIT request, carried in its
+  // own field so it can never be confused with a value.
+  const [clearSecretTarget, setClearSecretTarget] = useState<string | null>(null);
+  const [pendingClearSecrets, setPendingClearSecrets] = useState<string[]>([]);
+
+  const requestClearSecret = (field: string) => setClearSecretTarget(field);
+
+  const confirmClearSecret = () => {
+    if (!clearSecretTarget) return;
+    setPendingClearSecrets((current) =>
+      current.includes(clearSecretTarget) ? current : [...current, clearSecretTarget],
+    );
+    // The revealed value is gone with the stored one.
+    setRevealedSecrets((current) => {
+      const next = { ...current };
+      delete next[clearSecretTarget];
+      return next;
+    });
+    setClearSecretTarget(null);
+    toast({
+      title: 'The credential will be removed when you save',
+      description: 'The device keeps its other settings.',
+      variant: 'info',
+    });
+  };
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
 
   const openCreateDrawer = () => {
@@ -273,6 +306,15 @@ function DeviceInventoryView() {
     const body: Record<string, unknown> = { ...editingDevice, ...revealedSecrets };
     for (const field of SECRET_FIELDS) {
       if (body[field] === SECRET_MASK) delete body[field];
+    }
+    if (pendingClearSecrets.length > 0) {
+      // The EXPLICIT clear. It is its own field so it can never be confused
+      // with a value, and a save that does not ask for it leaves the stored
+      // credential alone.
+      body.clear_secrets = pendingClearSecrets;
+      // The cleared fields must not also carry a value: the clear wins, but
+      // sending both is asking for two things at once.
+      for (const field of pendingClearSecrets) delete body[field];
     }
     if (!isAdmin) {
       // An admin-only field in the body is rejected outright, and the whole
@@ -818,6 +860,8 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_auth_pass: v }))
                     }
                     onReveal={setRevealField}
+                    onClear={requestClearSecret}
+                    canClear={isAdmin}
                     canReveal={isAdmin}
                     hint="Required for SNMPv3 with an auth protocol."
                   />
@@ -830,6 +874,8 @@ function DeviceInventoryView() {
                       setEditingDevice((p) => ({ ...p, snmpv3_priv_pass: v }))
                     }
                     onReveal={setRevealField}
+                    onClear={requestClearSecret}
+                    canClear={isAdmin}
                     canReveal={isAdmin}
                     hint="Required for SNMPv3 with a privacy protocol."
                   />
@@ -914,6 +960,8 @@ function DeviceInventoryView() {
                 revealedSecrets={revealedSecrets}
                 onChange={(v) => setEditingDevice((p) => ({ ...p, ssh_password: v }))}
                 onReveal={setRevealField}
+                onClear={requestClearSecret}
+                canClear={isAdmin}
                 canReveal={isAdmin}
                 hint="Used for the configuration backup and the IPSec provisioning path."
               />
@@ -963,6 +1011,8 @@ function DeviceInventoryView() {
                   revealedSecrets={revealedSecrets}
                   onChange={(v) => setEditingDevice((p) => ({ ...p, api_token: v }))}
                   onReveal={setRevealField}
+                  onClear={requestClearSecret}
+                  canClear={isAdmin}
                   canReveal={isAdmin}
                   hint={
                     editingDevice.vendor === 'opnsense'
@@ -1058,6 +1108,18 @@ function DeviceInventoryView() {
           }
           setRevealField(null);
         }}
+      />
+
+      <ConfirmDialog
+        open={clearSecretTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setClearSecretTarget(null);
+        }}
+        title="Remove the stored credential?"
+        description="The credential is deleted from the device. Any collector or integration using it stops working until a new one is entered."
+        confirmLabel="Remove it"
+        destructive
+        onConfirm={confirmClearSecret}
       />
     </div>
   );
@@ -1224,7 +1286,9 @@ function DeviceSecretField({
   revealedSecrets,
   onChange,
   onReveal,
+  onClear,
   canReveal,
+  canClear,
   hint,
   placeholder,
 }: {
@@ -1234,42 +1298,78 @@ function DeviceSecretField({
   revealedSecrets: Record<string, string>;
   onChange: (value: string) => void;
   onReveal: (field: string) => void;
+  /** Ask for the stored credential to be removed. */
+  onClear: (field: string) => void;
   /** False for an operator: revealing a stored credential is admin-only. */
   canReveal: boolean;
+  /** False for an operator: removing a credential is admin-only. */
+  canClear: boolean;
   hint?: string;
   placeholder?: string;
 }) {
   const revealed = revealedSecrets[field];
   const stored = (editingDevice as Record<string, unknown>)[field];
-  const masked = !revealed && stored === SECRET_MASK;
+  const masked = isMaskedSecret(stored, Boolean(revealed));
+  // The server masks every credential it HOLDS and leaves an empty string
+  // for a field it does not, so a non-empty value means there is one.
+  //
+  // Reading the mask as "empty" is what made the Clear control
+  // unreachable for the case it exists for: a credential the device ALREADY
+  // holds. It only appeared after the operator typed a new value.
+  const hasStored = hasStoredCredential(stored);
   return (
     <div>
-      <Field label={label}>
-        <div className="flex items-center gap-2">
-          <input
-            type={revealed ? 'text' : 'password'}
-            value={revealed ?? (typeof stored === 'string' ? stored : '')}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
-            autoComplete="new-password"
-            className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-          />
-          {editingDevice.id && (
-            <button
-              type="button"
-              onClick={() => onReveal(field)}
-              disabled={!canReveal}
-              title={
-                canReveal
-                  ? 'Reveal the stored value (requires admin password verification)'
+      <Field
+        label={label}
+        action={
+          editingDevice.id ? (
+            <div className="flex items-center gap-1.5">
+              {/*
+                The buttons are BESIDE the labelled control, not inside it.
+                A <label> that contains a button is a control inside a
+                control: the label's activation behaviour (click the text,
+                focus the field) also fires for the button.
+              */}
+              {hasStored ? (
+                <button
+                  type="button"
+                  onClick={() => onClear(field)}
+                  disabled={!canClear}
+                  title={
+                    canClear
+                      ? 'Remove the stored credential'
+                      : 'Admin only — removing a credential is an admin action'
+                  }
+                  className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <X className="h-3.5 w-3.5" /> Clear
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onReveal(field)}
+                disabled={!canReveal}
+                title={
+                  canReveal
+                    ? 'Reveal the stored value (requires admin password verification)'
                   : 'Admin only — revealing a stored credential is an admin action'
-              }
-              className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Eye className="h-3.5 w-3.5" /> Reveal
-            </button>
-          )}
-        </div>
+                }
+                className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Eye className="h-3.5 w-3.5" /> Reveal
+              </button>
+            </div>
+          ) : null
+        }
+      >
+        <input
+          type={revealed ? 'text' : 'password'}
+          value={revealed ?? (typeof stored === 'string' ? stored : '')}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
+          autoComplete="new-password"
+          className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+        />
       </Field>
       {hint ? <p className="mt-1 text-[10px] text-text-faint">{hint}</p> : null}
     </div>
@@ -1313,7 +1413,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
   // this as an array made `.map` throw and (before the ErrorBoundary) blanked
   // the whole console when the Config tab opened.
-  const { data: configHistory } = useQuery({
+  const { data: configHistory, isLoading: configLoading } = useQuery({
     queryKey: ['device-config-history', deviceId],
     queryFn: () =>
       apiFetch<{
@@ -1356,6 +1456,123 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
 
   const selectedFrom = configRevs.find((r) => r.id === diffFrom) ?? null;
   const selectedTo = configRevs.find((r) => r.id === diffTo) ?? null;
+
+  const configRevisionColumns: ColumnDef<RevisionMeta, any>[] = useMemo(
+    () => [
+      {
+        id: 'diffFrom',
+        header: () => <span className="text-center block font-semibold">From</span>,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <input
+              type="radio"
+              name="cfg-diff-from"
+              aria-label={`Use revision ${row.original.id} as the diff base`}
+              checked={diffFrom === row.original.id}
+              onChange={() => setDiffFrom(row.original.id)}
+            />
+          </div>
+        ),
+      },
+      {
+        id: 'diffTo',
+        header: () => <span className="text-center block font-semibold">To</span>,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <input
+              type="radio"
+              name="cfg-diff-to"
+              aria-label={`Compare revision ${row.original.id}`}
+              checked={diffTo === row.original.id}
+              onChange={() => setDiffTo(row.original.id)}
+            />
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'id',
+        header: 'Revision',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-mono text-text">#{row.original.id}</div>
+            <div className="text-[11px] text-text-faint">
+              {formatRelativeTime(row.original.timestamp)}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'trigger',
+        header: 'Trigger / Quality',
+        accessorFn: (row) => `${row.trigger_source || ''} ${row.backup_quality || ''}`,
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {row.original.trigger_source || '—'}
+            {row.original.backup_quality ? ` · ${row.original.backup_quality}` : ''}
+          </span>
+        ),
+      },
+      {
+        id: 'changed_by',
+        header: 'Changed by',
+        accessorFn: (row) => row.changed_by || (row.attribution_checked ? 'out-of-band' : '—'),
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {row.original.changed_by || (row.original.attribution_checked ? 'out-of-band' : '—')}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'checksum',
+        header: 'Checksum',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-text-faint">
+            {row.original.checksum?.slice(0, 12)}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const rev = row.original;
+          return (
+            <div className="inline-flex items-center gap-1 justify-end">
+              <Button
+                variant="icon"
+                type="button"
+                onClick={() => setRevisionToView(rev.id)}
+                aria-label={`View revision ${rev.id}`}
+                title="View this revision"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+              <a
+                href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
+                title="Download this revision"
+                className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              >
+                <Download className="h-3.5 w-3.5" />
+              </a>
+              <Button
+                variant="danger-icon"
+                type="button"
+                onClick={() => setRevisionToDelete(rev.id)}
+                aria-label={`Delete revision ${rev.id}`}
+                title="Delete this revision"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [diffFrom, diffTo, deviceId],
+  );
 
   const { data: capabilities, isLoading: capabilitiesLoading } = useQuery({
     queryKey: ['device-capabilities', deviceId],
@@ -1986,94 +2203,60 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 </div>
               </div>
 
-              {configRevs.length === 0 ? (
-                <p className="text-xs text-text-dim">No configuration backups archived yet.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
-                        <th className="px-2 py-2 text-center font-semibold">From</th>
-                        <th className="px-2 py-2 text-center font-semibold">To</th>
-                        <th className="px-3 py-2 font-semibold">Revision</th>
-                        <th className="px-3 py-2 font-semibold">Trigger / Quality</th>
-                        <th className="px-3 py-2 font-semibold">Changed by</th>
-                        <th className="px-3 py-2 font-semibold">Checksum</th>
-                        <th className="px-3 py-2" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {configRevs.map((rev) => (
-                        <tr key={rev.id} className="hover:bg-bg-hover">
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="radio"
-                              name="cfg-diff-from"
-                              aria-label={`Use revision ${rev.id} as the diff base`}
-                              checked={diffFrom === rev.id}
-                              onChange={() => setDiffFrom(rev.id)}
-                            />
-                          </td>
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="radio"
-                              name="cfg-diff-to"
-                              aria-label={`Compare revision ${rev.id}`}
-                              checked={diffTo === rev.id}
-                              onChange={() => setDiffTo(rev.id)}
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="font-mono text-text">#{rev.id}</div>
-                            <div className="text-[11px] text-text-faint">
-                              {formatRelativeTime(rev.timestamp)}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-[11px] text-text-dim">
-                            {rev.trigger_source || '—'}
-                            {rev.backup_quality ? ` · ${rev.backup_quality}` : ''}
-                          </td>
-                          <td className="px-3 py-2 text-[11px] text-text-dim">
-                            {rev.changed_by || (rev.attribution_checked ? 'out-of-band' : '—')}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-text-faint">
-                            {rev.checksum?.slice(0, 12)}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <Button  variant="icon"
-                                type="button"
-                                onClick={() => setRevisionToView(rev.id)}
-                                aria-label={`View revision ${rev.id}`}
-                                title="View this revision"
-                                
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <a
-                                href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
-                              title="Download this revision"
-                              className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
-                            >
-                                <Download className="h-3.5 w-3.5" />
-                              </a>
-                              <Button  variant="danger-icon"
-                                type="button"
-                                onClick={() => setRevisionToDelete(rev.id)}
-                                aria-label={`Delete revision ${rev.id}`}
-                                title="Delete this revision"
-                                
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <ResponsiveDataView
+                data={configRevs}
+                columns={configRevisionColumns}
+                getRowId={(rev) => String(rev.id)}
+                isLoading={configLoading}
+                emptyTitle="No configuration backups archived yet."
+                emptyDescription="Backups are created when polling detects device configuration changes."
+                renderMobileCard={(rev) => (
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-mono text-xs font-semibold text-text">#{rev.id}</div>
+                        <div className="text-[11px] text-text-faint">
+                          {formatRelativeTime(rev.timestamp)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1 text-xs text-text cursor-pointer">
+                          <input
+                            type="radio"
+                            name="cfg-diff-from-mobile"
+                            aria-label={`Use revision ${rev.id} as the diff base`}
+                            checked={diffFrom === rev.id}
+                            onChange={() => setDiffFrom(rev.id)}
+                          />
+                          <span className="text-[11px] text-text-dim">From</span>
+                        </label>
+                        <label className="inline-flex items-center gap-1 text-xs text-text cursor-pointer">
+                          <input
+                            type="radio"
+                            name="cfg-diff-to-mobile"
+                            aria-label={`Compare revision ${rev.id}`}
+                            checked={diffTo === rev.id}
+                            onChange={() => setDiffTo(rev.id)}
+                          />
+                          <span className="text-[11px] text-text-dim">To</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-text-dim">
+                      <span>
+                        {rev.trigger_source || '—'}
+                        {rev.backup_quality ? ` · ${rev.backup_quality}` : ''}
+                      </span>
+                      <span>{rev.changed_by || (rev.attribution_checked ? 'out-of-band' : '—')}</span>
+                    </div>
+                    {rev.checksum && (
+                      <div className="font-mono text-[10px] text-text-faint">
+                        Checksum: {rev.checksum.slice(0, 12)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              />
 
               <ConfigDiffDrawer
                 key={`${diffFrom ?? 0}:${diffTo ?? 0}`}

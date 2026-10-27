@@ -544,7 +544,10 @@ export function StorageWorkspace() {
       {
         id: 'volume',
         header: 'Current Volume',
-        meta: { hideOnTablet: true },
+        // The legacy table hid this below `lg`, so it starts there - not
+        // at `xl`, which is where the shared view's blanket option hides a
+        // column.
+        meta: { hideUntil: 'sm' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text-faint">
             {row.original.tracked
@@ -556,7 +559,7 @@ export function StorageWorkspace() {
       {
         id: 'ingest',
         header: 'Daily Ingest',
-        meta: { hideOnTablet: true },
+        meta: { hideUntil: 'md' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text-dim">
             {row.original.rate_available
@@ -568,7 +571,7 @@ export function StorageWorkspace() {
       {
         id: 'footprint',
         header: 'Projected Footprint',
-        meta: { hideOnTablet: true },
+        meta: { hideUntil: 'lg' },
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-text">
             {!row.original.rate_available
@@ -581,6 +584,120 @@ export function StorageWorkspace() {
       },
     ],
     [getRetVal, setRetEdits],
+  );
+
+  /*
+   * The table retention policy matrix rows.
+   *
+   * The columns close over retention edits, so they live inside the
+   * component. Converted from a raw table to ResponsiveDataView so mobile
+   * gets a touch-friendly card stack with full override controls.
+   */
+  const retentionMatrixColumns: ColumnDef<RetentionField, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'label',
+        header: 'Data Stream / Table',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium text-text flex items-center gap-2 flex-wrap">
+              <span>{row.original.label}</span>
+              <code className="rounded bg-bg-panel px-1.5 py-0.5 font-mono text-[10px] text-text-faint border border-border/70">
+                {row.original.env_key}
+              </code>
+            </div>
+            <div className="text-[11px] text-text-faint mt-0.5">{row.original.hint}</div>
+          </div>
+        ),
+      },
+      {
+        id: 'category',
+        header: 'Category',
+        // The legacy table hid this below `lg`, so it starts there - not at
+        // `xl`, which is where the shared view's blanket option hides a
+        // column.
+        meta: { hideUntil: 'lg' },
+        accessorFn: (row) => categorizeRetentionKey(row.key),
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap text-text-faint">
+            {categorizeRetentionKey(row.original.key)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'source',
+        header: 'Source',
+        cell: ({ row }) => (
+          <span
+            className={cn(
+              'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase whitespace-nowrap',
+              row.original.source === 'ui' && 'bg-accent/15 text-accent-text',
+              row.original.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
+              row.original.source === 'default' && 'bg-bg-panel text-text-mute',
+            )}
+          >
+            {row.original.source === 'ui'
+              ? 'Custom UI'
+              : row.original.source === 'env'
+                ? 'Env Var'
+                : 'Default'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'value',
+        header: 'Effective',
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono font-semibold text-text tabular-nums">
+            {row.original.value} {row.original.unit}
+          </span>
+        ),
+      },
+      {
+        id: 'override',
+        header: 'Custom Override',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const f = row.original;
+          const val = getRetVal(f.key);
+          const isEdited = (val ?? '') !== (retentionBaseline[f.key] ?? '');
+          return (
+            <div className="flex items-center gap-1.5">
+              <input
+                type="number"
+                aria-label={f.label}
+                min={f.min}
+                max={f.max}
+                step={1}
+                value={val}
+                onChange={(e) =>
+                  setRetEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
+                }
+                placeholder={`inherit (${f.env_value} ${f.unit})`}
+                className={cn(
+                  'w-36 rounded-md border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
+                  isEdited ? 'border-accent' : 'border-border',
+                )}
+              />
+              {val !== '' && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRetEdits((prev) => ({ ...prev, [f.key]: '' }))
+                  }
+                  title="Clear override and inherit default"
+                  aria-label={`Reset ${f.label} to default`}
+                  className="rounded p-1 text-text-faint hover:bg-bg-panel hover:text-text"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [getRetVal, retEdits, retentionBaseline],
   );
 
 
@@ -1099,149 +1216,79 @@ export function StorageWorkspace() {
                 Loading retention policy matrix...
               </div>
             ) : (
-              <>
-                {/* Desktop & Tablet High-Density Table */}
-                <div className="hidden md:block overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border bg-bg-panel text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-                        <th className="px-4 py-2.5">Data Stream / Table</th>
-                        <th className="px-3 py-2.5 hidden lg:table-cell">Category</th>
-                        <th className="px-3 py-2.5">Source</th>
-                        <th className="px-3 py-2.5">Effective</th>
-                        <th className="px-4 py-2.5 w-56">Custom Override</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {filteredRetentionFields.map((f) => {
-                        const val = getRetVal(f.key);
-                        const isEdited = (val ?? '') !== (retentionBaseline[f.key] ?? '');
-                        const cat = categorizeRetentionKey(f.key);
-                        return (
-                          <tr
-                            key={f.key}
-                            className={cn(
-                              'hover:bg-bg-hover transition-colors',
-                              isEdited && 'bg-accent/5',
-                            )}
-                          >
-                            <td className="px-4 py-2.5">
-                              <div className="font-medium text-text flex items-center gap-2 flex-wrap">
-                                <span>{f.label}</span>
-                                <code className="rounded bg-bg-panel px-1.5 py-0.5 font-mono text-[10px] text-text-faint border border-border/70">
-                                  {f.env_key}
-                                </code>
-                              </div>
-                              <div className="text-[11px] text-text-faint mt-0.5">{f.hint}</div>
-                            </td>
-                            <td className="px-3 py-2.5 hidden lg:table-cell whitespace-nowrap text-text-faint">
-                              {cat}
-                            </td>
-                            <td className="px-3 py-2.5 whitespace-nowrap">
-                              <span
-                                className={cn(
-                                  'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                                  f.source === 'ui' && 'bg-accent/15 text-accent-text',
-                                  f.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
-                                  f.source === 'default' && 'bg-bg-panel text-text-mute',
-                                )}
-                              >
-                                {f.source === 'ui'
-                                  ? 'Custom UI'
-                                  : f.source === 'env'
-                                    ? 'Env Var'
-                                    : 'Default'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 whitespace-nowrap font-mono font-semibold text-text tabular-nums">
-                              {f.value} {f.unit}
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="number"
-                                  aria-label={f.label}
-                                  min={f.min}
-                                  max={f.max}
-                                  step={1}
-                                  value={val}
-                                  onChange={(e) =>
-                                    setRetEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
-                                  }
-                                  placeholder={`inherit (${f.env_value} ${f.unit})`}
-                                  className={cn(
-                                    'w-36 rounded-md border bg-bg-panel px-2.5 py-1 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
-                                    isEdited ? 'border-accent' : 'border-border',
-                                  )}
-                                />
-                                {val !== '' && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setRetEdits((prev) => ({ ...prev, [f.key]: '' }))
-                                    }
-                                    title="Clear override and inherit default"
-                                    aria-label={`Reset ${f.label} to default`}
-                                    className="rounded p-1 text-text-faint hover:bg-bg-panel hover:text-text"
-                                  >
-                                    <RotateCcw className="h-3.5 w-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Mobile (<768px) Compact Card Stack */}
-                <div className="md:hidden divide-y divide-border">
-                  {filteredRetentionFields.map((f) => {
-                    const val = getRetVal(f.key);
-                    return (
-                      <div key={f.key} className="p-3.5 space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="text-xs font-semibold text-text">{f.label}</div>
-                            <code className="font-mono text-[10px] text-text-mute">
-                              {f.env_key}
-                            </code>
-                          </div>
-                          <span className="font-mono text-xs font-semibold text-accent shrink-0">
+              <ResponsiveDataView
+                data={filteredRetentionFields}
+                columns={retentionMatrixColumns}
+                getRowId={(f) => f.key}
+                emptyTitle="No retention policies match your filter."
+                emptyDescription="Adjust your search query or category filter to see retention policies."
+                renderMobileCard={(f) => {
+                  const val = getRetVal(f.key);
+                  const isEdited = (val ?? '') !== (retentionBaseline[f.key] ?? '');
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold text-text">{f.label}</div>
+                          <code className="font-mono text-[10px] text-text-mute">
+                            {f.env_key}
+                          </code>
+                        </div>
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          <span className="font-mono text-xs font-semibold text-accent">
                             {f.value} {f.unit}
                           </span>
-                        </div>
-                        <div className="text-[11px] text-text-faint">{f.hint}</div>
-                        <div className="flex items-center gap-2 pt-1">
-                          <input
-                            type="number"
-                            aria-label={f.label}
-                            min={f.min}
-                            max={f.max}
-                            value={val}
-                            onChange={(e) =>
-                              setRetEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
-                            }
-                            placeholder={`inherit (${f.env_value} ${f.unit})`}
-                            className="flex-1 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text"
-                          />
-                          {val !== '' && (
-                            <button
-                              type="button"
-                              onClick={() => setRetEdits((prev) => ({ ...prev, [f.key]: '' }))}
-                              className="rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text-faint"
-                            >
-                              Reset
-                            </button>
-                          )}
+                          <span
+                            className={cn(
+                              'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase',
+                              f.source === 'ui' && 'bg-accent/15 text-accent-text',
+                              f.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
+                              f.source === 'default' && 'bg-bg-panel text-text-mute',
+                            )}
+                          >
+                            {f.source === 'ui'
+                              ? 'Custom UI'
+                              : f.source === 'env'
+                                ? 'Env Var'
+                                : 'Default'}
+                          </span>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              </>
+                      <div className="text-[11px] text-text-faint">{f.hint}</div>
+                      <div className="flex items-center gap-2 pt-1">
+                        <input
+                          type="number"
+                          aria-label={f.label}
+                          min={f.min}
+                          max={f.max}
+                          step={1}
+                          value={val}
+                          onChange={(e) =>
+                            setRetEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
+                          }
+                          placeholder={`inherit (${f.env_value} ${f.unit})`}
+                          className={cn(
+                            'flex-1 rounded-md border bg-bg-panel px-2.5 py-1.5 font-mono text-xs text-text focus:border-accent focus:outline-hidden tabular-nums',
+                            isEdited ? 'border-accent' : 'border-border',
+                          )}
+                        />
+                        {val !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => setRetEdits((prev) => ({ ...prev, [f.key]: '' }))}
+                            aria-label={`Reset ${f.label} to default`}
+                            title="Clear override and inherit default"
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text-faint hover:text-text"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            <span>Reset</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
             )}
           </section>
 

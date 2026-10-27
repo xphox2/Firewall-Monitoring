@@ -1,6 +1,81 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.455] - 2026-10-27
+
+### Fixed — A stored credential could never be removed
+
+- A device's secrets are stored encrypted and read back **masked**, so the
+  console cannot tell "unchanged" from "empty" — and the server treats an
+  empty value as "leave unchanged", because a client that loads a device
+  and saves it back resends the mask, and writing the mask over the real
+  secret silently breaks SNMP polling.
+- That left an operator with **no way to remove a credential**: an API token
+  they no longer want, an SSH password that should not be stored. There is
+  now a **Clear** control on every secret, and it sends an explicit
+  `clear_secrets` opt-in that the server validates against the credential
+  fields. The mask-or-empty rule is untouched, so a round-trip save is still
+  safe.
+
+### Fixed — An alert override was applied in halves
+
+- The alert config and the event profile were **two requests**: the console
+  committed the config, then assigned the profile. A failure between them
+  left **half an override applied**, with a save that reported failure.
+- The profile now rides in the same body and the server writes both in **one
+  transaction**, so the override is applied whole or not at all. Assigning a
+  profile is admin-only, so a non-admin asking for one is **refused** rather
+  than silently ignored.
+
+### Fixed — The purge estimate did not tell the truth
+
+- A per-table count is **capped**, so when any table is capped the **total
+  is a lower bound** — the dialog rendered "of 100,000" for a table that
+  holds 134 million rows. The estimate now carries a `capped` flag and the
+  dialog says "at least".
+- The purge refuses an IPSec tunnel that is **deploying or rolling back**,
+  and it refuses a device that already has a **queued job**. The estimate is
+  what the operator reads *before* they commit, so both blockers are now in
+  the estimate rather than only in the 409 that follows.
+
+### Fixed — A toast was announced twice
+
+- Each toast carries `role="status"`, which is itself a polite live
+  region, and the toast **container** was one too. A live region inside a
+  live region announces the message **twice**. The container is now a
+  positioning wrapper and the toast is the only live region.
+
+### Fixed — The topology map's fallback was always the dark theme
+
+- The fallback colours are used only when the DOM cannot be read, and the
+  old set was the **dark** theme's — so in light mode a read failure
+  painted the whole graph dark on a white card. There is now a fallback per
+  theme, chosen from the document's `data-theme`.
+
+### Fixed — A "Reveal" button sat inside the label it belonged to
+
+- A `<label>` that contains a button is a **control inside a control**: the
+  label's activation behaviour (click the text, focus the field) also fires
+  for the button, so the two fight over the click. The `Field` primitive now
+  has an **action slot**, and the Reveal and Clear buttons sit beside the
+  labelled control instead of inside the label.
+
+### Fixed — Four columns vanished a breakpoint early
+
+- The shared data view could hide a column only BELOW the large
+  breakpoint, so a column the legacy table hid below `lg` would have
+  vanished at 1024-1280px instead. The view now takes a `hideUntil`
+  breakpoint, and the columns that used `sm`, `md` and `lg` keep the
+  breakpoints they had.
+
+### Changed — Six more tables get a mobile layout
+
+- The last page-level raw `<table>` elements are converted to the shared
+  data view, so they get a mobile card layout and keyboard sorting: the
+  two Overview tables, the Storage retention matrix and the Devices table.
+- The small **in-card** tables are deliberately left alone: they are
+  key-value panels, not grids an operator scrolls through.
+
 ## [0.11.454] - 2026-10-27
 
 ### Removed — Fifteen packages that were installed and never used

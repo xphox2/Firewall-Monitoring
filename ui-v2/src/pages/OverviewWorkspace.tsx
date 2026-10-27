@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
+import { type ColumnDef } from '@tanstack/react-table';
+import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import {
   Activity,
   Server,
@@ -723,6 +725,85 @@ function LiveNocWallboard() {
     (site.devices ?? []).map((d) => ({ ...d, site_name: site.site_name })),
   );
 
+  const deviceColumns: ColumnDef<NocDeviceRow & { site_name?: string }, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'name',
+        header: 'Device',
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/devices/${row.original.id}`);
+            }}
+            className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {row.original.name}
+          </button>
+        ),
+      },
+      {
+        accessorKey: 'site_name',
+        header: 'Site',
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">{row.original.site_name}</span>
+        ),
+      },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: ({ row }) => (
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+              row.original.status === 'online'
+                ? 'bg-sig-ok/15 text-sig-ok'
+                : 'bg-sig-crit/15 text-sig-crit',
+            )}
+          >
+            {row.original.status || 'unknown'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'worst_severity',
+        header: 'Severity',
+        cell: ({ row }) => (
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+              severityBadge[row.original.worst_severity ?? 'ok'] ?? severityBadge.ok,
+            )}
+          >
+            {row.original.worst_severity || 'ok'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'bits_per_second',
+        header: 'Throughput',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-right block">
+            {formatBitsPerSecond(row.original.bits_per_second ?? 0)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'last_polled',
+        header: 'Last polled',
+        cell: ({ row }) => (
+          <span className="font-mono text-[10px] text-text-faint text-right block">
+            {!row.original.last_polled || new Date(row.original.last_polled).getFullYear() <= 1
+              ? 'Never'
+              : formatRelativeTime(row.original.last_polled)}
+          </span>
+        ),
+      },
+    ],
+    [navigate],
+  );
+
   const feedItems = useMemo(() => mergeFeed(feed, feedKind, feedCount), [feed, feedKind, feedCount]);
 
   const threats = snapshot?.threat_top;
@@ -919,80 +1000,61 @@ function LiveNocWallboard() {
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-xs">
-              <thead>
-                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
-                  <th scope="col" className="px-2 py-1.5">Device</th>
-                  <th scope="col" className="px-2 py-1.5">Site</th>
-                  <th scope="col" className="px-2 py-1.5">Status</th>
-                  <th scope="col" className="px-2 py-1.5">Severity</th>
-                  <th scope="col" className="px-2 py-1.5 text-right">Throughput</th>
-                  <th scope="col" className="px-2 py-1.5 text-right">Last polled</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {devices.map((d) => (
-                  <tr
-                    key={`${d.site_name}-${d.id}`}
-                    className="hover:bg-bg-hover"
-                    onClick={() => navigate(`/devices/${d.id}`)}
+          <ResponsiveDataView
+            data={devices}
+            columns={deviceColumns}
+            getRowId={(d) => `${d.site_name}-${d.id}`}
+            onRowClick={(d) => navigate(`/devices/${d.id}`)}
+            emptyTitle="No devices reported."
+            emptyDescription="No devices have been discovered or reported for this tenant."
+            renderMobileCard={(d) => (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/devices/${d.id}`);
+                    }}
+                    className="text-left font-semibold text-xs text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   >
-                    <td className="px-2 py-1.5 font-semibold text-text">
-                      {/*
-                        The device name is the link. The ROW used to carry
-                        role="button", which gives a table row no computed
-                        accessible name at all - its content is spread across
-                        the cells - so a screen reader announced "button" and
-                        nothing else.
-                      */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/devices/${d.id}`);
-                        }}
-                        className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                      >
-                        {d.name}
-                      </button>
-                    </td>
-                    <td className="px-2 py-1.5 text-[11px] text-text-dim">{d.site_name}</td>
-                    <td className="px-2 py-1.5">
-                      <span
-                        className={cn(
-                          'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
-                          d.status === 'online'
-                            ? 'bg-sig-ok/15 text-sig-ok'
-                            : 'bg-sig-crit/15 text-sig-crit',
-                        )}
-                      >
-                        {d.status || 'unknown'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <span
-                        className={cn(
-                          'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
-                          severityBadge[d.worst_severity ?? 'ok'] ?? severityBadge.ok,
-                        )}
-                      >
-                        {d.worst_severity || 'ok'}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono text-[11px]">
-                      {formatBitsPerSecond(d.bits_per_second ?? 0)}
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-mono text-[10px] text-text-faint">
-                      {!d.last_polled || new Date(d.last_polled).getFullYear() <= 1
-                        ? 'Never'
-                        : formatRelativeTime(d.last_polled)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    {d.name}
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                        d.status === 'online'
+                          ? 'bg-sig-ok/15 text-sig-ok'
+                          : 'bg-sig-crit/15 text-sig-crit',
+                      )}
+                    >
+                      {d.status || 'unknown'}
+                    </span>
+                    <span
+                      className={cn(
+                        'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
+                        severityBadge[d.worst_severity ?? 'ok'] ?? severityBadge.ok,
+                      )}
+                    >
+                      {d.worst_severity || 'ok'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-text-dim">
+                  <span>{d.site_name}</span>
+                  <span className="font-mono text-text">
+                    {formatBitsPerSecond(d.bits_per_second ?? 0)}
+                  </span>
+                </div>
+                <div className="text-right font-mono text-[10px] text-text-faint">
+                  {!d.last_polled || new Date(d.last_polled).getFullYear() <= 1
+                    ? 'Never'
+                    : formatRelativeTime(d.last_polled)}
+                </div>
+              </div>
+            )}
+          />
         )}
       </div>
 
@@ -1176,6 +1238,74 @@ function SiteDrilldown({
   });
   const filtered = data?.sites?.[0];
 
+  const siteDeviceColumns: ColumnDef<NocDeviceRow, any>[] = useMemo(
+    () => [
+      {
+        accessorKey: 'name',
+        header: 'Device',
+        cell: ({ row }) => (
+          <div>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDevice(row.original.id);
+              }}
+              className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              {row.original.name}
+            </button>
+            {row.original.ip && (
+              <div className="font-mono text-[10px] text-text-faint">{row.original.ip}</div>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: ({ row }) => (
+          <span
+            className={
+              row.original.status === 'online'
+                ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+            }
+          >
+            {row.original.status || 'unknown'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'worst_severity',
+        header: 'Severity',
+        cell: ({ row }) => (
+          <span
+            className={
+              row.original.worst_severity === 'critical'
+                ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                : row.original.worst_severity === 'warning'
+                  ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
+                  : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+            }
+          >
+            {row.original.worst_severity || 'ok'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'bits_per_second',
+        header: 'Throughput',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-text-dim text-right block">
+            {formatBitsPerSecond(row.original.bits_per_second ?? 0)}
+          </span>
+        ),
+      },
+    ],
+    [onOpenDevice],
+  );
+
   return (
     <SlideOverDrawer
       open={Boolean(site)}
@@ -1226,78 +1356,60 @@ function SiteDrilldown({
             </div>
           )}
 
-          {(filtered.devices ?? []).length === 0 ? (
-            <p className="text-[11px] text-text-faint">No devices in this site.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead>
-                  <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
-                    <th scope="col" className="px-2 py-1.5">Device</th>
-                    <th scope="col" className="px-2 py-1.5">Status</th>
-                    <th scope="col" className="px-2 py-1.5">Severity</th>
-                    <th scope="col" className="px-2 py-1.5 text-right">Throughput</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/60">
-                  {(filtered.devices ?? []).map((device) => (
-                    <tr
-                      key={device.id}
-                      className="hover:bg-bg-hover"
-                      onClick={() => onOpenDevice(device.id)}
+          <ResponsiveDataView
+            data={filtered.devices ?? []}
+            columns={siteDeviceColumns}
+            getRowId={(device) => String(device.id)}
+            onRowClick={(device) => onOpenDevice(device.id)}
+            emptyTitle="No devices in this site."
+            emptyDescription="This site has no assigned devices reporting."
+            renderMobileCard={(device) => (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onOpenDevice(device.id);
+                      }}
+                      className="text-left font-semibold text-xs text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
-                      <td className="px-2 py-1.5">
-                        {/*
-                          The device name is the control. The ROW used to
-                          carry role="button", which gives a table row no
-                          computed accessible name - its content is spread
-                          across the cells.
-                        */}
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onOpenDevice(device.id);
-                          }}
-                          className="text-left font-semibold text-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                        >
-                          {device.name}
-                        </button>
-                        <div className="font-mono text-[10px] text-text-faint">{device.ip}</div>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <span
-                          className={
-                            device.status === 'online'
-                              ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
-                              : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
-                          }
-                        >
-                          {device.status || 'unknown'}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <span
-                          className={
-                            device.worst_severity === 'critical'
-                              ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
-                              : device.worst_severity === 'warning'
-                                ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
-                                : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
-                          }
-                        >
-                          {device.worst_severity || 'ok'}
-                        </span>
-                      </td>
-                      <td className="px-2 py-1.5 text-right font-mono text-[11px] text-text-dim">
-                        {formatBitsPerSecond(device.bits_per_second ?? 0)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                      {device.name}
+                    </button>
+                    {device.ip && (
+                      <div className="font-mono text-[10px] text-text-faint">{device.ip}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={
+                        device.status === 'online'
+                          ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                          : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                      }
+                    >
+                      {device.status || 'unknown'}
+                    </span>
+                    <span
+                      className={
+                        device.worst_severity === 'critical'
+                          ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                          : device.worst_severity === 'warning'
+                            ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
+                            : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                      }
+                    >
+                      {device.worst_severity || 'ok'}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right font-mono text-[11px] text-text-dim">
+                  {formatBitsPerSecond(device.bits_per_second ?? 0)}
+                </div>
+              </div>
+            )}
+          />
         </div>
       )}
     </SlideOverDrawer>

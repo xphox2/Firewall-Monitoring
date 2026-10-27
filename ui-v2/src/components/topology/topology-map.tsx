@@ -79,21 +79,57 @@ interface MapColours {
   selected: string;
 }
 
-const MAP_FALLBACK: MapColours = {
+/*
+ * The fallbacks, one set per theme.
+ *
+ * The fallback is used only when the DOM cannot be read, and the OLD one
+ * was the dark theme's — so in light mode a read failure painted the whole
+ * graph dark on a white card. The theme is known from the document's
+ * `data-theme`, so the fallback follows it.
+ */
+const MAP_FALLBACK_DARK: MapColours = {
   crit: '#f2555a',
   warn: '#e7b53c',
   base: '#3b4654',
-  up: '#4ade80',
-  down: '#f87171',
-  unknown: '#94a3b8',
-  siteBg: '#1f2937',
-  siteBorder: '#374151',
-  labelFaint: '#9ca3af',
-  labelDim: '#d1d5db',
-  halo: '#0b1220',
-  bundleLabel: '#cbd5e1',
-  selected: '#38bdf8',
+  up: '#36c98a',
+  down: '#f2555a',
+  unknown: '#8b949e',
+  siteBg: '#1f2630',
+  siteBorder: '#3b4654',
+  labelFaint: '#8b949e',
+  labelDim: '#c9d1d9',
+  halo: '#161b22',
+  bundleLabel: '#e6edf3',
+  selected: '#4c8dff',
 };
+
+const MAP_FALLBACK_LIGHT: MapColours = {
+  crit: '#c8323a',
+  warn: '#9a6b0e',
+  base: '#b9c4d0',
+  up: '#138a5e',
+  down: '#c8323a',
+  unknown: '#4a5c66',
+  siteBg: '#eaeef3',
+  siteBorder: '#b9c4d0',
+  labelFaint: '#4a5c66',
+  labelDim: '#2d3d45',
+  halo: '#ffffff',
+  bundleLabel: '#16242c',
+  selected: '#2563eb',
+};
+
+/** The fallback for the theme the document is in. */
+function mapFallback(): MapColours {
+  try {
+    if (document.documentElement.getAttribute('data-theme') === 'light') {
+      return MAP_FALLBACK_LIGHT;
+    }
+  } catch {
+    // A document that cannot be read has no theme to read.
+  }
+  return MAP_FALLBACK_DARK;
+}
 
 /**
  * Read the graph's colours from the theme's CSS variables.
@@ -104,33 +140,34 @@ const MAP_FALLBACK: MapColours = {
  * and the stylesheet is re-applied when the theme changes.
  */
 function readMapColours(): MapColours {
+  const fallback = mapFallback();
   try {
     const style = getComputedStyle(document.documentElement);
-    const read = (name: string, fallback: string) =>
-      style.getPropertyValue(name).trim() || fallback;
+    const read = (name: string, fallbackValue: string) =>
+      style.getPropertyValue(name).trim() || fallbackValue;
     return {
-      crit: read('--fwmon-sig-crit', MAP_FALLBACK.crit),
-      warn: read('--fwmon-sig-warn', MAP_FALLBACK.warn),
-      base: read('--fwmon-border-strong', MAP_FALLBACK.base),
-      up: read('--fwmon-sig-ok', MAP_FALLBACK.up),
-      down: read('--fwmon-sig-crit', MAP_FALLBACK.down),
-      unknown: read('--fwmon-text-faint', MAP_FALLBACK.unknown),
-      siteBg: read('--fwmon-panel-bg', MAP_FALLBACK.siteBg),
-      siteBorder: read('--fwmon-border-strong', MAP_FALLBACK.siteBorder),
-      labelFaint: read('--fwmon-text-faint', MAP_FALLBACK.labelFaint),
-      labelDim: read('--fwmon-text-dim', MAP_FALLBACK.labelDim),
-      halo: read('--fwmon-card-bg', MAP_FALLBACK.halo),
-      bundleLabel: read('--fwmon-text', MAP_FALLBACK.bundleLabel),
-      selected: read('--fwmon-accent', MAP_FALLBACK.selected),
+      crit: read('--fwmon-sig-crit', fallback.crit),
+      warn: read('--fwmon-sig-warn', fallback.warn),
+      base: read('--fwmon-border-strong', fallback.base),
+      up: read('--fwmon-sig-ok', fallback.up),
+      down: read('--fwmon-sig-crit', fallback.down),
+      unknown: read('--fwmon-text-faint', fallback.unknown),
+      siteBg: read('--fwmon-panel-bg', fallback.siteBg),
+      siteBorder: read('--fwmon-border-strong', fallback.siteBorder),
+      labelFaint: read('--fwmon-text-faint', fallback.labelFaint),
+      labelDim: read('--fwmon-text-dim', fallback.labelDim),
+      halo: read('--fwmon-card-bg', fallback.halo),
+      bundleLabel: read('--fwmon-text', fallback.bundleLabel),
+      selected: read('--fwmon-accent', fallback.selected),
     };
   } catch {
-    return MAP_FALLBACK;
+    return fallback;
   }
 }
 
 function severityRing(
   severity: string | undefined,
-  colours: MapColours = MAP_FALLBACK,
+  colours: MapColours = MAP_FALLBACK_DARK,
 ): { colour: string; width: number } {
   const value = String(severity ?? '').toLowerCase();
   if (value === 'critical') return { colour: colours.crit, width: 3 };
@@ -481,8 +518,8 @@ export function TopologyMap({
   // state so the elements that carry them (the link colours) are rebuilt when
   // the theme changes, and a ref so the stylesheet can be applied to the
   // graph without rebuilding it.
-  const [colours, setColours] = useState<MapColours>(MAP_FALLBACK);
-  const coloursRef = useRef<MapColours>(MAP_FALLBACK);
+  const [colours, setColours] = useState<MapColours>(() => mapFallback());
+  const coloursRef = useRef<MapColours>(mapFallback());
   const hostRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   // The graph instance in state, so the particle layer can depend on it: the
