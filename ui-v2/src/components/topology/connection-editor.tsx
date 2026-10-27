@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
 import { Input, Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 export interface ConnectionDevice {
   id: number;
@@ -186,21 +187,21 @@ export function ConnectionEditor({
       size="lg"
       footer={
         <>
-          <button
+          <Button  variant="secondary"
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text"
+            
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={save}
             disabled={!canSave}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+            
           >
             {saving ? 'Saving…' : connection ? 'Save changes' : 'Create connection'}
-          </button>
+          </Button>
         </>
       }
     >

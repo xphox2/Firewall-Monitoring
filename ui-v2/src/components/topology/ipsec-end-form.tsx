@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { ID_TYPES, defaultIdentity, identityError, type EndForm, type IpsecHints } from '@/lib/ipsec';
+import { Input, Select, Textarea } from '@/components/ui/input';
 
 export interface WizardDevice {
   id: number;
@@ -92,11 +93,11 @@ export function IpsecEndForm({
 
       <label className="block">
         <span className="mb-1 block text-[11px] font-medium text-text-dim">Device</span>
-        <select
+        <Select  className="bg-bg-card px-2.5 py-1.5"
           value={value.deviceId || ''}
           onChange={(e) => set('deviceId', Number(e.target.value) || 0)}
           aria-label={`End ${label} device`}
-          className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+          
         >
           <option value="">Select a device…</option>
           {devices.map((d) => (
@@ -105,7 +106,7 @@ export function IpsecEndForm({
               {d.retired_at ? ' (retired)' : ''}
             </option>
           ))}
-        </select>
+        </Select>
         {otherDeviceId !== null && value.deviceId === otherDeviceId ? (
           <span className="mt-1 block text-[10px] text-sig-crit">
             The two ends cannot be the same device.
@@ -127,13 +128,13 @@ export function IpsecEndForm({
         </label>
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium text-text-dim">Egress interface</span>
-          <input
+          <Input  mono className="bg-bg-card px-2.5 py-1.5"
             type="text"
             list={`ipsec-egress-${label}`}
             value={value.egressIface}
             onChange={(e) => set('egressIface', e.target.value)}
             placeholder="wan"
-            className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text"
+            
           />
           {wanIfaces.length > 0 ? (
             <datalist id={`ipsec-egress-${label}`}>
@@ -181,7 +182,7 @@ export function IpsecEndForm({
             ))}
           </div>
         ) : null}
-        <input
+        <Input  mono className="bg-bg-card px-2.5 py-1.5"
           type="text"
           value={value.lanIfaces.join(', ')}
           onChange={(e) =>
@@ -194,7 +195,7 @@ export function IpsecEndForm({
             )
           }
           placeholder="Comma-separated interface names"
-          className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text"
+          
         />
       </div>
 
@@ -203,7 +204,7 @@ export function IpsecEndForm({
           <span className="mb-1 block text-[11px] font-medium text-text-dim">
             Local identity type
           </span>
-          <select
+          <Select  className="bg-bg-card px-2.5 py-1.5"
             value={value.localId?.type ?? 'fqdn'}
             onChange={(e) =>
               set('localId', {
@@ -212,14 +213,14 @@ export function IpsecEndForm({
               })
             }
             aria-label={`End ${label} identity type`}
-            className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 text-xs text-text"
+            
           >
             {(idTypes.length > 0 ? idTypes : [...ID_TYPES]).map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="block">
           <span className="mb-1 block text-[11px] font-medium text-text-dim">
@@ -246,7 +247,7 @@ export function IpsecEndForm({
         <span className="mb-1 block text-[11px] font-medium text-text-dim">
           Protected subnets
         </span>
-        <textarea
+        <Textarea  className="bg-bg-card px-2.5 py-1.5 font-mono"
           rows={2}
           value={value.protectedSubnets.join('\n')}
           onChange={(e) =>
@@ -259,7 +260,7 @@ export function IpsecEndForm({
             )
           }
           placeholder={'192.168.113.0/24\n192.168.114.0/24'}
-          className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text"
+          
         />
       </label>
 
@@ -267,12 +268,12 @@ export function IpsecEndForm({
         <span className="mb-1 block text-[11px] font-medium text-text-dim">
           Gateway (optional)
         </span>
-        <input
+        <Input  mono className="bg-bg-card px-2.5 py-1.5"
           type="text"
           value={value.gateway}
           onChange={(e) => set('gateway', e.target.value)}
           placeholder="Only for a self-lockout workaround"
-          className="w-full rounded-md border border-border bg-bg-card px-2.5 py-1.5 font-mono text-xs text-text"
+          
         />
       </label>
     </div>

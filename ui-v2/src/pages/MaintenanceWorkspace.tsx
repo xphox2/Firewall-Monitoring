@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { Button } from '@/components/ui/button';
 
 interface MaintenanceWindow {
   id: number;
@@ -340,7 +341,7 @@ export function MaintenanceWorkspace() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1.5">
-            <button
+            <Button  variant="icon"
               type="button"
               onClick={() => {
                 setScopeMode(
@@ -355,17 +356,17 @@ export function MaintenanceWorkspace() {
                 });
                 setDrawerOpen(true);
               }}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="danger-icon"
               type="button"
               onClick={() => deleteMutation.mutate(row.original.id)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -454,21 +455,21 @@ export function MaintenanceWorkspace() {
         title={editing.id ? `Edit Window: ${editing.name}` : 'Schedule Maintenance Window'}
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={!editing.name?.trim() || saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+              
             >
               Save Window
-            </button>
+            </Button>
           </div>
         }
       >

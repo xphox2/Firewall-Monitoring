@@ -11,6 +11,7 @@ import {
   passkeysSupported,
 } from '@/lib/webauthn';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 interface PasskeyEntry {
   id: number;
@@ -224,14 +225,14 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
                
               />
             </label>
-            <button
+            <Button
               type="button"
               disabled={!password || busy}
               onClick={startSetup}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {busy ? 'Starting…' : 'Continue'}
-            </button>
+            </Button>
           </div>
         ) : recoveryCodes ? (
           <div className="space-y-3">
@@ -264,17 +265,17 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
               Every session was revoked. You will be asked to sign in again with your password and
               a code.
             </div>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 setSetupOpen(false);
                 resetWizard();
                 onChanged();
               }}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent"
+              
             >
               I have saved the codes
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -309,14 +310,14 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
                 className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-sm tracking-widest text-text"
               />
             </label>
-            <button
+            <Button
               type="button"
               disabled={code.trim().length < 6 || busy}
               onClick={verify}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {busy ? 'Verifying…' : 'Verify and enable'}
-            </button>
+            </Button>
           </div>
         )}
       </SlideOverDrawer>
@@ -520,25 +521,25 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <button
+                <Button  variant="icon"
                   type="button"
                   onClick={() => {
                     setRenameTarget(pk);
                     setRenameName(pk.name);
                   }}
                   aria-label={`Rename ${pk.name}`}
-                  className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                  
                 >
                   <Pencil className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </Button>
+                <Button  variant="danger-icon"
                   type="button"
                   onClick={() => setRemoveTarget(pk)}
                   aria-label={`Remove ${pk.name}`}
-                  className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+                  
                 >
                   <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                </Button>
               </div>
             </div>
           ))}
@@ -595,14 +596,14 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
               />
             </label>
           )}
-          <button
+          <Button
             type="button"
             disabled={!password || busy || (me?.totp_enabled && totpCode.trim().length < 6)}
             onClick={register}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+            
           >
             {busy ? 'Waiting for authenticator…' : 'Register passkey'}
-          </button>
+          </Button>
         </div>
       </SlideOverDrawer>
 
@@ -629,14 +630,14 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
              
             />
           </label>
-          <button
+          <Button
             type="button"
             disabled={!renameName.trim() || renaming}
             onClick={rename}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+            
           >
             {renaming ? 'Saving…' : 'Save name'}
-          </button>
+          </Button>
         </div>
       </SlideOverDrawer>
 

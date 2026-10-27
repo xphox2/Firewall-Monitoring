@@ -45,6 +45,7 @@ const TopologyMap = lazy(() =>
 );
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Button } from '@/components/ui/button';
 
 type TopologyTab = 'map' | 'connections' | 'ipsec';
 
@@ -621,13 +622,13 @@ function ConnectionsSubTab() {
             >
               Edit
             </button>
-            <button
+            <Button  variant="danger-icon"
               type="button"
               onClick={() => setConnToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -1096,14 +1097,14 @@ function IpsecTunnelsSubTab() {
             >
               <Play className="h-3 w-3" /> Deploy
             </button>
-            <button
+            <Button  variant="icon"
               type="button"
               onClick={() => actionMutation.mutate({ id: row.original.id, action: 'recheck' })}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
               title="Re-verify SA liveness"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-            </button>
+            </Button>
             {IPSEC_ROLLBACKABLE.has(ipsecTunnelStatus(row.original)) && (
               <button
                 type="button"

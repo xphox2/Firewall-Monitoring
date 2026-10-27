@@ -28,8 +28,9 @@ import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
-import { Input, Select } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { Input, Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 type SystemSubTab = 'users' | 'tokens' | 'display' | 'reports' | 'audit' | 'profile';
 
@@ -458,21 +459,21 @@ function UsersRbacSubTab() {
         subtitle="New accounts are flagged to rotate their temporary password on first login."
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={!newUsername.trim() || createUserMutation.isPending}
               onClick={() => createUserMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
+              
             >
               {createUserMutation.isPending ? 'Creating…' : 'Create User'}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -516,13 +517,13 @@ function UsersRbacSubTab() {
         title={createdCred?.title ?? 'Credential'}
         subtitle={createdCred?.note ?? ''}
         footer={
-          <button
+          <Button  className="px-4"
             type="button"
             onClick={() => setCreatedCred(null)}
-            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+            
           >
             I have copied it
-          </button>
+          </Button>
         }
       >
         {createdCred && (
@@ -774,15 +775,15 @@ function ApiTokensSubTab() {
             placeholder="Days (0 = never)"
             className="rounded-md border border-border bg-bg-panel px-3 py-1.5 font-mono text-xs text-text"
           />
-          <select
+          <Select  className="rounded-md px-3 py-1.5"
             value={tokenScope}
             onChange={(e) => setTokenScope(e.target.value as 'read' | 'write' | 'admin')}
-            className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+            
           >
             <option value="read">Scope: Read-Only (Viewer)</option>
             <option value="write">Scope: Read/Write (Operator)</option>
             <option value="admin">Scope: Admin</option>
-          </select>
+          </Select>
           <button
             type="button"
             disabled={!tokenName.trim() || createTokenMutation.isPending}
@@ -1896,34 +1897,34 @@ function MyProfileSubTab() {
             </div>
             <div>
               <Field label="Display Name">
-                <input
+                <Input  className="px-3 py-1.5"
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+                  
                 />
               </Field>
             </div>
             <div>
               <Field label="Email">
-                <input
+                <Input  className="px-3 py-1.5"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+                  
                 />
               </Field>
             </div>
           </div>
           <div className="flex justify-end">
-            <button
+            <Button  className="px-4"
               type="button"
               disabled={updateProfileMutation.isPending}
               onClick={() => updateProfileMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+              
             >
               Save Profile
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1952,14 +1953,14 @@ function MyProfileSubTab() {
             </div>
           </div>
           <div className="flex justify-end">
-            <button
+            <Button  className="px-4"
               type="button"
               disabled={!currentPassword || newPassword.length < 8 || changePasswordMutation.isPending}
               onClick={() => changePasswordMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
+              
             >
               Update Password
-            </button>
+            </Button>
           </div>
         </div>
       </div>

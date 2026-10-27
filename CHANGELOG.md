@@ -1,6 +1,53 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.454] - 2026-10-27
+
+### Removed — Fifteen packages that were installed and never used
+
+- The console declared **28** packages and imported **13** of them. The
+  other fifteen were installed on every machine and every CI runner, and
+  sat in the lockfile that everybody has to review:
+  - **ten Radix packages** — only `react-dialog` is used; the other ten
+    (`accordion`, `dropdown-menu`, `label`, `popover`, `select`,
+    `separator`, `slot`, `switch`, `tabs`, `tooltip`) were never imported;
+  - `react-hook-form`, `zod` and `@hookform/resolvers` — a form library
+    and a validation library the console does not use;
+  - `@tanstack/react-virtual` and `class-variance-authority`.
+
+  The dependency surface is now **13** packages, down from 28. A guardrail keeps it that
+  way: a declared package that is imported nowhere is dead weight, and it
+  is invisible in review.
+
+### Changed — The duplicated control styles are now the shared primitives
+
+- The console had **316 raw `<button>`, 126 `<input>`, 30 `<select>` and 7
+  `<textarea>`** elements with the same class string copied over and over —
+  the top five button strings alone covered sixty call sites.
+- **Ninety-four controls** were migrated onto the shared primitives. The
+  primitives' variants carry the console's *own* class strings, exactly,
+  so the migration is a no-op visually: what disappears is the duplication,
+  not the look.
+- The ones whose strings differ only in width or flex behaviour were
+  **left alone** on purpose: the primitive's base class would change how
+  they render, and a mechanical migration is not worth a visual
+  regression.
+- The `Button` primitive's variants now **are** the console's strings —
+  the primary, the secondary, the small icon button and the destructive
+  icon button — so adopting the primitive is a rename, not a restyle.
+- **One deliberate normalisation**: the shared confirm dialog's button was
+  the last primary button in the console that was a half-step smaller and
+  lighter than the other eleven. It now matches them. The change is two
+  pixels of horizontal padding and one font weight, on one shared
+  component.
+
+### Added — A guardrail for the dependency surface
+
+- A declared package that is imported nowhere is dead weight, and it is
+  invisible in review. There is now a test that finds them.
+- And a test that the shared primitives are not **decoration**: a
+  primitive that nothing uses is not a design system.
+
 ## [0.11.453] - 2026-10-27
 
 ### Added — The V2 console's unit tests finally run on the server

@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { ShieldAlert, Lock, KeyRound, Loader2, X } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 export interface StepUpCredentials {
   password: string;
@@ -171,14 +172,14 @@ export function StepUpAuthDialog({
             )}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-              <button
+              <Button  variant="secondary"
                 type="button"
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
-                className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text"
+                
               >
                 Cancel
-              </button>
+              </Button>
               <button
                 type="submit"
                 disabled={submitting || confirmDisabled}

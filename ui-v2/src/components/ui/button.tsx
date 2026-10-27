@@ -1,22 +1,56 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export type ButtonVariant = 'default' | 'secondary' | 'ghost' | 'destructive' | 'outline';
+export type ButtonVariant =
+  | 'default'
+  | 'secondary'
+  | 'icon'
+  | 'danger-icon'
+  | 'ghost'
+  | 'destructive';
 export type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 
+/*
+ * The variants carry the console's OWN class strings, exactly.
+ *
+ * The console had 316 buttons with dozens of distinct strings for the same
+ * visual weight. A primitive whose variants were approximations would
+ * change how every button looks when it is adopted, so each variant here IS
+ * one of the strings the console already used - the migration is then a
+ * no-op visually, and what disappears is the duplication.
+ */
 const VARIANTS: Record<ButtonVariant, string> = {
-  default: 'bg-accent text-on-accent hover:bg-accent-hover',
-  secondary: 'border border-border bg-bg-panel text-text-dim hover:text-text',
-  ghost: 'text-text-dim hover:bg-bg-hover hover:text-text',
-  destructive: 'bg-sig-crit text-white hover:opacity-90',
-  outline: 'border border-border bg-bg-card text-text hover:border-border-strong hover:text-text',
+  // The primary button. The hover DIMMS the button, which is what the
+  // console's own primary buttons did.
+  default: 'rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90',
+  // The secondary button.
+  secondary:
+    'rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim hover:text-text',
+  // The small square icon button.
+  icon: 'rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text',
+  // The destructive icon button.
+  'danger-icon': 'rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit',
+  // The ghost button.
+  ghost: 'rounded-md text-text-dim hover:bg-bg-hover hover:text-text',
+  // The destructive button.
+  destructive:
+    'rounded-md bg-sig-crit px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90',
 };
 
+/*
+ * The size carries only what the variant does not: the TYPE SCALE. The
+ * padding is in the variant, because the console's strings differ in
+ * padding and a primitive that normalized it would change how every button
+ * looks.
+ */
 const SIZES: Record<ButtonSize, string> = {
-  sm: 'px-2 py-1 text-[11px]',
-  md: 'px-3 py-1.5 text-xs',
-  lg: 'px-4 py-2 text-sm',
-  icon: 'p-1',
+  // The TYPE SCALE only. The weight lives in the variant: if it lived
+  // here, `cn()` would let the size override the variant's `font-semibold`
+  // and the first small primary button would silently lose its weight.
+  sm: 'text-[11px]',
+  md: 'text-xs',
+  lg: 'text-sm',
+  icon: 'text-xs',
 };
 
 /**
@@ -56,7 +90,7 @@ export function Button({
     <button
       type={type}
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-colors',
+        'inline-flex items-center justify-center gap-1.5 transition-colors',
         'disabled:cursor-not-allowed disabled:opacity-50',
         FOCUS,
         VARIANTS[variant],

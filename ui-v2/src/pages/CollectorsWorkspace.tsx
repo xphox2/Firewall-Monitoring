@@ -26,6 +26,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { Input, Select, Textarea } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
 import { ProbeDeployDrawer } from '@/components/collectors/probe-deploy-drawer';
+import { Button } from '@/components/ui/button';
 
 type CollectorsTab = 'probes' | 'sites';
 
@@ -336,23 +337,23 @@ function ProbesSubTab() {
               Rotate Key
             </button>
             {row.original.decommissioned_at ? (
-              <button
+              <Button  variant="icon"
                 type="button"
                 onClick={() => actionMutation.mutate({ id: row.original.id, action: 'recommission' })}
-                className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                
                 title="Recommission"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button  variant="icon"
                 type="button"
                 onClick={() => actionMutation.mutate({ id: row.original.id, action: 'decommission' })}
-                className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+                
                 title="Decommission"
               >
                 <PowerOff className="h-3.5 w-3.5" />
-              </button>
+              </Button>
             )}
           </div>
         ),
@@ -414,21 +415,21 @@ function ProbesSubTab() {
         subtitle="Generates a one-time registration token for a new fwmon-collector instance."
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={!probeName.trim() || createProbeMutation.isPending}
               onClick={() => createProbeMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+              
             >
               Create & Generate Key
-            </button>
+            </Button>
           </div>
         }
       >
@@ -467,13 +468,13 @@ function ProbesSubTab() {
         subtitle="The rejection reason is stored on the probe and shown to operators."
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setRejectTarget(null)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
+            </Button>
             <button
               type="button"
               disabled={!rejectReason.trim() || rejectMutation.isPending}
@@ -641,31 +642,31 @@ function SitesSubTab() {
               The per-site alert override. The console had only the GLOBAL
               thresholds, so a noisy site could not be given its own numbers.
             */}
-            <button
+            <Button  variant="icon"
               type="button"
               onClick={() => setAlertConfigSite(row.original)}
               title="Alert thresholds & routing for this site"
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <ShieldAlert className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="icon"
               type="button"
               onClick={() => {
                 setEditingSite(row.original);
                 setDrawerOpen(true);
               }}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="danger-icon"
               type="button"
               onClick={() => setSiteToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -729,21 +730,21 @@ function SitesSubTab() {
         title={editingSite.id ? `Edit Site: ${editingSite.name}` : 'Create Site'}
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={!editingSite.name?.trim() || saveSiteMutation.isPending}
               onClick={() => saveSiteMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+              
             >
               Save Site
-            </button>
+            </Button>
           </div>
         }
       >

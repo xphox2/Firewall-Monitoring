@@ -27,6 +27,8 @@ import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { StepUpAuthDialog, type StepUpCredentials } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 import { Textarea } from '@/components/ui/input';
+import { Select } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 // --- Types matching Go backend ---
 
@@ -1717,33 +1719,33 @@ export function StorageWorkspace() {
                                 <span>Enabled</span>
                               </label>
                             ) : f.key === 'ARCHIVE_TARGET' ? (
-                              <select
+                              <Select  className="px-2.5 py-1.5"
                                 id={`arch-${f.key}`}
                                 disabled={locked}
                                 value={val || 's3'}
                                 onChange={(e) =>
                                   setArchEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
                                 }
-                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
+                                
                               >
                                 <option value="s3">s3 — S3-Compatible Object Storage</option>
                                 <option value="local">
                                   local — Local Partition or Mounted Network Share
                                 </option>
-                              </select>
+                              </Select>
                             ) : f.key === 'ARCHIVE_OBJECT_LOCK_MODE' ? (
-                              <select
+                              <Select  className="px-2.5 py-1.5"
                                 id={`arch-${f.key}`}
                                 value={val.toUpperCase()}
                                 onChange={(e) =>
                                   setArchEdits((prev) => ({ ...prev, [f.key]: e.target.value }))
                                 }
-                                className="w-full rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text focus:border-accent focus:outline-hidden"
+                                
                               >
                                 <option value="">(none)</option>
                                 <option value="GOVERNANCE">GOVERNANCE (Recommended)</option>
                                 <option value="COMPLIANCE">COMPLIANCE</option>
-                              </select>
+                              </Select>
                             ) : (
                               <div className="flex items-center gap-1.5">
                                 <input
@@ -2227,14 +2229,14 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
              
             />
           </label>
-          <button
+          <Button
             type="button"
             disabled={!reset || !reset.reason.trim()}
             onClick={continueReset}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+            
           >
             Continue to verification
-          </button>
+          </Button>
         </div>
       </SlideOverDrawer>
 

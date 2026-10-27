@@ -25,8 +25,10 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
-import { Input, Select } from '@/components/ui/input';
+import { Input } from '@/components/ui/input';
 import { Field } from '@/components/ui/field';
+import { Select, Textarea } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 type IntegrationsSubTab = 'smtp' | 'webhooks' | 'irc';
 
@@ -1085,23 +1087,23 @@ function IrcBotsSubTab() {
                 <Power className="h-3 w-3" /> Connect
               </button>
             )}
-            <button
+            <Button  variant="icon"
               type="button"
               onClick={() => {
                 setEditingServer(row.original);
                 setServerDrawerOpen(true);
               }}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="danger-icon"
               type="button"
               onClick={() => setServerToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -1170,25 +1172,25 @@ function IrcBotsSubTab() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1">
-            <button
+            <Button  variant="icon"
               type="button"
               aria-label={`Edit ${row.original.channel_name}`}
               onClick={() => {
                 setEditingChannel(row.original);
                 setChannelDrawerOpen(true);
               }}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="danger-icon"
               type="button"
               aria-label={`Delete ${row.original.channel_name}`}
               onClick={() => setChannelToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -1247,25 +1249,25 @@ function IrcBotsSubTab() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center justify-end gap-1">
-            <button
+            <Button  variant="icon"
               type="button"
               aria-label={`Edit ${row.original.command}`}
               onClick={() => {
                 setEditingCommand(row.original);
                 setCommandDrawerOpen(true);
               }}
-              className="rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              
             >
               <Edit3 className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button  variant="danger-icon"
               type="button"
               aria-label={`Delete ${row.original.command}`}
               onClick={() => setCommandToDelete(row.original)}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit"
+              
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ),
       },
@@ -1335,17 +1337,17 @@ function IrcBotsSubTab() {
             Send Direct IRC Message
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <select
+            <Select  className="rounded-md px-3 py-1.5"
               value={sendServerId || servers[0]?.id || 0}
               onChange={(e) => setSendServerId(Number(e.target.value))}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+              
             >
               {servers.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name} ({s.server_host})
                 </option>
               ))}
-            </select>
+            </Select>
             <input
               type="text"
               value={sendTarget}
@@ -1468,21 +1470,21 @@ function IrcBotsSubTab() {
         subtitle="Configure IRC connection, TLS, NickServ/SASL credentials, and command prefix."
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setServerDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={saveServerMutation.isPending}
               onClick={() => saveServerMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
+              
             >
               {saveServerMutation.isPending ? 'Saving…' : 'Save IRC Server'}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -1695,14 +1697,14 @@ function IrcBotsSubTab() {
         size="md"
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setChannelDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={
                 !editingChannel.server_id ||
@@ -1710,10 +1712,10 @@ function IrcBotsSubTab() {
                 saveChannelMutation.isPending
               }
               onClick={() => saveChannelMutation.mutate()}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {saveChannelMutation.isPending ? 'Saving…' : 'Save channel'}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -1891,21 +1893,21 @@ function IrcBotsSubTab() {
         size="md"
         footer={
           <div className="flex items-center justify-end gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => setCommandDrawerOpen(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={!editingCommand.command?.trim() || saveCommandMutation.isPending}
               onClick={() => saveCommandMutation.mutate()}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {saveCommandMutation.isPending ? 'Saving…' : 'Save command'}
-            </button>
+            </Button>
           </div>
         }
       >
@@ -1954,13 +1956,13 @@ function IrcBotsSubTab() {
             <span className="mb-1 block text-xs font-medium text-text-dim">
               Response template
             </span>
-            <textarea
+            <Textarea  className="p-2.5 font-mono"
               rows={4}
               value={editingCommand.response ?? ''}
               onChange={(e) =>
                 setEditingCommand((p) => ({ ...p, response: e.target.value }))
               }
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 font-mono text-xs text-text"
+              
             />
           </label>
           <div className="flex flex-wrap gap-4">

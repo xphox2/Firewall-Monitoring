@@ -14,7 +14,9 @@ import {
   type Draft,
   type EventRuleRecord,
 } from '@/lib/event-rule';
-import { Input, Select, Textarea } from '@/components/ui/input';
+import { Input, Select } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 
 /** Re-exported so pages can type their lists from one place. */
 export type { EventRuleRecord } from '@/lib/event-rule';
@@ -220,21 +222,21 @@ export function EventRuleDrawer({
               : 'Alert rules fire when the conditions match.'}
           </span>
           <div className="flex items-center gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => onOpenChange(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button  className="px-4"
               type="button"
               disabled={saving}
               onClick={save}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
+              
             >
               {saving ? 'Saving…' : rule ? 'Save changes' : 'Create rule'}
-            </button>
+            </Button>
           </div>
         </div>
       }
@@ -508,12 +510,12 @@ export function EventRuleDrawer({
               <span className="mb-1 block text-xs font-medium text-text-dim">
                 Match expression (JSON)
               </span>
-              <textarea
+              <Textarea  className="p-3 font-mono text-[11px]"
                 rows={12}
                 value={draft.rawMatch}
                 onChange={(e) => set('rawMatch', e.target.value)}
                 spellCheck={false}
-                className="w-full rounded-md border border-border bg-bg-panel p-3 font-mono text-[11px] text-text"
+                
                 placeholder='{"op":"and","conditions":[{"op":"eq","field":"src_ip","value":"198.51.100.9"}]}'
               />
               <span className="mt-1 block text-[11px] text-text-faint">

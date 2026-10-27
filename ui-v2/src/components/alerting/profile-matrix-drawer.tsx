@@ -15,6 +15,7 @@ import {
   type AlertTypeInfo,
   type ToggleMode,
 } from '@/lib/event-profiles';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   open: boolean;
@@ -156,21 +157,21 @@ export function ProfileMatrixDrawer({ open, onOpenChange, profile, types, onSave
             {dirty === 0 ? 'No changes' : `${dirty} type${dirty === 1 ? '' : 's'} changed`}
           </span>
           <div className="flex items-center gap-2">
-            <button
+            <Button  variant="secondary"
               type="button"
               onClick={() => onOpenChange(false)}
-              className="rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text-dim"
+              
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={dirty === 0 || saving}
               onClick={save}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
+              
             >
               {saving ? 'Saving…' : 'Save matrix'}
-            </button>
+            </Button>
           </div>
         </div>
       }
