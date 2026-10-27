@@ -27,6 +27,8 @@ import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { StepUpAuthDialog } from '@/components/ui/step-up-auth-dialog';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 type SystemSubTab = 'users' | 'tokens' | 'display' | 'reports' | 'audit' | 'profile';
 
@@ -475,26 +477,28 @@ function UsersRbacSubTab() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Username</label>
-            <input
-              type="text"
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              placeholder="jdoe"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Username">
+              <Input
+                type="text"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder="jdoe"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">RBAC Role</label>
-            <select
-              value={newRole}
-              onChange={(e) => setNewRole(e.target.value as 'admin' | 'operator' | 'viewer')}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            >
-              <option value="viewer">Viewer (Read-Only)</option>
-              <option value="operator">Operator (Day-to-Day Ops)</option>
-              <option value="admin">Admin (Full Control)</option>
-            </select>
+            <Field label="RBAC Role">
+              <Select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as 'admin' | 'operator' | 'viewer')}
+               
+              >
+                <option value="viewer">Viewer (Read-Only)</option>
+                <option value="operator">Operator (Day-to-Day Ops)</option>
+                <option value="admin">Admin (Full Control)</option>
+              </Select>
+            </Field>
           </div>
           <p className="text-[11px] leading-relaxed text-text-dim">
             The server generates a temporary password and shows it once after the account is
@@ -951,45 +955,44 @@ function DisplayAndFlowsSubTab() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Display Timezone</label>
-            <input
-              type="text"
-              value={draft.display_timezone ?? 'America/New_York'}
-              onChange={(e) => setDraft((p) => ({ ...p, display_timezone: e.target.value }))}
-              placeholder="America/New_York"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
-            />
+            <Field label="Display Timezone">
+              <input
+                type="text"
+                value={draft.display_timezone ?? 'America/New_York'}
+                onChange={(e) => setDraft((p) => ({ ...p, display_timezone: e.target.value }))}
+                placeholder="America/New_York"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              Health Refresh Interval (15-3600s)
-            </label>
-            <input
-              type="number"
-              min={15}
-              max={3600}
-              value={draft.dashboard_health_refresh_seconds ?? '60'}
-              onChange={(e) =>
-                setDraft((p) => ({ ...p, dashboard_health_refresh_seconds: e.target.value }))
-              }
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
-            />
+            <Field label="Health Refresh Interval (15-3600s)">
+              <input
+                type="number"
+                min={15}
+                max={3600}
+                value={draft.dashboard_health_refresh_seconds ?? '60'}
+                onChange={(e) =>
+                  setDraft((p) => ({ ...p, dashboard_health_refresh_seconds: e.target.value }))
+                }
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
+              />
+            </Field>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              Public Board Refresh (s)
-            </label>
-            <input
-              type="number"
-              min={10}
-              max={3600}
-              value={draft.public_refresh_interval ?? '30'}
-              onChange={(e) => setDraft((p) => ({ ...p, public_refresh_interval: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
-            />
+            <Field label="Public Board Refresh (s)">
+              <input
+                type="number"
+                min={10}
+                max={3600}
+                value={draft.public_refresh_interval ?? '30'}
+                onChange={(e) => setDraft((p) => ({ ...p, public_refresh_interval: e.target.value }))}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
+              />
+            </Field>
           </div>
           <div className="flex flex-col justify-end gap-2">
             <label className="flex items-center gap-2 text-xs text-text">
@@ -1056,16 +1059,15 @@ function DisplayAndFlowsSubTab() {
         </label>
 
         <div>
-          <label className="block text-xs font-medium text-text-dim mb-1">
-            Additional Internal CIDRs (comma or newline separated)
-          </label>
-          <textarea
-            rows={3}
-            value={draft.flow_internal_networks ?? ''}
-            onChange={(e) => setDraft((p) => ({ ...p, flow_internal_networks: e.target.value }))}
-            placeholder="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
-            className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-          />
+          <Field label="Additional Internal CIDRs (comma or newline separated)">
+            <textarea
+              rows={3}
+              value={draft.flow_internal_networks ?? ''}
+              onChange={(e) => setDraft((p) => ({ ...p, flow_internal_networks: e.target.value }))}
+              placeholder="10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16"
+              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+            />
+          </Field>
         </div>
 
         <div className="pt-3 border-t border-border flex items-center justify-between">
@@ -1293,39 +1295,40 @@ function EmailReportsSubTab() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Report Timezone</label>
-            <input
-              type="text"
-              value={draft.report_timezone ?? 'America/New_York'}
-              onChange={(e) => setDraft((p) => ({ ...p, report_timezone: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-            />
+            <Field label="Report Timezone">
+              <Input mono
+                type="text"
+                value={draft.report_timezone ?? 'America/New_York'}
+                onChange={(e) => setDraft((p) => ({ ...p, report_timezone: e.target.value }))}
+               
+              />
+            </Field>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Email Theme</label>
-            <select
-              value={draft.report_email_theme ?? 'dark'}
-              onChange={(e) => setDraft((p) => ({ ...p, report_email_theme: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            >
-              <option value="dark">Dark NOC Theme</option>
-              <option value="light">Light Theme</option>
-            </select>
+            <Field label="Email Theme">
+              <Select
+                value={draft.report_email_theme ?? 'dark'}
+                onChange={(e) => setDraft((p) => ({ ...p, report_email_theme: e.target.value }))}
+               
+              >
+                <option value="dark">Dark NOC Theme</option>
+                <option value="light">Light Theme</option>
+              </Select>
+            </Field>
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-text-dim mb-1">
-            Report Recipients (comma-separated emails)
-          </label>
-          <input
-            type="text"
-            value={draft.report_recipients ?? ''}
-            onChange={(e) => setDraft((p) => ({ ...p, report_recipients: e.target.value }))}
-            placeholder="noc-leads@example.com, ciso@example.com"
-            className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-          />
+          <Field label="Report Recipients (comma-separated emails)">
+            <Input mono
+              type="text"
+              value={draft.report_recipients ?? ''}
+              onChange={(e) => setDraft((p) => ({ ...p, report_recipients: e.target.value }))}
+              placeholder="noc-leads@example.com, ciso@example.com"
+             
+            />
+          </Field>
         </div>
       </div>
 
@@ -1684,40 +1687,44 @@ function MyProfileSubTab() {
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Username</label>
-              <input
-                type="text"
-                disabled
-                value={me?.username ?? 'admin'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text-dim"
-              />
+              <Field label="Username">
+                <input
+                  type="text"
+                  disabled
+                  value={me?.username ?? 'admin'}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text-dim"
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Assigned Role</label>
-              <input
-                type="text"
-                disabled
-                value={(me?.role ?? 'admin').toUpperCase()}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-accent"
-              />
+              <Field label="Assigned Role">
+                <input
+                  type="text"
+                  disabled
+                  value={(me?.role ?? 'admin').toUpperCase()}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-accent"
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Display Name</label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
-              />
+              <Field label="Display Name">
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
-              />
+              <Field label="Email">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-text"
+                />
+              </Field>
             </div>
           </div>
           <div className="flex justify-end">
@@ -1736,22 +1743,24 @@ function MyProfileSubTab() {
           <h2 className="text-sm font-semibold text-text">Rotate Password</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Current Password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
-              />
+              <Field label="Current Password">
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
-              />
+              <Field label="New Password">
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text"
+                />
+              </Field>
             </div>
           </div>
           <div className="flex justify-end">

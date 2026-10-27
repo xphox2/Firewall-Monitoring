@@ -15,14 +15,37 @@ export function linkState(status: string | null | undefined): LinkState {
   return 'unknown';
 }
 
-export function linkColour(status: string | null | undefined): string {
+/**
+ * The three link colours.
+ *
+ * The map resolves these from the theme's CSS variables and passes them in,
+ * because a hardcoded green is a DARK-theme colour: in light mode the link
+ * would be a dark green on a white card.
+ */
+export interface LinkPalette {
+  up: string;
+  down: string;
+  unknown: string;
+}
+
+/** The fallback palette, used when the DOM cannot be read. */
+export const DEFAULT_LINK_PALETTE: LinkPalette = {
+  up: '#4ade80',
+  down: '#f87171',
+  unknown: '#94a3b8',
+};
+
+export function linkColour(
+  status: string | null | undefined,
+  palette: LinkPalette = DEFAULT_LINK_PALETTE,
+): string {
   switch (linkState(status)) {
     case 'up':
-      return '#4ade80';
+      return palette.up;
     case 'down':
-      return '#f87171';
+      return palette.down;
     default:
-      return '#94a3b8';
+      return palette.unknown;
   }
 }
 

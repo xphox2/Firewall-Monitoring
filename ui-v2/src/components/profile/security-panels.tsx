@@ -10,6 +10,7 @@ import {
   encodeRegistrationCredential,
   passkeysSupported,
 } from '@/lib/webauthn';
+import { Input } from '@/components/ui/input';
 
 interface PasskeyEntry {
   id: number;
@@ -215,12 +216,12 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
           <div className="space-y-3">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Current password</span>
-              <input
+              <Input mono
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+               
               />
             </label>
             <button
@@ -336,12 +337,12 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Password</span>
-            <input
+            <Input mono
               type="password"
               value={disablePassword}
               onChange={(e) => setDisablePassword(e.target.value)}
               autoComplete="current-password"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+             
             />
           </label>
           <label className="block">
@@ -560,23 +561,23 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Passkey name</span>
-            <input
+            <Input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="MacBook Touch ID"
               maxLength={64}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Password</span>
-            <input
+            <Input mono
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+             
             />
           </label>
           {me?.totp_enabled && (
@@ -620,12 +621,12 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Passkey name</span>
-            <input
+            <Input
               type="text"
               value={renameName}
               onChange={(e) => setRenameName(e.target.value)}
               maxLength={64}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             />
           </label>
           <button
@@ -655,12 +656,12 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Password</span>
-            <input
+            <Input mono
               type="password"
               value={removePassword}
               onChange={(e) => setRemovePassword(e.target.value)}
               autoComplete="current-password"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+             
             />
           </label>
           {me?.totp_enabled && (

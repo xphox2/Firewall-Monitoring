@@ -600,7 +600,7 @@ export function ConnectionTraffic({
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load connection traffic.
         </div>
       ) : (
@@ -609,8 +609,8 @@ export function ConnectionTraffic({
             title={`Connection throughput — ${range}`}
             timestamps={chart.timestamps}
             series={[
-              { label: 'Inbound', color: '#7DD3FC', values: chart.inbound },
-              { label: 'Outbound', color: '#FCD34D', values: chart.outbound },
+              { label: 'Inbound', color: 'var(--fwmon-series-1)', values: chart.inbound },
+              { label: 'Outbound', color: 'var(--fwmon-series-3)', values: chart.outbound },
             ]}
             kind="bps"
             isLoading={isLoading}

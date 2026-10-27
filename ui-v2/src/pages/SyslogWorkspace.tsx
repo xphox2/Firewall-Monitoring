@@ -11,6 +11,7 @@ import { SkeletonValue } from '@/components/ui/skeleton';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
+import { Select } from '@/components/ui/input';
 
 interface SyslogRow {
   id: number;
@@ -218,7 +219,7 @@ export function SyslogWorkspace() {
       </div>
 
       {statsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load syslog statistics.
         </div>
       )}
@@ -228,7 +229,7 @@ export function SyslogWorkspace() {
           <TimeSeriesChart
             title={`Syslog volume — ${range}`}
             timestamps={chart.timestamps}
-            series={[{ label: 'Messages', color: '#7DD3FC', values: chart.values }]}
+            series={[{ label: 'Messages', color: 'var(--fwmon-series-1)', values: chart.values }]}
             kind="count"
             emptyMessage="No syslog messages in this window."
           />
@@ -247,11 +248,11 @@ export function SyslogWorkspace() {
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <select
+        <Select className="px-2.5 py-1"
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
           aria-label="Filter by syslog severity"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All Severities (0-7)</option>
           {Object.entries(SEVERITY_NAMES).map(([k, v]) => (
@@ -259,7 +260,7 @@ export function SyslogWorkspace() {
               {v.label}
             </option>
           ))}
-        </select>
+        </Select>
 
         <div className="relative flex-1 min-w-[200px]">
           <Search className="h-3.5 w-3.5 text-text-faint absolute left-2.5 top-1/2 -translate-y-1/2" />

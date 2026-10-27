@@ -11,6 +11,7 @@ import { BarList } from '@/components/ui/bar-list';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
+import { Select } from '@/components/ui/input';
 
 interface TrapRow {
   id: number;
@@ -201,7 +202,7 @@ export function TrapsWorkspace() {
       </div>
 
       {statsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load trap statistics.
         </div>
       )}
@@ -211,7 +212,7 @@ export function TrapsWorkspace() {
           <TimeSeriesChart
             title={`Trap volume — ${range}`}
             timestamps={chart.timestamps}
-            series={[{ label: 'Traps', color: '#FCD34D', values: chart.values }]}
+            series={[{ label: 'Traps', color: 'var(--fwmon-series-3)', values: chart.values }]}
             kind="count"
             emptyMessage="No traps in this window."
           />
@@ -234,11 +235,11 @@ export function TrapsWorkspace() {
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
         <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <select
+        <Select className="px-2.5 py-1"
           value={severityFilter}
           onChange={(e) => setSeverityFilter(e.target.value)}
           aria-label="Filter by trap severity"
-          className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+         
         >
           <option value="">All severities</option>
           {severityOptions.map((value) => (
@@ -246,7 +247,7 @@ export function TrapsWorkspace() {
               {value}
             </option>
           ))}
-        </select>
+        </Select>
         <button
           type="button"
           onClick={() => setSeverityFilter('')}

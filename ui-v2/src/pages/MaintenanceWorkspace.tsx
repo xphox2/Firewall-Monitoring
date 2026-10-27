@@ -16,6 +16,8 @@ import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select, Textarea } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 interface MaintenanceWindow {
   id: number;
@@ -472,33 +474,36 @@ export function MaintenanceWorkspace() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Window Name</label>
-            <input
-              type="text"
-              value={editing.name ?? ''}
-              onChange={(e) => setEditing((p) => ({ ...p, name: e.target.value }))}
-              placeholder="FortiOS 7.4 Patch Window"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-            />
+            <Field label="Window Name">
+              <Input
+                type="text"
+                value={editing.name ?? ''}
+                onChange={(e) => setEditing((p) => ({ ...p, name: e.target.value }))}
+                placeholder="FortiOS 7.4 Patch Window"
+               
+              />
+            </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Start Time</label>
-              <input
-                type="datetime-local"
-                value={editing.start_time ?? ''}
-                onChange={(e) => setEditing((p) => ({ ...p, start_time: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="Start Time">
+                <Input mono
+                  type="datetime-local"
+                  value={editing.start_time ?? ''}
+                  onChange={(e) => setEditing((p) => ({ ...p, start_time: e.target.value }))}
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">End Time</label>
-              <input
-                type="datetime-local"
-                value={editing.end_time ?? ''}
-                onChange={(e) => setEditing((p) => ({ ...p, end_time: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="End Time">
+                <Input mono
+                  type="datetime-local"
+                  value={editing.end_time ?? ''}
+                  onChange={(e) => setEditing((p) => ({ ...p, end_time: e.target.value }))}
+                 
+                />
+              </Field>
             </div>
           </div>
 
@@ -522,19 +527,20 @@ export function MaintenanceWorkspace() {
             {editing.recurring && (
               <>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-text-dim">Frequency</label>
-                  <select
-                    value={editing.recur_rule || 'weekly'}
-                    onChange={(e) => setEditing((p) => ({ ...p, recur_rule: e.target.value }))}
-                    aria-label="Repeat frequency"
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                  >
-                    {RECUR_RULES.map((rule) => (
-                      <option key={rule.value} value={rule.value}>
-                        {rule.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Field label="Frequency">
+                    <Select
+                      value={editing.recur_rule || 'weekly'}
+                      onChange={(e) => setEditing((p) => ({ ...p, recur_rule: e.target.value }))}
+                      aria-label="Repeat frequency"
+                     
+                    >
+                      {RECUR_RULES.map((rule) => (
+                        <option key={rule.value} value={rule.value}>
+                          {rule.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
                 </div>
                 {(editing.recur_rule || 'weekly') === 'weekly' && (
                   <div>
@@ -574,13 +580,14 @@ export function MaintenanceWorkspace() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Notes / Ticket Reference</label>
-            <textarea
-              rows={3}
-              value={editing.notes ?? editing.description ?? ''}
-              onChange={(e) => setEditing((p) => ({ ...p, notes: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel p-2.5 text-xs text-text"
-            />
+            <Field label="Notes / Ticket Reference">
+              <Textarea className="p-2.5"
+                rows={3}
+                value={editing.notes ?? editing.description ?? ''}
+                onChange={(e) => setEditing((p) => ({ ...p, notes: e.target.value }))}
+               
+              />
+            </Field>
           </div>
           <div className="space-y-2">
             <span className="block text-xs font-medium text-text-dim">Scope</span>
@@ -604,7 +611,7 @@ export function MaintenanceWorkspace() {
               ))}
             </div>
             {scopeMode === 'device' && (
-              <select
+              <Select
                 value={editing.device_id ?? ''}
                 onChange={(e) =>
                   setEditing((p) => ({
@@ -613,7 +620,7 @@ export function MaintenanceWorkspace() {
                   }))
                 }
                 aria-label="Maintenance window device"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 <option value="">Select a device…</option>
                 {devices.map((d) => (
@@ -621,10 +628,10 @@ export function MaintenanceWorkspace() {
                     {d.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
             {scopeMode === 'site' && (
-              <select
+              <Select
                 value={editing.site_id ?? ''}
                 onChange={(e) =>
                   setEditing((p) => ({
@@ -633,7 +640,7 @@ export function MaintenanceWorkspace() {
                   }))
                 }
                 aria-label="Maintenance window site"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 <option value="">Select a site…</option>
                 {sites.map((site) => (
@@ -641,7 +648,7 @@ export function MaintenanceWorkspace() {
                     {site.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
           </div>
 

@@ -1,6 +1,148 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.451] - 2026-10-26
+
+### Fixed — The console was not usable with a keyboard or a screen reader
+
+The V2 console had been written without an accessibility pass. This is the
+debt that pass cleared.
+
+- **Every control now has a visible focus indicator.** Safari draws **no**
+  focus ring on a `<button>` or an `<input>` unless the author provides one,
+  so a keyboard user in Safari had no way to see where the focus was. The
+  shared button and input primitives carry one, and a single global
+  `:focus-visible` rule gives one to every control that was not migrated.
+  - The global rule is **unlayered on purpose**. The console's controls
+    carry `focus:outline-hidden` in the utilities layer, and a rule inside
+    a layer loses to a later layer — so a `:focus-visible` rule inside
+    `@layer base` would be defeated by the very utility it replaces.
+  - It sets **no `outline-offset`**. The offset is not part of the
+    `outline` shorthand, so leaving it out lets each control choose: the
+    shared primitives set `+2px`, and the table row sets `-2px`, because
+    the desktop table sits in an `overflow-hidden` container and an
+    outside ring would be clipped. A global offset would override both.
+  - The subtlety: `focus:outline-hidden` sets `--tw-outline-style: none`
+    and `focus-visible:outline-2` reads that variable, so the two together
+    cancel out and the ring never appears. The ring needs the explicit
+    `focus-visible:outline-solid` as well, and it has to come after the
+    hidden rule in the cascade.
+- **Every label is now associated with its control.** 71 `<label>`
+  elements had no `htmlFor` and did not wrap their control, and 103 more
+  used a `<span>` as a pseudo-label — which is not a label at all, so it
+  never associated with anything. A screen reader announced the text, and
+  then the control with no name at all.
+  - The fix is to **wrap** the control in the label, so the association is
+    implicit. That matters: a hand-written `id`/`htmlFor` pair collides the
+    moment the same form is rendered twice on a page — which happens here,
+    because several drawers can be open at once — and a generated id cannot
+    be produced inside a `.map()` without extracting a component.
+- **Every failed load is now announced.** Fifteen async error surfaces
+  replaced their content with a "Could not load …" block and had no
+  `role="alert"`, so a blind operator saw nothing at all — only a blank
+  panel, with no way to know the data was missing rather than empty.
+- **The table sort is a real button.** It used to be an `onClick` on the
+  `<th>`: mouse-only, with no accessible name, and no sort state exposed.
+  It is now a `<button>` inside a `<th scope="col">`, with `aria-sort` on
+  the header, and the mobile card rows are focusable and respond to Enter
+  and Space.
+- **The mobile navigation is a real dialog.** It was hand-rolled: no
+  `role="dialog"`, no `aria-modal`, no focus trap, no Escape, no scroll
+  lock — the page behind it stayed scrollable and the keyboard walked
+  straight out of the menu. It is now the shared drawer, docked to the
+  left so it still reads as a menu opening from the side.
+- **The tab strips follow the ARIA tabs pattern.** They had `role="tablist"`
+  and `role="tab"` but no `role="tabpanel"`, no `aria-controls`, no roving
+  tabindex and no arrow-key handling: the strip could only be reached with
+  the mouse. Now the tabs are wired to the panel, only the selected tab is
+  in the tab order, and Arrow, Home and End move between them. It is the
+  **single-panel** variant: every tab points at the one panel, and the
+  panel is named by the selected tab — pointing each tab at a panel of its
+  own would leave the inactive tabs pointing at elements that are not in
+  the DOM.
+- **A confirm dialog no longer loses the focus.** It prevented Radix's
+  autofocus without moving the focus itself, so the focus stayed on the
+  trigger — which Radix had just marked `aria-hidden`. A keyboard user was
+  left on a hidden element with the screen reader's cursor nowhere. The
+  panel is now focusable and takes the focus explicitly, which keeps the
+  original intent: Enter cannot confirm a destructive action by reflex.
+- **A switch with no name now has one.** The email toggle's `<span>` was a
+  sibling of the button, not a label for it, and a wrapping `<label>` does
+  not name a `<button>` — so the control was announced as an unnamed
+  switch.
+
+### Added — The shared primitives
+
+The console had 274 raw `<button>` elements, 183 raw `<input>` elements and
+135 copies of the same label class string, all with hand-inlined Tailwind.
+A change to the button's look meant finding every one of them.
+
+- **`Button`, `Input`, `Select`, `Textarea` and `Field`** now carry the
+  shared shape, the shared focus ring and the shared disabled state.
+- **`Field` is the labelled control.** It wraps the control, so the
+  association is implicit and there is no id to collide. Its hint and
+  error **describe** the control rather than joining its name — inside the
+  label they would be folded into the accessible name, so a field would be
+  announced as "Auth Password Required for SNMPv3 with an auth protocol",
+  a description smuggled into the name.
+- The duplicated class strings were migrated at the top call sites: **70**
+  labels, **128** inputs and selects, and the confirm dialog.
+
+### Fixed — The topology map was permanently dark
+
+- The graph had **sixteen hardcoded dark-theme colours** and the
+  Cytoscape instance was created once, so in light mode it rendered
+  dark-theme colours on a white card and never corrected itself. Every
+  colour is now a theme token, and the stylesheet is re-applied when the
+  theme changes — the graph is restyled, not rebuilt, so the pan and zoom
+  survive a theme toggle.
+- **The chart series colours now use the tokens that already existed for
+  exactly that purpose.** The theme defines eight series colours
+  (`--fwmon-series-1..8`) and the charts ignored them in favour of
+  hardcoded hex, so a chart looked the same in both themes and the tokens
+  were dead. The canvas cannot resolve a `var()`, so the chart resolves it
+  — and it already re-read the variables on a theme change, so the canvas
+  follows the theme too.
+
+### Fixed — Six tables scroll sideways on a phone
+
+Six tables were raw `<table>` elements in a horizontal scroller, so a phone
+got a sideways scroll — and no keyboard sorting, no consistent empty state
+and no consistent loading state. They now use the shared data view, which
+gives them a mobile card layout:
+
+- the two alerting tables (the scoped overrides and the event rules);
+- the four storage tables (the syslog severity retention, the archived
+  telemetry streams, the archive restore jobs and the parked chunks).
+
+The editable retention matrix is deliberately left alone: its control has
+to be carried into the mobile card, which is a larger change than this
+one.
+
+### Added — Guardrails for the class of bug above
+
+Nine new tests, each verified to fail against the pre-change code:
+
+- every `<label>` is associated with its control, and no `<span>` is used
+  as a pseudo-label;
+- every load failure carries `role="alert"` — on the element that
+  **contains** the message, because a sibling's role would announce the
+  wrong thing;
+- the table sort is a real button, with `aria-sort`, and the mobile card
+  rows are keyboard-operable;
+- the mobile navigation is the shared drawer, and the drawer is a Radix
+  dialog;
+- the tab strips have the panel role, the wiring, the roving tabindex and
+  the arrow keys;
+- the focus ring survives — the check knows that
+  `focus:outline-hidden` and `focus-visible:outline-2` cancel each other
+  out, and it scans **every** file, because a hand-written class string is
+  exactly how the combination got back in;
+- the global `:focus-visible` baseline exists, so the controls that were
+  not migrated are not left with no focus indicator at all;
+- the map's colours are resolved from the theme and re-applied when it
+  changes, and no chart carries a hardcoded series colour.
+
 ## [0.11.450] - 2026-10-26
 
 ### Added — The V2 console can finally author an IPSec tunnel

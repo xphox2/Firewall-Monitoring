@@ -31,6 +31,24 @@ function cssVar(name: string, fallback: string): string {
 }
 
 /**
+ * Resolve a colour that may be a CSS-variable reference.
+ *
+ * A series colour can be written as `var(--fwmon-series-1)` instead of a
+ * hardcoded hex. The canvas cannot resolve a `var()`, so it is resolved
+ * here — and this component already re-reads the variables when the theme
+ * changes, so the canvas follows the theme too.
+ *
+ * The theme defines eight series colours for exactly this purpose
+ * (`--fwmon-series-1..8`), and the charts were ignoring them in favour of
+ * hardcoded hex values, so a chart looked the same in both themes.
+ */
+function resolveColour(value: string, fallback: string): string {
+  const match = /^var\(\s*(--[\w-]+)\s*\)$/.exec(String(value ?? '').trim());
+  if (!match) return value;
+  return cssVar(match[1], fallback);
+}
+
+/**
  * uPlot wrapper used by every V2 time-series chart. The classic console uses
  * uPlot too, so the axis/grid palette and interaction model stay identical
  * without adding a second charting engine to the bundle.
@@ -109,7 +127,7 @@ export function TimeSeriesChart({
             {},
             ...series.map((s) => ({
               label: s.label,
-              stroke: s.color,
+              stroke: resolveColour(s.color, '#4c8dff'),
               width: 1.5,
               points: { show: false },
               spanGaps,
@@ -159,7 +177,7 @@ export function TimeSeriesChart({
                 <span key={s.label} className="inline-flex items-center gap-1.5 text-[11px] text-text-dim">
                   <span
                     className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: s.color }}
+                    style={{ backgroundColor: resolveColour(s.color, '#4c8dff') }}
                     aria-hidden="true"
                   />
                   {s.label}

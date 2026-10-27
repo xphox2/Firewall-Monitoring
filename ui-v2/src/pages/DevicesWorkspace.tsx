@@ -57,6 +57,8 @@ import { PurgeDeviceDialog, type PurgeJob } from '@/components/devices/purge-dev
 import { AlertConfigDrawer } from '@/components/devices/alert-config-drawer';
 import { PublicInterfaceToggle } from '@/components/devices/public-interface-toggle';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 export interface DeviceRecord {
   id: number;
@@ -587,99 +589,105 @@ function DeviceInventoryView() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Device Name / Hostname</label>
-                <input
-                  type="text"
-                  value={editingDevice.name ?? ''}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="fw-dc1-edge01"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                />
+                <Field label="Device Name / Hostname">
+                  <Input
+                    type="text"
+                    value={editingDevice.name ?? ''}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="fw-dc1-edge01"
+                   
+                  />
+                </Field>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Management IP Address</label>
-                <input
-                  type="text"
-                  value={editingDevice.ip_address ?? ''}
-                  onChange={(e) => setEditingDevice((p) => ({ ...prevIp(p, e.target.value) }))}
-                  placeholder="10.0.1.1"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                />
+                <Field label="Management IP Address">
+                  <Input mono
+                    type="text"
+                    value={editingDevice.ip_address ?? ''}
+                    onChange={(e) => setEditingDevice((p) => ({ ...prevIp(p, e.target.value) }))}
+                    placeholder="10.0.1.1"
+                   
+                  />
+                </Field>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Vendor Profile</label>
-                <select
-                  value={editingDevice.vendor ?? 'generic'}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, vendor: e.target.value }))}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                >
-                  <option value="generic">Generic / Auto-Detect (RFC1213)</option>
-                  <option value="fortigate">Fortinet FortiGate</option>
-                  <option value="paloalto">Palo Alto PAN-OS</option>
-                  <option value="cisco_asa">Cisco ASA / Firepower</option>
-                  <option value="pfsense">pfSense</option>
-                  <option value="opnsense">OPNsense</option>
-                  <option value="vyos">VyOS</option>
-                  <option value="juniper_srx">Juniper SRX</option>
-                  <option value="sonicwall">SonicWall</option>
-                  <option value="checkpoint">Check Point</option>
-                </select>
+                <Field label="Vendor Profile">
+                  <Select
+                    value={editingDevice.vendor ?? 'generic'}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, vendor: e.target.value }))}
+                   
+                  >
+                    <option value="generic">Generic / Auto-Detect (RFC1213)</option>
+                    <option value="fortigate">Fortinet FortiGate</option>
+                    <option value="paloalto">Palo Alto PAN-OS</option>
+                    <option value="cisco_asa">Cisco ASA / Firepower</option>
+                    <option value="pfsense">pfSense</option>
+                    <option value="opnsense">OPNsense</option>
+                    <option value="vyos">VyOS</option>
+                    <option value="juniper_srx">Juniper SRX</option>
+                    <option value="sonicwall">SonicWall</option>
+                    <option value="checkpoint">Check Point</option>
+                  </Select>
+                </Field>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Site Assignment</label>
-                <select
-                  value={editingDevice.site_id ?? ''}
-                  onChange={(e) =>
-                    setEditingDevice((p) => ({
-                      ...p,
-                      site_id: e.target.value ? Number(e.target.value) : null,
-                    }))
-                  }
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                >
-                  <option value="">Unassigned (Global)</option>
-                  {(sitesList ?? []).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                <Field label="Site Assignment">
+                  <Select
+                    value={editingDevice.site_id ?? ''}
+                    onChange={(e) =>
+                      setEditingDevice((p) => ({
+                        ...p,
+                        site_id: e.target.value ? Number(e.target.value) : null,
+                      }))
+                    }
+                   
+                  >
+                    <option value="">Unassigned (Global)</option>
+                    {(sitesList ?? []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Collector Probe</label>
-                <select
-                  value={editingDevice.probe_id ?? ''}
-                  onChange={(e) =>
-                    setEditingDevice((p) => ({
-                      ...p,
-                      probe_id: e.target.value ? Number(e.target.value) : null,
-                    }))
-                  }
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                >
-                  <option value="">Direct (Primary Server)</option>
-                  {(probesList ?? []).map((pr) => (
-                    <option key={pr.id} value={pr.id}>
-                      {pr.name}
-                    </option>
-                  ))}
-                </select>
+                <Field label="Collector Probe">
+                  <Select
+                    value={editingDevice.probe_id ?? ''}
+                    onChange={(e) =>
+                      setEditingDevice((p) => ({
+                        ...p,
+                        probe_id: e.target.value ? Number(e.target.value) : null,
+                      }))
+                    }
+                   
+                  >
+                    <option value="">Direct (Primary Server)</option>
+                    {(probesList ?? []).map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">Location</label>
-                <input
-                  type="text"
-                  value={editingDevice.location ?? ''}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, location: e.target.value }))}
-                  placeholder="e.g. DC1 Rack 12"
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                />
+                <Field label="Location">
+                  <Input
+                    type="text"
+                    value={editingDevice.location ?? ''}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, location: e.target.value }))}
+                    placeholder="e.g. DC1 Rack 12"
+                   
+                  />
+                </Field>
               </div>
             </div>
 
@@ -731,71 +739,73 @@ function DeviceInventoryView() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">SNMP Version</label>
-                <select
-                  value={editingDevice.snmp_version ?? '2c'}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, snmp_version: e.target.value }))}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                >
-                  <option value="2c">SNMP v2c</option>
-                  <option value="3">SNMP v3 (AuthPriv)</option>
-                </select>
+                <Field label="SNMP Version">
+                  <Select
+                    value={editingDevice.snmp_version ?? '2c'}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, snmp_version: e.target.value }))}
+                   
+                  >
+                    <option value="2c">SNMP v2c</option>
+                    <option value="3">SNMP v3 (AuthPriv)</option>
+                  </Select>
+                </Field>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">SNMP UDP Port</label>
-                <input
-                  type="number"
-                  value={editingDevice.snmp_port ?? 161}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, snmp_port: Number(e.target.value) }))}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                />
+                <Field label="SNMP UDP Port">
+                  <Input mono
+                    type="number"
+                    value={editingDevice.snmp_port ?? 161}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, snmp_port: Number(e.target.value) }))}
+                   
+                  />
+                </Field>
               </div>
             </div>
 
             {editingDevice.snmp_version !== '3' && editingDevice.snmp_version !== 'v3' ? (
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">
-                  SNMP v2c Community String
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type={revealedSecrets.snmp_community ? 'text' : 'password'}
-                    value={revealedSecrets.snmp_community ?? editingDevice.snmp_community ?? ''}
-                    onChange={(e) =>
-                      setEditingDevice((p) => ({ ...p, snmp_community: e.target.value }))
-                    }
-                    placeholder="Leave ******** to keep existing community"
-                    className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                  />
-                  {editingDevice.id && (
-                    <button
-                      type="button"
-                      onClick={() => setRevealField('snmp_community')}
-                      disabled={!isAdmin}
-                      title={
-                        isAdmin
-                          ? 'Reveal the stored value (requires admin password verification)'
-                          : 'Admin only — revealing a stored credential is an admin action'
+                <Field label="SNMP v2c Community String">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type={revealedSecrets.snmp_community ? 'text' : 'password'}
+                      value={revealedSecrets.snmp_community ?? editingDevice.snmp_community ?? ''}
+                      onChange={(e) =>
+                        setEditingDevice((p) => ({ ...p, snmp_community: e.target.value }))
                       }
-                      className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Eye className="h-3.5 w-3.5" /> Reveal
-                    </button>
-                  )}
-                </div>
+                      placeholder="Leave ******** to keep existing community"
+                      className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+                    />
+                    {editingDevice.id && (
+                      <button
+                        type="button"
+                        onClick={() => setRevealField('snmp_community')}
+                        disabled={!isAdmin}
+                        title={
+                          isAdmin
+                            ? 'Reveal the stored value (requires admin password verification)'
+                            : 'Admin only — revealing a stored credential is an admin action'
+                        }
+                        className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Reveal
+                      </button>
+                    )}
+                  </div>
+                </Field>
               </div>
             ) : (
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-text-dim mb-1">SNMPv3 Username</label>
-                  <input
-                    type="text"
-                    value={editingDevice.snmpv3_username ?? ''}
-                    onChange={(e) =>
-                      setEditingDevice((p) => ({ ...p, snmpv3_username: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                  />
+                  <Field label="SNMPv3 Username">
+                    <Input mono
+                      type="text"
+                      value={editingDevice.snmpv3_username ?? ''}
+                      onChange={(e) =>
+                        setEditingDevice((p) => ({ ...p, snmpv3_username: e.target.value }))
+                      }
+                     
+                    />
+                  </Field>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <DeviceSecretField
@@ -825,32 +835,34 @@ function DeviceInventoryView() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-text-dim mb-1">Auth Protocol</label>
-                    <select
-                      value={editingDevice.snmpv3_auth_type ?? 'SHA'}
-                      onChange={(e) =>
-                        setEditingDevice((p) => ({ ...p, snmpv3_auth_type: e.target.value }))
-                      }
-                      className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                    >
-                      <option value="SHA">SHA-1</option>
-                      <option value="SHA256">SHA-256</option>
-                      <option value="MD5">MD5</option>
-                    </select>
+                    <Field label="Auth Protocol">
+                      <Select
+                        value={editingDevice.snmpv3_auth_type ?? 'SHA'}
+                        onChange={(e) =>
+                          setEditingDevice((p) => ({ ...p, snmpv3_auth_type: e.target.value }))
+                        }
+                       
+                      >
+                        <option value="SHA">SHA-1</option>
+                        <option value="SHA256">SHA-256</option>
+                        <option value="MD5">MD5</option>
+                      </Select>
+                    </Field>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-text-dim mb-1">Priv Protocol</label>
-                    <select
-                      value={editingDevice.snmpv3_priv_type ?? 'AES'}
-                      onChange={(e) =>
-                        setEditingDevice((p) => ({ ...p, snmpv3_priv_type: e.target.value }))
-                      }
-                      className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-                    >
-                      <option value="AES">AES-128</option>
-                      <option value="AES256">AES-256</option>
-                      <option value="DES">DES</option>
-                    </select>
+                    <Field label="Priv Protocol">
+                      <Select
+                        value={editingDevice.snmpv3_priv_type ?? 'AES'}
+                        onChange={(e) =>
+                          setEditingDevice((p) => ({ ...p, snmpv3_priv_type: e.target.value }))
+                        }
+                       
+                      >
+                        <option value="AES">AES-128</option>
+                        <option value="AES256">AES-256</option>
+                        <option value="DES">DES</option>
+                      </Select>
+                    </Field>
                   </div>
                 </div>
               </div>
@@ -872,22 +884,24 @@ function DeviceInventoryView() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">SSH Username</label>
-                <input
-                  type="text"
-                  value={editingDevice.ssh_username ?? ''}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, ssh_username: e.target.value }))}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                />
+                <Field label="SSH Username">
+                  <Input mono
+                    type="text"
+                    value={editingDevice.ssh_username ?? ''}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, ssh_username: e.target.value }))}
+                   
+                  />
+                </Field>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">SSH Port</label>
-                <input
-                  type="number"
-                  value={editingDevice.ssh_port ?? 22}
-                  onChange={(e) => setEditingDevice((p) => ({ ...p, ssh_port: Number(e.target.value) }))}
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                />
+                <Field label="SSH Port">
+                  <Input mono
+                    type="number"
+                    value={editingDevice.ssh_port ?? 22}
+                    onChange={(e) => setEditingDevice((p) => ({ ...p, ssh_port: Number(e.target.value) }))}
+                   
+                  />
+                </Field>
               </div>
             </div>
 
@@ -903,18 +917,17 @@ function DeviceInventoryView() {
                 hint="Used for the configuration backup and the IPSec provisioning path."
               />
               <div>
-                <label className="block text-xs font-medium text-text-dim mb-1">
-                  SSH Poll Interval (seconds)
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={editingDevice.ssh_poll_interval ?? 900}
-                  onChange={(e) =>
-                    setEditingDevice((p) => ({ ...p, ssh_poll_interval: Number(e.target.value) }))
-                  }
-                  className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                />
+                <Field label="SSH Poll Interval (seconds)">
+                  <Input mono
+                    type="number"
+                    min={0}
+                    value={editingDevice.ssh_poll_interval ?? 900}
+                    onChange={(e) =>
+                      setEditingDevice((p) => ({ ...p, ssh_poll_interval: Number(e.target.value) }))
+                    }
+                   
+                  />
+                </Field>
                 <p className="mt-1 text-[10px] text-text-faint">
                   0 disables the interval. The server default is 900.
                 </p>
@@ -933,13 +946,14 @@ function DeviceInventoryView() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-text-dim mb-1">API Port</label>
-                  <input
-                    type="number"
-                    value={editingDevice.api_port ?? 443}
-                    onChange={(e) => setEditingDevice((p) => ({ ...p, api_port: Number(e.target.value) }))}
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                  />
+                  <Field label="API Port">
+                    <Input mono
+                      type="number"
+                      value={editingDevice.api_port ?? 443}
+                      onChange={(e) => setEditingDevice((p) => ({ ...p, api_port: Number(e.target.value) }))}
+                     
+                    />
+                  </Field>
                 </div>
                 <DeviceSecretField
                   label="API Token"
@@ -1229,32 +1243,33 @@ function DeviceSecretField({
   const masked = !revealed && stored === SECRET_MASK;
   return (
     <div>
-      <label className="block text-xs font-medium text-text-dim mb-1">{label}</label>
-      <div className="flex items-center gap-2">
-        <input
-          type={revealed ? 'text' : 'password'}
-          value={revealed ?? (typeof stored === 'string' ? stored : '')}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
-          autoComplete="new-password"
-          className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-        />
-        {editingDevice.id && (
-          <button
-            type="button"
-            onClick={() => onReveal(field)}
-            disabled={!canReveal}
-            title={
-              canReveal
-                ? 'Reveal the stored value (requires admin password verification)'
-                : 'Admin only — revealing a stored credential is an admin action'
-            }
-            className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Eye className="h-3.5 w-3.5" /> Reveal
-          </button>
-        )}
-      </div>
+      <Field label={label}>
+        <div className="flex items-center gap-2">
+          <input
+            type={revealed ? 'text' : 'password'}
+            value={revealed ?? (typeof stored === 'string' ? stored : '')}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
+            autoComplete="new-password"
+            className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
+          />
+          {editingDevice.id && (
+            <button
+              type="button"
+              onClick={() => onReveal(field)}
+              disabled={!canReveal}
+              title={
+                canReveal
+                  ? 'Reveal the stored value (requires admin password verification)'
+                  : 'Admin only — revealing a stored credential is an admin action'
+              }
+              className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Eye className="h-3.5 w-3.5" /> Reveal
+            </button>
+          )}
+        </div>
+      </Field>
       {hint ? <p className="mt-1 text-[10px] text-text-faint">{hint}</p> : null}
     </div>
   );
@@ -1399,15 +1414,15 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
     return {
       timestamps: buckets.map((b: any) => Number(b.bucket_ms) || 0),
       overview: [
-        { label: 'CPU', color: '#7DD3FC', values: pct('cpu_usage') },
-        { label: 'Memory', color: '#C4B5FD', values: pct('memory_usage') },
-        { label: 'Disk', color: '#86EFAC', values: pct('disk_usage') },
+        { label: 'CPU', color: 'var(--fwmon-series-1)', values: pct('cpu_usage') },
+        { label: 'Memory', color: 'var(--fwmon-series-5)', values: pct('memory_usage') },
+        { label: 'Disk', color: 'var(--fwmon-series-4)', values: pct('disk_usage') },
       ] as ChartSeries[],
       // network_*_kbps is kilobits/s; the chart works in bits/s.
       network: [
         {
           label: 'In',
-          color: '#7DD3FC',
+          color: 'var(--fwmon-series-1)',
           values: buckets.map((b: any) => {
             const v = numOrNull(b.network_in_kbps);
             return v == null ? null : v * 1000;
@@ -1415,7 +1430,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         },
         {
           label: 'Out',
-          color: '#FCD34D',
+          color: 'var(--fwmon-series-3)',
           values: buckets.map((b: any) => {
             const v = numOrNull(b.network_out_kbps);
             return v == null ? null : v * 1000;
@@ -1423,13 +1438,13 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         },
       ] as ChartSeries[],
       cpu: [
-        { label: 'User', color: '#7DD3FC', values: pct('cpu_user') },
-        { label: 'System', color: '#FCA5A5', values: pct('cpu_system') },
-        { label: 'Nice', color: '#FCD34D', values: pct('cpu_nice') },
-        { label: 'IOWait', color: '#C4B5FD', values: pct('cpu_iowait') },
-        { label: 'IRQ', color: '#F0ABFC', values: pct('cpu_irq') },
-        { label: 'SoftIRQ', color: '#5EEAD4', values: pct('cpu_softirq') },
-        { label: 'Idle', color: '#6B7280', values: pct('cpu_idle') },
+        { label: 'User', color: 'var(--fwmon-series-1)', values: pct('cpu_user') },
+        { label: 'System', color: 'var(--fwmon-series-2)', values: pct('cpu_system') },
+        { label: 'Nice', color: 'var(--fwmon-series-3)', values: pct('cpu_nice') },
+        { label: 'IOWait', color: 'var(--fwmon-series-5)', values: pct('cpu_iowait') },
+        { label: 'IRQ', color: 'var(--fwmon-series-6)', values: pct('cpu_irq') },
+        { label: 'SoftIRQ', color: 'var(--fwmon-series-8)', values: pct('cpu_softirq') },
+        { label: 'Idle', color: 'var(--fwmon-text-faint)', values: pct('cpu_idle') },
       ] as ChartSeries[],
     };
   }, [buckets]);
@@ -1468,7 +1483,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
       series: [
         {
           label: 'In',
-          color: '#7DD3FC',
+          color: 'var(--fwmon-series-1)',
           values: counterDeltasToBps(
             rows.map((r: any) => numOrNull(r.in_bytes)),
             ts,
@@ -1476,7 +1491,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         },
         {
           label: 'Out',
-          color: '#FCD34D',
+          color: 'var(--fwmon-series-3)',
           values: counterDeltasToBps(
             rows.map((r: any) => numOrNull(r.out_bytes)),
             ts,
@@ -1510,7 +1525,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
       series: [
         {
           label: 'In',
-          color: '#7DD3FC',
+          color: 'var(--fwmon-series-1)',
           values: toBitsPerSecond(
             rows.map((r: any) => numOrNull(r.in_bytes)),
             seconds,
@@ -1518,7 +1533,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
         },
         {
           label: 'Out',
-          color: '#FCD34D',
+          color: 'var(--fwmon-series-3)',
           values: toBitsPerSecond(
             rows.map((r: any) => numOrNull(r.out_bytes)),
             seconds,
@@ -2126,7 +2141,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 {revisionLoading ? (
                   <p className="p-6 text-center text-xs text-text-dim">Loading revision…</p>
                 ) : revisionError ? (
-                  <div className="m-4 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+                  <div className="m-4 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
                     Could not load the revision:{' '}
                     {revisionError instanceof Error ? revisionError.message : 'request failed'}
                   </div>

@@ -200,3 +200,41 @@
 .tabular-nums {
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * The focus ring, applied once.
+ *
+ * Safari draws NO focus ring on a `<button>` or an `<input>` unless the
+ * author provides one, so a keyboard user in Safari had no way to see where
+ * the focus was. Rather than adding the class to several hundred controls,
+ * the ring is set here for every focusable element.
+ *
+ * This rule is UNLAYERED on purpose. The console's controls carry
+ * `focus:outline-hidden` in the utilities layer, and a rule inside a layer
+ * loses to a later layer — so a `:focus-visible` rule inside `@layer base`
+ * would be defeated by the very utility it replaces. An unlayered rule
+ * wins over every layer.
+ *
+ * `:focus-visible` rather than `:focus`, so the ring appears for the
+ * keyboard and not for the mouse.
+ */
+:focus-visible {
+  /*
+   * No `outline-offset` here on purpose. The offset is not part of the
+   * `outline` shorthand, so leaving it out lets each control choose: the
+   * shared primitives set +2px, and the table row sets -2px, because the
+   * desktop table sits in an `overflow-hidden` container and an outside
+   * ring would be clipped. A global offset would override both, since an
+   * unlayered rule wins over every layer.
+   */
+  outline: 2px solid var(--color-accent);
+}
+
+/*
+ * A dialog or drawer panel is focused programmatically, and a ring around
+ * the whole panel is noise — the panel is obviously the context. The
+ * controls INSIDE it keep their rings.
+ */
+[role='dialog']:focus-visible {
+  outline: none;
+}

@@ -123,9 +123,25 @@ export function ResponsiveDataView<TData>({
           <div
             key={row.id}
             onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+            // A clickable card is a control, so it has to be one: role,
+            // focusability and the Enter/Space keys. Without them the card
+            // was mouse-only.
+            role={onRowClick ? 'button' : undefined}
+            tabIndex={onRowClick ? 0 : undefined}
+            onKeyDown={
+              onRowClick
+                ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onRowClick(row.original);
+                    }
+                  }
+                : undefined
+            }
             className={cn(
               'rounded-lg border border-border bg-bg-card p-3.5 transition-colors',
-              onRowClick && 'cursor-pointer hover:border-border-strong active:bg-bg-hover',
+              onRowClick &&
+                'cursor-pointer hover:border-border-strong active:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
             )}
           >
             {renderMobileCard(row.original, idx)}
@@ -155,27 +171,51 @@ export function ResponsiveDataView<TData>({
                     return (
                       <th
                         key={header.id}
+                        scope="col"
+                        // The sort state belongs on the header cell, so a
+                        // screen reader announces it.
+                        aria-sort={
+                          sorted === 'asc'
+                            ? 'ascending'
+                            : sorted === 'desc'
+                              ? 'descending'
+                              : undefined
+                        }
                         className={cn(
                           'px-3.5 py-2.5 select-none whitespace-nowrap',
-                          canSort && 'cursor-pointer hover:text-text',
+                          canSort && 'hover:text-text',
                           hideOnTablet && 'hidden xl:table-cell',
                         )}
-                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
                       >
                         <div className="inline-flex items-center gap-1">
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
-                          {canSort && (
-                            <span className="text-text-mute">
-                              {sorted === 'asc' ? (
-                                <ArrowUp className="h-3 w-3 text-accent" />
-                              ) : sorted === 'desc' ? (
-                                <ArrowDown className="h-3 w-3 text-accent" />
-                              ) : (
-                                <ArrowUpDown className="h-3 w-3 opacity-50" />
-                              )}
-                            </span>
+                          {canSort ? (
+                            // The sort is a real BUTTON: the <th> used to
+                            // carry the click handler, which made it
+                            // mouse-only and gave it no accessible name.
+                            <button
+                              type="button"
+                              onClick={header.column.getToggleSortingHandler()}
+                              className="inline-flex items-center gap-1 rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            >
+                              {header.isPlaceholder
+                                ? null
+                                : flexRender(header.column.columnDef.header, header.getContext())}
+                              <span className="text-text-mute">
+                                {sorted === 'asc' ? (
+                                  <ArrowUp className="h-3 w-3 text-accent" />
+                                ) : sorted === 'desc' ? (
+                                  <ArrowDown className="h-3 w-3 text-accent" />
+                                ) : (
+                                  <ArrowUpDown className="h-3 w-3 opacity-50" />
+                                )}
+                              </span>
+                            </button>
+                          ) : (
+                            <>
+                              {header.isPlaceholder
+                                ? null
+                                : flexRender(header.column.columnDef.header, header.getContext())}
+                            </>
                           )}
                         </div>
                       </th>
@@ -191,9 +231,25 @@ export function ResponsiveDataView<TData>({
                   <React.Fragment key={row.id}>
                     <tr
                       onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                      // The row is operable from the keyboard when it is
+                      // clickable. It keeps its ROW semantics - a `tr` with
+                      // role="button" has no computed accessible name,
+                      // because its content is spread across the cells.
+                      tabIndex={onRowClick ? 0 : undefined}
+                      onKeyDown={
+                        onRowClick
+                          ? (event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                onRowClick(row.original);
+                              }
+                            }
+                          : undefined
+                      }
                       className={cn(
                         'transition-colors hover:bg-bg-hover',
-                        onRowClick && 'cursor-pointer',
+                        onRowClick &&
+                          'cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent',
                       )}
                     >
                       {renderExpandedRow && (

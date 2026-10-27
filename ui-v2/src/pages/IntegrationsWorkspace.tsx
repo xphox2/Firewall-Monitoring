@@ -25,6 +25,8 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Input, Select } from '@/components/ui/input';
+import { Field } from '@/components/ui/field';
 
 type IntegrationsSubTab = 'smtp' | 'webhooks' | 'irc';
 
@@ -310,6 +312,10 @@ function SmtpSubTab() {
             <button
               type="button"
               role="switch"
+              // The switch's own content is an unlabelled knob, and a
+              // wrapping <label> does not name a <button> — so the name has
+              // to be given here.
+              aria-label="Enable Email"
               aria-checked={draft.email_enabled === 'true'}
               onClick={() =>
                 setDraft((prev) => ({
@@ -334,73 +340,83 @@ function SmtpSubTab() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="sm:col-span-2">
-            <label className="block text-xs font-medium text-text-dim mb-1">SMTP Host</label>
-            <input
-              type="text"
-              value={draft.smtp_host ?? ''}
-              onChange={(e) => setDraft((prev) => ({ ...prev, smtp_host: e.target.value }))}
-              placeholder="smtp.example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
+            <Field label="SMTP Host">
+              <Input mono
+                type="text"
+                value={draft.smtp_host ?? ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, smtp_host: e.target.value }))}
+                placeholder="smtp.example.com"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Port</label>
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={draft.smtp_port ?? '587'}
-              onChange={(e) => setDraft((prev) => ({ ...prev, smtp_port: e.target.value }))}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
+            <Field label="Port">
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={draft.smtp_port ?? '587'}
+                onChange={(e) => setDraft((prev) => ({ ...prev, smtp_port: e.target.value }))}
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+              />
+            </Field>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">SMTP Username</label>
-            <input
-              type="text"
-              value={draft.smtp_username ?? ''}
-              onChange={(e) => setDraft((prev) => ({ ...prev, smtp_username: e.target.value }))}
-              placeholder="alerts@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
+            <Field label="SMTP Username">
+              <Input mono
+                type="text"
+                value={draft.smtp_username ?? ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, smtp_username: e.target.value }))}
+                placeholder="alerts@example.com"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              SMTP Password <span className="text-text-faint">(Encrypted at rest)</span>
-            </label>
-            <input
+                        <Field
+              label={
+                <>
+                  SMTP Password <span className="text-text-faint">(Encrypted at rest)</span>
+                </>
+              }
+            >
+            <Input mono
               type="password"
               value={draft.smtp_password ?? ''}
               onChange={(e) => setDraft((prev) => ({ ...prev, smtp_password: e.target.value }))}
               placeholder="Leave ******** to keep stored secret"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+             
             />
+            </Field>
           </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Sender Address (MAIL FROM)</label>
-            <input
-              type="email"
-              value={draft.smtp_from ?? ''}
-              onChange={(e) => setDraft((prev) => ({ ...prev, smtp_from: e.target.value }))}
-              placeholder="fwmon@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
+            <Field label="Sender Address (MAIL FROM)">
+              <Input mono
+                type="email"
+                value={draft.smtp_from ?? ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, smtp_from: e.target.value }))}
+                placeholder="fwmon@example.com"
+               
+              />
+            </Field>
           </div>
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">Default Recipients (To)</label>
-            <input
-              type="text"
-              value={draft.smtp_to ?? ''}
-              onChange={(e) => setDraft((prev) => ({ ...prev, smtp_to: e.target.value }))}
-              placeholder="noc@example.com, ops@example.com"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
+            <Field label="Default Recipients (To)">
+              <input
+                type="text"
+                value={draft.smtp_to ?? ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, smtp_to: e.target.value }))}
+                placeholder="noc@example.com, ops@example.com"
+                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+              />
+            </Field>
           </div>
         </div>
       </div>
@@ -642,25 +658,26 @@ function WebhooksSubTab() {
 
         {chatChannels.map((ch) => (
           <div key={ch.key}>
-            <label className="block text-xs font-medium text-text-dim mb-1">{ch.label}</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="url"
-                value={draft[ch.key] ?? ''}
-                onChange={(e) => setDraft((prev) => ({ ...prev, [ch.key]: e.target.value }))}
-                placeholder={ch.placeholder}
-                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-              />
-              <button
-                type="button"
-                disabled={testingChannel === ch.key}
-                onClick={() => runWebhookTest(ch.key, draft[ch.key])}
-                className="flex items-center gap-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
-              >
-                <Play className="h-3 w-3 text-accent" />
-                {testingChannel === ch.key ? 'Testing…' : 'Test'}
-              </button>
-            </div>
+            <Field label={ch.label}>
+              <div className="flex items-center gap-2">
+                <input
+                  type="url"
+                  value={draft[ch.key] ?? ''}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, [ch.key]: e.target.value }))}
+                  placeholder={ch.placeholder}
+                  className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+                />
+                <button
+                  type="button"
+                  disabled={testingChannel === ch.key}
+                  onClick={() => runWebhookTest(ch.key, draft[ch.key])}
+                  className="flex items-center gap-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
+                >
+                  <Play className="h-3 w-3 text-accent" />
+                  {testingChannel === ch.key ? 'Testing…' : 'Test'}
+                </button>
+              </div>
+            </Field>
           </div>
         ))}
       </div>
@@ -678,31 +695,36 @@ function WebhooksSubTab() {
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-text-dim mb-1">Generic Webhook URL</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="url"
-              value={draft.webhook_url ?? ''}
-              onChange={(e) => setDraft((prev) => ({ ...prev, webhook_url: e.target.value }))}
-              placeholder="https://api.example.com/fwmon/webhook"
-              className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-            />
-            <button
-              type="button"
-              disabled={testingChannel === 'webhook_url'}
-              onClick={() => runWebhookTest('webhook_url', draft.webhook_url)}
-              className="flex items-center gap-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
-            >
-              <Play className="h-3 w-3 text-accent" />
-              Test
-            </button>
-          </div>
+          <Field label="Generic Webhook URL">
+            <div className="flex items-center gap-2">
+              <input
+                type="url"
+                value={draft.webhook_url ?? ''}
+                onChange={(e) => setDraft((prev) => ({ ...prev, webhook_url: e.target.value }))}
+                placeholder="https://api.example.com/fwmon/webhook"
+                className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
+              />
+              <button
+                type="button"
+                disabled={testingChannel === 'webhook_url'}
+                onClick={() => runWebhookTest('webhook_url', draft.webhook_url)}
+                className="flex items-center gap-1 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
+              >
+                <Play className="h-3 w-3 text-accent" />
+                Test
+              </button>
+            </div>
+          </Field>
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-text-dim mb-1">
-            Webhook HMAC Signing Secret <span className="text-text-faint">(Encrypted at rest)</span>
-          </label>
+                    <Field
+            label={
+              <>
+                Webhook HMAC Signing Secret <span className="text-text-faint">(Encrypted at rest)</span>
+              </>
+            }
+          >
           <input
             type="password"
             value={draft.webhook_secret ?? ''}
@@ -710,13 +732,18 @@ function WebhooksSubTab() {
             placeholder="Leave ******** to keep stored secret"
             className="w-full rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
           />
+          </Field>
         </div>
 
         <div className="pt-2 border-t border-border space-y-3">
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              PagerDuty Events v2 Routing Key <span className="text-text-faint">(Encrypted at rest)</span>
-            </label>
+                        <Field
+              label={
+                <>
+                  PagerDuty Events v2 Routing Key <span className="text-text-faint">(Encrypted at rest)</span>
+                </>
+              }
+            >
             <div className="flex items-center gap-2">
               <input
                 type="password"
@@ -735,12 +762,17 @@ function WebhooksSubTab() {
                 Test PD
               </button>
             </div>
+            </Field>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-text-dim mb-1">
-              Opsgenie API Key <span className="text-text-faint">(Encrypted at rest)</span>
-            </label>
+                        <Field
+              label={
+                <>
+                  Opsgenie API Key <span className="text-text-faint">(Encrypted at rest)</span>
+                </>
+              }
+            >
             <div className="flex items-center gap-2">
               <input
                 type="password"
@@ -759,6 +791,7 @@ function WebhooksSubTab() {
                 Test OG
               </button>
             </div>
+            </Field>
           </div>
         </div>
       </div>
@@ -1456,66 +1489,72 @@ function IrcBotsSubTab() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-text-dim mb-1">Server Name</label>
-              <input
-                type="text"
-                value={editingServer.name ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, name: e.target.value }))}
-                placeholder="Internal IRC"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-              />
+              <Field label="Server Name">
+                <Input
+                  type="text"
+                  value={editingServer.name ?? ''}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Internal IRC"
+                 
+                />
+              </Field>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-text-dim mb-1">Hostname</label>
-              <input
-                type="text"
-                value={editingServer.server_host ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, server_host: e.target.value }))}
-                placeholder="irc.example.com"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="Hostname">
+                <Input mono
+                  type="text"
+                  value={editingServer.server_host ?? ''}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, server_host: e.target.value }))}
+                  placeholder="irc.example.com"
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Port</label>
-              <input
-                type="number"
-                value={editingServer.server_port ?? 6697}
-                onChange={(e) => setEditingServer((p) => ({ ...p, server_port: Number(e.target.value) }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="Port">
+                <Input mono
+                  type="number"
+                  value={editingServer.server_port ?? 6697}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, server_port: Number(e.target.value) }))}
+                 
+                />
+              </Field>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Bot Nick</label>
-              <input
-                type="text"
-                value={editingServer.nick ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, nick: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="Bot Nick">
+                <Input mono
+                  type="text"
+                  value={editingServer.nick ?? ''}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, nick: e.target.value }))}
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Username</label>
-              <input
-                type="text"
-                value={editingServer.username ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, username: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-              />
+              <Field label="Username">
+                <Input mono
+                  type="text"
+                  value={editingServer.username ?? ''}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, username: e.target.value }))}
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">Real Name</label>
-              <input
-                type="text"
-                value={editingServer.real_name ?? ''}
-                onChange={(e) => setEditingServer((p) => ({ ...p, real_name: e.target.value }))}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
-              />
+              <Field label="Real Name">
+                <Input
+                  type="text"
+                  value={editingServer.real_name ?? ''}
+                  onChange={(e) => setEditingServer((p) => ({ ...p, real_name: e.target.value }))}
+                 
+                />
+              </Field>
             </div>
           </div>
 
@@ -1553,46 +1592,43 @@ function IrcBotsSubTab() {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">
-                Server password
-              </label>
-              <input
-                type="password"
-                value={editingServer.server_password ?? ''}
-                onChange={(e) =>
-                  setEditingServer((p) => ({ ...p, server_password: e.target.value }))
-                }
-                placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-              />
+              <Field label="Server password">
+                <Input mono
+                  type="password"
+                  value={editingServer.server_password ?? ''}
+                  onChange={(e) =>
+                    setEditingServer((p) => ({ ...p, server_password: e.target.value }))
+                  }
+                  placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">
-                Reconnect delay (seconds)
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={editingServer.reconnect_delay ?? 30}
-                onChange={(e) =>
-                  setEditingServer((p) => ({ ...p, reconnect_delay: Number(e.target.value) }))
-                }
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-              />
+              <Field label="Reconnect delay (seconds)">
+                <Input mono
+                  type="number"
+                  min={1}
+                  value={editingServer.reconnect_delay ?? 30}
+                  onChange={(e) =>
+                    setEditingServer((p) => ({ ...p, reconnect_delay: Number(e.target.value) }))
+                  }
+                 
+                />
+              </Field>
             </div>
             <div>
-              <label className="block text-xs font-medium text-text-dim mb-1">
-                NickServ password
-              </label>
-              <input
-                type="password"
-                value={editingServer.nickserv_password ?? ''}
-                onChange={(e) =>
-                  setEditingServer((p) => ({ ...p, nickserv_password: e.target.value }))
-                }
-                placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-              />
+              <Field label="NickServ password">
+                <Input mono
+                  type="password"
+                  value={editingServer.nickserv_password ?? ''}
+                  onChange={(e) =>
+                    setEditingServer((p) => ({ ...p, nickserv_password: e.target.value }))
+                  }
+                  placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                 
+                />
+              </Field>
             </div>
             <label className="flex items-center gap-2 self-end text-xs text-text">
               <input
@@ -1619,27 +1655,29 @@ function IrcBotsSubTab() {
             {editingServer.sasl_enabled && (
               <>
                 <div>
-                  <label className="block text-xs font-medium text-text-dim mb-1">SASL username</label>
-                  <input
-                    type="text"
-                    value={editingServer.sasl_username ?? ''}
-                    onChange={(e) =>
-                      setEditingServer((p) => ({ ...p, sasl_username: e.target.value }))
-                    }
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-                  />
+                  <Field label="SASL username">
+                    <Input mono
+                      type="text"
+                      value={editingServer.sasl_username ?? ''}
+                      onChange={(e) =>
+                        setEditingServer((p) => ({ ...p, sasl_username: e.target.value }))
+                      }
+                     
+                    />
+                  </Field>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-text-dim mb-1">SASL password</label>
-                  <input
-                    type="password"
-                    value={editingServer.sasl_password ?? ''}
-                    onChange={(e) =>
-                      setEditingServer((p) => ({ ...p, sasl_password: e.target.value }))
-                    }
-                    placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
-                    className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
-                  />
+                  <Field label="SASL password">
+                    <Input mono
+                      type="password"
+                      value={editingServer.sasl_password ?? ''}
+                      onChange={(e) =>
+                        setEditingServer((p) => ({ ...p, sasl_password: e.target.value }))
+                      }
+                      placeholder={editingServer.id ? '******** (unchanged)' : 'Optional'}
+                     
+                    />
+                  </Field>
                 </div>
               </>
             )}
@@ -1682,7 +1720,7 @@ function IrcBotsSubTab() {
         <div className="space-y-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Server</span>
-            <select
+            <Select
               value={editingChannel.server_id ?? ''}
               onChange={(e) =>
                 setEditingChannel((p) => ({
@@ -1690,7 +1728,7 @@ function IrcBotsSubTab() {
                   server_id: e.target.value ? Number(e.target.value) : undefined,
                 }))
               }
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">Select a server…</option>
               {servers.map((srv) => (
@@ -1698,82 +1736,82 @@ function IrcBotsSubTab() {
                   {srv.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Channel name</span>
-            <input
+            <Input mono
               type="text"
               value={editingChannel.channel_name ?? ''}
               onChange={(e) =>
                 setEditingChannel((p) => ({ ...p, channel_name: e.target.value }))
               }
               placeholder="#noc-alerts"
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+             
             />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Channel key</span>
-              <input
+              <Input mono
                 type="password"
                 value={editingChannel.channel_key ?? ''}
                 onChange={(e) =>
                   setEditingChannel((p) => ({ ...p, channel_key: e.target.value }))
                 }
                 placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Admin nicks</span>
-              <input
+              <Input mono
                 type="text"
                 value={editingChannel.admin_nicks ?? ''}
                 onChange={(e) =>
                   setEditingChannel((p) => ({ ...p, admin_nicks: e.target.value }))
                 }
                 placeholder="alice;bob"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">ChanServ name</span>
-              <input
+              <Input mono
                 type="text"
                 value={editingChannel.chanserv_name ?? ''}
                 onChange={(e) =>
                   setEditingChannel((p) => ({ ...p, chanserv_name: e.target.value }))
                 }
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">
                 ChanServ password
               </span>
-              <input
+              <Input mono
                 type="password"
                 value={editingChannel.chanserv_password ?? ''}
                 onChange={(e) =>
                   setEditingChannel((p) => ({ ...p, chanserv_password: e.target.value }))
                 }
                 placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">
                 Channel operator password
               </span>
-              <input
+              <Input mono
                 type="password"
                 value={editingChannel.chan_oper_pass ?? ''}
                 onChange={(e) =>
                   setEditingChannel((p) => ({ ...p, chan_oper_pass: e.target.value }))
                 }
                 placeholder={editingChannel.id ? '******** (unchanged)' : 'Optional'}
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
           </div>
@@ -1828,7 +1866,7 @@ function IrcBotsSubTab() {
               <span className="mb-1 block text-xs font-medium text-text-dim">
                 Status interval (seconds)
               </span>
-              <input
+              <Input mono
                 type="number"
                 min={30}
                 value={editingChannel.status_interval ?? 300}
@@ -1838,7 +1876,7 @@ function IrcBotsSubTab() {
                     status_interval: Number(e.target.value),
                   }))
                 }
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
           )}
@@ -1875,41 +1913,41 @@ function IrcBotsSubTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Trigger</span>
-              <input
+              <Input mono
                 type="text"
                 value={editingCommand.command ?? ''}
                 onChange={(e) =>
                   setEditingCommand((p) => ({ ...p, command: e.target.value }))
                 }
                 placeholder="!status"
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 font-mono text-xs text-text"
+               
               />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-text-dim">Type</span>
-              <select
+              <Select
                 value={editingCommand.command_type ?? 'static'}
                 onChange={(e) =>
                   setEditingCommand((p) => ({ ...p, command_type: e.target.value }))
                 }
-                className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+               
               >
                 <option value="static">Static response</option>
                 <option value="status">Status</option>
                 <option value="stats">Stats</option>
                 <option value="custom">Custom</option>
-              </select>
+              </Select>
             </label>
           </div>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Description</span>
-            <input
+            <Input
               type="text"
               value={editingCommand.description ?? ''}
               onChange={(e) =>
                 setEditingCommand((p) => ({ ...p, description: e.target.value }))
               }
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             />
           </label>
           <label className="block">

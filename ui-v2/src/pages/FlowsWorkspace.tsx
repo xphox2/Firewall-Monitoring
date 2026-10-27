@@ -26,6 +26,7 @@ import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { useToast } from '@/components/ui/toast';
 import { ColumnDef } from '@tanstack/react-table';
+import { Select } from '@/components/ui/input';
 
 type FlowsTab = 'talkers' | 'conversations' | 'samples' | 'detections';
 
@@ -259,11 +260,11 @@ export function FlowsWorkspace() {
           </div>
 
           <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
-          <select
+          <Select className="px-2.5 py-1"
             value={filters.deviceId}
             onChange={(e) => setFilters((f) => ({ ...f, deviceId: e.target.value }))}
             aria-label="Filter by device"
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+           
           >
             <option value="">All devices</option>
             {devices.map((d) => (
@@ -271,12 +272,12 @@ export function FlowsWorkspace() {
                 {d.name}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select className="px-2.5 py-1"
             value={filters.protocol}
             onChange={(e) => setFilters((f) => ({ ...f, protocol: e.target.value }))}
             aria-label="Filter by protocol"
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+           
           >
             <option value="">All protocols</option>
             {PROTOCOL_OPTIONS.map((p) => (
@@ -284,12 +285,12 @@ export function FlowsWorkspace() {
                 {p.label}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select className="px-2.5 py-1"
             value={filters.flowSource}
             onChange={(e) => setFilters((f) => ({ ...f, flowSource: e.target.value }))}
             aria-label="Filter by exporter"
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+           
           >
             <option value="">Any exporter</option>
             {FLOW_SOURCE_OPTIONS.map((o) => (
@@ -297,12 +298,12 @@ export function FlowsWorkspace() {
                 {o.label}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select className="px-2.5 py-1"
             value={filters.firewallEvent}
             onChange={(e) => setFilters((f) => ({ ...f, firewallEvent: e.target.value }))}
             aria-label="Filter by firewall event"
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-xs text-text"
+           
           >
             <option value="">Any firewall event</option>
             {FIREWALL_EVENT_OPTIONS.map((o) => (
@@ -310,7 +311,7 @@ export function FlowsWorkspace() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -368,7 +369,7 @@ export function FlowsWorkspace() {
       </div>
 
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load flow statistics: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}
@@ -557,7 +558,7 @@ function TrafficOverview({
         <TimeSeriesChart
           title={`Throughput — ${range}${stats?.degraded ? ' (partial)' : ''}`}
           timestamps={chart.timestamps}
-          series={[{ label: 'Throughput', color: '#7DD3FC', values: chart.values }]}
+          series={[{ label: 'Throughput', color: 'var(--fwmon-series-1)', values: chart.values }]}
           kind="bps"
           isLoading={isLoading}
           emptyMessage="No flow buckets in this window."
@@ -854,7 +855,7 @@ function SamplesTab({
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
           Could not load flow samples: {error instanceof Error ? error.message : 'request failed'}
         </div>
       ) : (

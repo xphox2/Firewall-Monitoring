@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { cn, formatDateTime } from '@/lib/utils';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
+import { Select } from '@/components/ui/input';
 
 interface EffectiveLayer {
   layer: string;
@@ -107,13 +108,13 @@ export function EffectiveCoverageDrawer({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">Device</span>
-            <select
+            <Select
               value={deviceId}
               onChange={(e) => {
                 setDeviceId(e.target.value);
                 if (e.target.value) setSiteId('');
               }}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">— pick a device —</option>
               {devices
@@ -123,17 +124,17 @@ export function EffectiveCoverageDrawer({
                     {device.name}
                   </option>
                 ))}
-            </select>
+            </Select>
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-text-dim">…or site</span>
-            <select
+            <Select
               value={siteId}
               onChange={(e) => {
                 setSiteId(e.target.value);
                 if (e.target.value) setDeviceId('');
               }}
-              className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs text-text"
+             
             >
               <option value="">— pick a site —</option>
               {sites.map((site) => (
@@ -141,7 +142,7 @@ export function EffectiveCoverageDrawer({
                   {site.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
 
