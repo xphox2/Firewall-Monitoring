@@ -1406,7 +1406,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
   // GetDeviceConfigHistory wraps the rows: {revisions, total_all, ...}. Typing
   // this as an array made `.map` throw and (before the ErrorBoundary) blanked
   // the whole console when the Config tab opened.
-  const { data: configHistory } = useQuery({
+  const { data: configHistory, isLoading: configLoading } = useQuery({
     queryKey: ['device-config-history', deviceId],
     queryFn: () =>
       apiFetch<{
@@ -1449,6 +1449,123 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
 
   const selectedFrom = configRevs.find((r) => r.id === diffFrom) ?? null;
   const selectedTo = configRevs.find((r) => r.id === diffTo) ?? null;
+
+  const configRevisionColumns: ColumnDef<RevisionMeta, any>[] = useMemo(
+    () => [
+      {
+        id: 'diffFrom',
+        header: () => <span className="text-center block font-semibold">From</span>,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <input
+              type="radio"
+              name="cfg-diff-from"
+              aria-label={`Use revision ${row.original.id} as the diff base`}
+              checked={diffFrom === row.original.id}
+              onChange={() => setDiffFrom(row.original.id)}
+            />
+          </div>
+        ),
+      },
+      {
+        id: 'diffTo',
+        header: () => <span className="text-center block font-semibold">To</span>,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <input
+              type="radio"
+              name="cfg-diff-to"
+              aria-label={`Compare revision ${row.original.id}`}
+              checked={diffTo === row.original.id}
+              onChange={() => setDiffTo(row.original.id)}
+            />
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'id',
+        header: 'Revision',
+        cell: ({ row }) => (
+          <div>
+            <div className="font-mono text-text">#{row.original.id}</div>
+            <div className="text-[11px] text-text-faint">
+              {formatRelativeTime(row.original.timestamp)}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'trigger',
+        header: 'Trigger / Quality',
+        accessorFn: (row) => `${row.trigger_source || ''} ${row.backup_quality || ''}`,
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {row.original.trigger_source || '—'}
+            {row.original.backup_quality ? ` · ${row.original.backup_quality}` : ''}
+          </span>
+        ),
+      },
+      {
+        id: 'changed_by',
+        header: 'Changed by',
+        accessorFn: (row) => row.changed_by || (row.attribution_checked ? 'out-of-band' : '—'),
+        cell: ({ row }) => (
+          <span className="text-[11px] text-text-dim">
+            {row.original.changed_by || (row.original.attribution_checked ? 'out-of-band' : '—')}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'checksum',
+        header: 'Checksum',
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-text-faint">
+            {row.original.checksum?.slice(0, 12)}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const rev = row.original;
+          return (
+            <div className="inline-flex items-center gap-1 justify-end">
+              <Button
+                variant="icon"
+                type="button"
+                onClick={() => setRevisionToView(rev.id)}
+                aria-label={`View revision ${rev.id}`}
+                title="View this revision"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+              <a
+                href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
+                title="Download this revision"
+                className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
+              >
+                <Download className="h-3.5 w-3.5" />
+              </a>
+              <Button
+                variant="danger-icon"
+                type="button"
+                onClick={() => setRevisionToDelete(rev.id)}
+                aria-label={`Delete revision ${rev.id}`}
+                title="Delete this revision"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [diffFrom, diffTo, deviceId],
+  );
 
   const { data: capabilities, isLoading: capabilitiesLoading } = useQuery({
     queryKey: ['device-capabilities', deviceId],
@@ -2079,94 +2196,60 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 </div>
               </div>
 
-              {configRevs.length === 0 ? (
-                <p className="text-xs text-text-dim">No configuration backups archived yet.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
-                        <th className="px-2 py-2 text-center font-semibold">From</th>
-                        <th className="px-2 py-2 text-center font-semibold">To</th>
-                        <th className="px-3 py-2 font-semibold">Revision</th>
-                        <th className="px-3 py-2 font-semibold">Trigger / Quality</th>
-                        <th className="px-3 py-2 font-semibold">Changed by</th>
-                        <th className="px-3 py-2 font-semibold">Checksum</th>
-                        <th className="px-3 py-2" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {configRevs.map((rev) => (
-                        <tr key={rev.id} className="hover:bg-bg-hover">
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="radio"
-                              name="cfg-diff-from"
-                              aria-label={`Use revision ${rev.id} as the diff base`}
-                              checked={diffFrom === rev.id}
-                              onChange={() => setDiffFrom(rev.id)}
-                            />
-                          </td>
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="radio"
-                              name="cfg-diff-to"
-                              aria-label={`Compare revision ${rev.id}`}
-                              checked={diffTo === rev.id}
-                              onChange={() => setDiffTo(rev.id)}
-                            />
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="font-mono text-text">#{rev.id}</div>
-                            <div className="text-[11px] text-text-faint">
-                              {formatRelativeTime(rev.timestamp)}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-[11px] text-text-dim">
-                            {rev.trigger_source || '—'}
-                            {rev.backup_quality ? ` · ${rev.backup_quality}` : ''}
-                          </td>
-                          <td className="px-3 py-2 text-[11px] text-text-dim">
-                            {rev.changed_by || (rev.attribution_checked ? 'out-of-band' : '—')}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-[11px] text-text-faint">
-                            {rev.checksum?.slice(0, 12)}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            <div className="inline-flex items-center gap-1">
-                              <Button  variant="icon"
-                                type="button"
-                                onClick={() => setRevisionToView(rev.id)}
-                                aria-label={`View revision ${rev.id}`}
-                                title="View this revision"
-                                
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <a
-                                href={`/admin/api/devices/${deviceId}/config-history/${rev.id}`}
-                              title="Download this revision"
-                              className="inline-flex rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text"
-                            >
-                                <Download className="h-3.5 w-3.5" />
-                              </a>
-                              <Button  variant="danger-icon"
-                                type="button"
-                                onClick={() => setRevisionToDelete(rev.id)}
-                                aria-label={`Delete revision ${rev.id}`}
-                                title="Delete this revision"
-                                
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <ResponsiveDataView
+                data={configRevs}
+                columns={configRevisionColumns}
+                getRowId={(rev) => String(rev.id)}
+                isLoading={configLoading}
+                emptyTitle="No configuration backups archived yet."
+                emptyDescription="Backups are created when polling detects device configuration changes."
+                renderMobileCard={(rev) => (
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="font-mono text-xs font-semibold text-text">#{rev.id}</div>
+                        <div className="text-[11px] text-text-faint">
+                          {formatRelativeTime(rev.timestamp)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1 text-xs text-text cursor-pointer">
+                          <input
+                            type="radio"
+                            name="cfg-diff-from-mobile"
+                            aria-label={`Use revision ${rev.id} as the diff base`}
+                            checked={diffFrom === rev.id}
+                            onChange={() => setDiffFrom(rev.id)}
+                          />
+                          <span className="text-[11px] text-text-dim">From</span>
+                        </label>
+                        <label className="inline-flex items-center gap-1 text-xs text-text cursor-pointer">
+                          <input
+                            type="radio"
+                            name="cfg-diff-to-mobile"
+                            aria-label={`Compare revision ${rev.id}`}
+                            checked={diffTo === rev.id}
+                            onChange={() => setDiffTo(rev.id)}
+                          />
+                          <span className="text-[11px] text-text-dim">To</span>
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-text-dim">
+                      <span>
+                        {rev.trigger_source || '—'}
+                        {rev.backup_quality ? ` · ${rev.backup_quality}` : ''}
+                      </span>
+                      <span>{rev.changed_by || (rev.attribution_checked ? 'out-of-band' : '—')}</span>
+                    </div>
+                    {rev.checksum && (
+                      <div className="font-mono text-[10px] text-text-faint">
+                        Checksum: {rev.checksum.slice(0, 12)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              />
 
               <ConfigDiffDrawer
                 key={`${diffFrom ?? 0}:${diffTo ?? 0}`}
