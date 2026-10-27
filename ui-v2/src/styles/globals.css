@@ -34,6 +34,8 @@
 
   --color-accent: var(--fwmon-accent);
   --color-accent-hover: var(--fwmon-accent-hover);
+  --color-accent-text: var(--fwmon-accent-text);
+  --color-on-accent: var(--fwmon-on-accent);
   --color-accent-soft: var(--fwmon-accent-soft);
 
   --color-sig-ok: var(--fwmon-sig-ok);
@@ -78,10 +80,26 @@
 
   --fwmon-accent: #4c8dff;
   --fwmon-accent-hover: #6aa1ff;
+  /*
+   * The accent as TEXT on an accent-tinted background.
+   *
+   * The accent itself passes on the plain surfaces (5.4:1 on the card), but
+   * a chip puts it on a background tinted with the SAME colour, which is
+   * darker, and the contrast falls to 3.5:1. So the tinted chips need a
+   * lighter accent. Measured: 5.4:1 on the tinted panel, 8.3:1 on the card.
+   */
+  --fwmon-accent-text: #8ab4ff;
+  /*
+   * The label on a SOLID accent background.
+   *
+   * White on the accent is 3.2:1 - below the 4.5:1 that WCAG AA requires
+   * for text this size. The accent is a light blue, so a near-black label
+   * is the readable one: 5.9:1.
+   */
   --fwmon-accent-soft: rgba(76, 141, 255, 0.13);
   --fwmon-accent-bg: rgba(76, 141, 255, 0.13);
   --fwmon-accent-shadow: rgba(76, 141, 255, 0.22);
-  --fwmon-on-accent: #ffffff;
+  --fwmon-on-accent: #08111f;
 
   --fwmon-btn-ok: #218a5a;
   --fwmon-btn-ok-hover: #28a06a;
@@ -136,11 +154,14 @@
   --fwmon-series-8: #0f766e;
 
   --fwmon-accent: #2563eb;
+  /* The light theme's accent is dark, so its label on a solid accent is white. */
+  --fwmon-on-accent: #ffffff;
+  /* And its tinted chips need a DARKER accent, not a lighter one. */
+  --fwmon-accent-text: #1d4ed8;
   --fwmon-accent-hover: #1d4fc4;
   --fwmon-accent-soft: rgba(37, 99, 235, 0.10);
   --fwmon-accent-bg: rgba(37, 99, 235, 0.10);
   --fwmon-accent-shadow: rgba(37, 99, 235, 0.22);
-  --fwmon-on-accent: #ffffff;
 
   --fwmon-btn-ok: #0f7a4c;
   --fwmon-btn-ok-hover: #0c6640;

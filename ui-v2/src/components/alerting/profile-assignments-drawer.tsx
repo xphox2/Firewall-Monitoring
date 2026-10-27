@@ -177,7 +177,7 @@ export function ProfileAssignmentsDrawer({ open, onOpenChange, profile, onSaved 
               type="button"
               disabled={!canAddSite || busy}
               onClick={() => add.mutate({ site_ids: [Number(siteToAdd)] })}
-              className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
             >
               <Plus className="h-3.5 w-3.5" /> Add
             </button>
@@ -231,7 +231,7 @@ export function ProfileAssignmentsDrawer({ open, onOpenChange, profile, onSaved 
               type="button"
               disabled={!canAddDevice || busy}
               onClick={() => add.mutate({ device_ids: [Number(deviceToAdd)] })}
-              className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
             >
               <Plus className="h-3.5 w-3.5" /> Add
             </button>

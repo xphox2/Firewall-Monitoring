@@ -1,6 +1,111 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.453] - 2026-10-27
+
+### Added — The V2 console's unit tests finally run on the server
+
+- **The vitest suite had never executed in CI.** Every assertion in it —
+  the API client's envelope handling, the filter builders, the report
+  export, the collector's deploy info, the chart series — was checked
+  locally and nowhere else, so a regression could land on `master` and be
+  green. There is now a job that runs the typecheck and the unit tests on
+  every pull request that touches the console.
+
+### Added — The console is now checked at three viewport widths
+
+- Every browser spec ran at the desktop width, so a page that broke at the
+  phone or tablet size was not noticed. The suite now runs at **390px**,
+  **820px** and **1440px**, and a new spec asserts that the document never
+  scrolls sideways at any of them — with the widest offending element
+  named in the failure, so the failure says which element is too wide.
+
+### Fixed — The sideways-scroll check could not fail
+
+- The check asserted that the document does not scroll sideways — but the
+  shell sets `overflow-x: hidden` on `html` and `body`, so the document
+  **never** scrolls sideways however far the content reaches: the overflow
+  is clipped. `documentElement.scrollWidth` is therefore always equal to
+  `clientWidth`, and the assertion passed on every page, whatever was
+  hanging off the edge.
+- The check is now on the **geometry**: an element that reaches past the
+  viewport is either cut off (a bug) or inside a strip the operator can
+  scroll (fine). The strips are `overflow-x: auto|scroll`, so those are
+  skipped.
+- **And it found a real overflow immediately**: the Events page's sub-tab
+  strip did not fit a 390px phone, so the last tab was silently cut off.
+  The strip scrolls now.
+- The check also has a **self-test**: a deliberately over-wide element is
+  injected and the check has to see it. A check that cannot fail is
+  decoration.
+
+### Added — An automated accessibility check, and the keyboard specs
+
+- **axe** now runs over every workspace, over **WCAG 2.2** as well — this
+  PR is about the keyboard and the focus, and 2.2's `target-size` and
+  `focus-not-obscured` are the rules that catch a control an operator
+  cannot hit. The bar is *serious* and *critical*: a moderate finding is
+  often a deliberate choice, and failing the build on those would make the
+  gate something people route around.
+- The console's CI jobs moved to **Node 22**: the accessibility dependency
+  needs it.
+- The keyboard specs assert what a hand audit found: that the focused
+  control shows a focus indicator, that the mobile navigation drawer
+  **traps** the focus and closes on Escape, that the command palette opens
+  and closes from the keyboard, and that the table sort is operable with
+  Enter.
+
+### Fixed — A phone could not operate thirteen tables
+
+- The shared data view renders both a mobile card stack and a desktop
+  table, and CSS hides one of them. **Thirteen tables had an actions
+  column that the mobile card did not** — so on a phone an operator could
+  not approve a collector, disable a user, reset a password, delete a flow
+  or open a connection. The actions and the selection column are now
+  rendered into the card **from the columns themselves**, so a table cannot
+  forget them.
+- The viewport matrix found this: the interaction specs passed at the
+  desktop width and could not find the button at the phone width.
+
+### Fixed — The accent colour failed WCAG AA on its own background
+
+- axe found two contrast failures, and both were real:
+  - **White on the solid accent was 3.2:1**, below the 4.5:1 that WCAG AA
+    requires for text this size. The accent is a light blue, so the label
+    on it is now near-black — **5.9:1**.
+  - **The accent as text on an accent-tinted background was 3.5:1.** A
+    chip puts the accent on a background tinted with the *same* colour,
+    which is darker, so the contrast falls. The tinted chips now use a
+    separate accent-text token — 5.4:1 on the tinted background.
+
+### Fixed — The race suite could not be run in one piece
+
+- `go test -race ./internal/database/` **needed 4m37s** and overflowed a
+  5-minute timeout, so it was being skipped locally and sharded on the
+  server. It was never a deadlock — the goroutine dump showed every
+  goroutine inside the **SQL parser**, not a lock, and the test that
+  appeared stuck was different on every run, which is the signature of a
+  timeout.
+- The cause: **every test rebuilt the schema from scratch.** AutoMigrate
+  over 80 models costs 15ms normally and **356ms under the race
+  detector** — the pure-Go SQLite parser is instrumented, so every
+  statement costs 23× more. With 766 tests that was **4.5 minutes of the
+  race suite re-creating an identical schema.**
+- The schema is now built **once**, into a template file, and each test
+  gets a **copy**. A copy is file I/O, so the per-test cost is a few
+  milliseconds instead of 356ms of parsing.
+- `internal/database` went from **4m37s to 1m18s**, and the whole tree's
+  race suite now runs in **1m47s** — so the whole suite fits in one
+  command with one timeout, and the local gate no longer has to skip a
+  package.
+
+### Fixed — A sortable column only announced its state once it was sorted
+
+- `aria-sort` was only present on a column that was already the sorted
+  one, so a screen reader could not hear that a column *could* be sorted.
+  A sortable column that is not the sorted one now carries
+  `aria-sort="none"`, which is what the ARIA spec asks for.
+
 ## [0.11.452] - 2026-10-27
 
 ### Fixed — The API client was throwing away part of every response

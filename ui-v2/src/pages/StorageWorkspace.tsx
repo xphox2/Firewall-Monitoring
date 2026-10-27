@@ -1139,7 +1139,7 @@ export function StorageWorkspace() {
                               <span
                                 className={cn(
                                   'inline-flex items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                                  f.source === 'ui' && 'bg-accent/15 text-accent',
+                                  f.source === 'ui' && 'bg-accent/15 text-accent-text',
                                   f.source === 'env' && 'bg-sig-ok/15 text-sig-ok',
                                   f.source === 'default' && 'bg-bg-panel text-text-mute',
                                 )}
@@ -1690,7 +1690,7 @@ export function StorageWorkspace() {
                                       'rounded px-1.5 py-0.2 font-mono text-[10px]',
                                       archReverts[f.key]
                                         ? 'bg-sig-warn/20 text-sig-warn'
-                                        : 'bg-accent/15 text-accent',
+                                        : 'bg-accent/15 text-accent-text',
                                     )}
                                   >
                                     {archReverts[f.key] ? 'Will Revert' : 'Custom (Revert)'}
@@ -1796,7 +1796,7 @@ export function StorageWorkspace() {
                                         }));
                                         setFolderPickerKey(null);
                                       }}
-                                      className="rounded bg-accent px-2 py-0.5 text-[11px] font-semibold text-white"
+                                      className="rounded bg-accent px-2 py-0.5 text-[11px] font-semibold text-on-accent"
                                     >
                                       Use This Folder
                                     </button>
@@ -2231,7 +2231,7 @@ function ArchiveGatePanel({ me }: { me?: MeResponse }) {
             type="button"
             disabled={!reset || !reset.reason.trim()}
             onClick={continueReset}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             Continue to verification
           </button>

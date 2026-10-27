@@ -51,7 +51,7 @@ const SEVERITY_STYLE: Record<string, string> = {
   high: 'bg-sig-crit/15 text-sig-crit',
   warning: 'bg-sig-warn/15 text-sig-warn',
   error: 'bg-sig-warn/15 text-sig-warn',
-  info: 'bg-accent/15 text-accent',
+  info: 'bg-accent/15 text-accent-text',
 };
 
 export function TrapsWorkspace() {
@@ -196,7 +196,7 @@ export function TrapsWorkspace() {
                 onClick={() => setRange(r.value)}
                 className={cn(
                   'rounded px-2 py-1 font-mono text-[11px] font-medium',
-                  range === r.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                  range === r.value ? 'bg-accent text-on-accent' : 'text-text-dim hover:text-text',
                 )}
               >
                 {r.value}

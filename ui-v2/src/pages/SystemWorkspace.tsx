@@ -426,7 +426,7 @@ function UsersRbacSubTab() {
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" />
           Create User
@@ -442,7 +442,7 @@ function UsersRbacSubTab() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-sm text-text">{u.username}</span>
-              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
                 {u.role}
               </span>
             </div>
@@ -469,7 +469,7 @@ function UsersRbacSubTab() {
               type="button"
               disabled={!newUsername.trim() || createUserMutation.isPending}
               onClick={() => createUserMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               {createUserMutation.isPending ? 'Creating…' : 'Create User'}
             </button>
@@ -519,7 +519,7 @@ function UsersRbacSubTab() {
           <button
             type="button"
             onClick={() => setCreatedCred(null)}
-            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
           >
             I have copied it
           </button>
@@ -674,7 +674,7 @@ function ApiTokensSubTab() {
         accessorKey: 'scope',
         header: 'Scope',
         cell: ({ row }) => (
-          <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+          <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
             {row.original.scope}
           </span>
         ),
@@ -787,7 +787,7 @@ function ApiTokensSubTab() {
             type="button"
             disabled={!tokenName.trim() || createTokenMutation.isPending}
             onClick={() => createTokenMutation.mutate()}
-            className="flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            className="flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             <Key className="h-3.5 w-3.5" />
             Generate Token
@@ -829,7 +829,7 @@ function ApiTokensSubTab() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-sm text-text">{t.name}</span>
-              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+              <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
                 {t.scope}
               </span>
             </div>
@@ -1392,7 +1392,7 @@ function EmailReportsSubTab() {
               type="button"
               disabled={sendNowMutation.isPending}
               onClick={() => sendNowMutation.mutate()}
-              className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               <Send className="h-3.5 w-3.5" />
               {sendNowMutation.isPending ? 'Sending…' : 'Send Report Now'}
@@ -1920,7 +1920,7 @@ function MyProfileSubTab() {
               type="button"
               disabled={updateProfileMutation.isPending}
               onClick={() => updateProfileMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               Save Profile
             </button>
@@ -1956,7 +1956,7 @@ function MyProfileSubTab() {
               type="button"
               disabled={!currentPassword || newPassword.length < 8 || changePasswordMutation.isPending}
               onClick={() => changePasswordMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               Update Password
             </button>

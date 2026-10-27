@@ -167,7 +167,7 @@ export function SlideOverDrawer({
                           className={cn(
                             'rounded-full px-1.5 py-0.2 font-mono text-[10px]',
                             isActive
-                              ? 'bg-accent/15 text-accent'
+                              ? 'bg-accent/15 text-accent-text'
                               : 'bg-bg-panel text-text-faint',
                           )}
                         >

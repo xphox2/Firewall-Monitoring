@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks } from './mocks';
+import { dataRow, dataView } from './helpers';
 
 test('approves and rejects a pending collector with a reason', async ({ page }) => {
   const calls: Array<{ path: string; body: unknown }> = [];
@@ -37,8 +38,8 @@ test('approves and rejects a pending collector with a reason', async ({ page }) 
   ]);
 
   await page.goto('/admin/v2/collectors');
-  const table = page.getByTestId('responsive-desktop-table');
-  const row = table.getByRole('row').filter({ hasText: 'edge-probe' });
+  const table = dataView(page);
+  const row = dataRow(page, 'edge-probe');
   await expect(row).toBeVisible();
 
   await row.getByRole('button', { name: 'Approve' }).click();

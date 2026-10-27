@@ -35,7 +35,7 @@ const OP_STYLE: Record<string, string> = {
 const SEV_STYLE: Record<string, string> = {
   critical: 'bg-sig-crit/15 text-sig-crit border-sig-crit/40',
   high: 'bg-sig-warn/15 text-sig-warn border-sig-warn/40',
-  medium: 'bg-accent/15 text-accent border-accent/40',
+  medium: 'bg-accent/15 text-accent-text border-accent/40',
   info: 'bg-bg-panel text-text-dim border-border',
 };
 
@@ -166,7 +166,7 @@ export function ConfigDiffDrawer({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
           >
             Close
           </button>
@@ -415,7 +415,7 @@ export function ConfigDiffDrawer({
                           </span>
                           <span className="min-w-0 flex-1">{row.text}</span>
                           {row.vname && (
-                            <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
+                            <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent-text">
                               {row.vname}
                             </span>
                           )}
@@ -458,7 +458,7 @@ export function ConfigDiffDrawer({
                               </span>
                               <span className="min-w-0 flex-1">{pair.right?.text ?? ''}</span>
                               {pair.vname && (
-                                <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent">
+                                <span className="shrink-0 rounded bg-accent/10 px-1 text-[9px] uppercase text-accent-text">
                                   {pair.vname}
                                 </span>
                               )}

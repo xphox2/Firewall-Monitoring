@@ -437,7 +437,7 @@ function ServerTrend() {
               onClick={() => setRange(option.value)}
               className={cn(
                 'rounded px-2 py-1 font-mono text-[11px] font-medium',
-                range === option.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                range === option.value ? 'bg-accent text-on-accent' : 'text-text-dim hover:text-text',
               )}
             >
               {option.label}
@@ -571,7 +571,7 @@ const severityBadge: Record<string, string> = {
   ok: 'bg-sig-ok/15 text-sig-ok',
   critical: 'bg-sig-crit/15 text-sig-crit',
   warning: 'bg-sig-warn/15 text-sig-warn',
-  info: 'bg-accent/15 text-accent',
+  info: 'bg-accent/15 text-accent-text',
 };
 
 function severityBorder(severity?: string): string {

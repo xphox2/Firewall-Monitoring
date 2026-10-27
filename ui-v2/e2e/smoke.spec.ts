@@ -34,7 +34,10 @@ test.describe('V2 shell smoke', () => {
       page.on('pageerror', (error) => pageErrors.push(error.message));
 
       await page.goto(`/admin/v2/${route}`);
-      await expect(page.getByText('FIREWALL-MON').first()).toBeVisible();
+      // The shell's main region, not the brand in the sidebar: the sidebar
+      // is hidden below the large breakpoint, so the brand is not visible
+      // there and the check would SKIP rather than test anything.
+      await expect(page.locator('#main-content')).toBeVisible();
       await expect(page.getByText('This workspace failed to render')).toHaveCount(0);
 
       expect(

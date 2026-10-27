@@ -832,7 +832,7 @@ export function TopologyMap({
             className={cn(
               'inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-semibold uppercase transition-colors',
               dirty
-                ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                ? 'border-accent/40 bg-accent/10 text-accent-text hover:bg-accent/20'
                 : 'border-border bg-bg-panel text-text-faint',
             )}
           >
@@ -936,7 +936,7 @@ export function TopologyMap({
                 'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
                 selected.kind === 'external'
                   ? 'bg-bg-panel text-text-faint'
-                  : 'bg-accent/15 text-accent',
+                  : 'bg-accent/15 text-accent-text',
               )}
             >
               {selected.kind}

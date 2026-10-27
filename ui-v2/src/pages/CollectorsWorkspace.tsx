@@ -373,7 +373,7 @@ function ProbesSubTab() {
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" />
           Register Collector
@@ -425,7 +425,7 @@ function ProbesSubTab() {
               type="button"
               disabled={!probeName.trim() || createProbeMutation.isPending}
               onClick={() => createProbeMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               Create & Generate Key
             </button>
@@ -696,7 +696,7 @@ function SitesSubTab() {
             });
             setDrawerOpen(true);
           }}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" />
           Create Site
@@ -740,7 +740,7 @@ function SitesSubTab() {
               type="button"
               disabled={!editingSite.name?.trim() || saveSiteMutation.isPending}
               onClick={() => saveSiteMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               Save Site
             </button>

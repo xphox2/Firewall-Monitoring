@@ -36,7 +36,7 @@ interface EffectiveConfig {
 }
 
 const LAYER_STYLE: Record<string, string> = {
-  device: 'bg-accent/15 text-accent',
+  device: 'bg-accent/15 text-accent-text',
   site: 'bg-sig-warn/15 text-sig-warn',
   default: 'bg-bg-panel text-text-dim',
 };

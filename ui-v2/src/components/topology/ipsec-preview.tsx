@@ -28,7 +28,7 @@ function findingTone(severity?: string): string {
   const value = String(severity ?? '').toLowerCase();
   if (/block|error|critical|deny/.test(value)) return 'bg-sig-crit/15 text-sig-crit';
   if (/warn/.test(value)) return 'bg-sig-warn/15 text-sig-warn';
-  return 'bg-accent/15 text-accent';
+  return 'bg-accent/15 text-accent-text';
 }
 
 export function IpsecPreviewPanel({ preview }: { preview: IpsecPreview | null | undefined }) {
@@ -117,7 +117,7 @@ export function IpsecPreviewPanel({ preview }: { preview: IpsecPreview | null | 
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
                 <span className="font-semibold text-text">End {end.end ?? idx + 1}</span>
-                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">
+                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent-text">
                   {end.vendor || 'vendor'}
                 </span>
                 {end.steps != null && (

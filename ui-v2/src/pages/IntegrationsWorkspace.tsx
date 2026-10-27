@@ -445,7 +445,7 @@ function SmtpSubTab() {
             type="button"
             disabled={testMutation.isPending}
             onClick={() => testMutation.mutate()}
-            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />
             {testMutation.isPending ? 'Dialing…' : 'Send Test'}
@@ -1146,7 +1146,7 @@ function IrcBotsSubTab() {
               </span>
             )}
             {row.original.send_status && (
-              <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">
+              <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent-text">
                 status {row.original.status_interval ?? 300}s
               </span>
             )}
@@ -1301,7 +1301,7 @@ function IrcBotsSubTab() {
             });
             setServerDrawerOpen(true);
           }}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" />
           Add IRC Server
@@ -1364,7 +1364,7 @@ function IrcBotsSubTab() {
               type="button"
               disabled={!sendTarget.trim() || !sendMessageText.trim() || sendIrcMutation.isPending}
               onClick={() => sendIrcMutation.mutate()}
-              className="flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               <Send className="h-3.5 w-3.5" />
               Send to Channel
@@ -1394,7 +1394,7 @@ function IrcBotsSubTab() {
               });
               setChannelDrawerOpen(true);
             }}
-            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
             Add Channel
@@ -1436,7 +1436,7 @@ function IrcBotsSubTab() {
               setEditingCommand({ command_type: 'static', enabled: true, admin_only: false });
               setCommandDrawerOpen(true);
             }}
-            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
             Add Command
@@ -1479,7 +1479,7 @@ function IrcBotsSubTab() {
               type="button"
               disabled={saveServerMutation.isPending}
               onClick={() => saveServerMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               {saveServerMutation.isPending ? 'Saving…' : 'Save IRC Server'}
             </button>
@@ -1710,7 +1710,7 @@ function IrcBotsSubTab() {
                 saveChannelMutation.isPending
               }
               onClick={() => saveChannelMutation.mutate()}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {saveChannelMutation.isPending ? 'Saving…' : 'Save channel'}
             </button>
@@ -1902,7 +1902,7 @@ function IrcBotsSubTab() {
               type="button"
               disabled={!editingCommand.command?.trim() || saveCommandMutation.isPending}
               onClick={() => saveCommandMutation.mutate()}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {saveCommandMutation.isPending ? 'Saving…' : 'Save command'}
             </button>

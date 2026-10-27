@@ -197,7 +197,7 @@ export function ConnectionEditor({
             type="button"
             onClick={save}
             disabled={!canSave}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             {saving ? 'Saving…' : connection ? 'Save changes' : 'Create connection'}
           </button>

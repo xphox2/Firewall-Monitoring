@@ -184,7 +184,7 @@ export function ConnectionOverview({ detail }: { detail: ConnectionDetail | unde
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
           {FAMILY_LABEL[detail.family ?? ''] ?? detail.family ?? 'link'}
         </span>
         <StatusChip status={connection?.status} />
@@ -582,7 +582,7 @@ export function ConnectionTraffic({
               onClick={() => setRange(option.value)}
               className={cn(
                 'rounded px-2 py-1 font-mono text-[11px] font-medium',
-                range === option.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                range === option.value ? 'bg-accent text-on-accent' : 'text-text-dim hover:text-text',
               )}
             >
               {option.label}

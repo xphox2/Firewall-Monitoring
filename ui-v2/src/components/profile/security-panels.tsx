@@ -196,7 +196,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
             resetWizard();
             setSetupOpen(true);
           }}
-          className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
         >
           Set up authenticator
         </button>
@@ -228,7 +228,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
               type="button"
               disabled={!password || busy}
               onClick={startSetup}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {busy ? 'Starting…' : 'Continue'}
             </button>
@@ -271,7 +271,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
                 resetWizard();
                 onChanged();
               }}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent"
             >
               I have saved the codes
             </button>
@@ -313,7 +313,7 @@ export function TwoFactorCard({ me, onChanged }: PanelProps) {
               type="button"
               disabled={code.trim().length < 6 || busy}
               onClick={verify}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {busy ? 'Verifying…' : 'Verify and enable'}
             </button>
@@ -481,7 +481,7 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
           disabled={!supported}
           title={supported ? undefined : 'This browser does not support WebAuthn'}
           onClick={() => setRegisterOpen(true)}
-          className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
+          className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
         >
           Register passkey
         </button>
@@ -509,7 +509,7 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
                 <div className="flex items-center gap-2 font-semibold text-text">
                   {pk.name}
                   {pk.backup_state && (
-                    <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">
+                    <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent-text">
                       synced
                     </span>
                   )}
@@ -599,7 +599,7 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
             type="button"
             disabled={!password || busy || (me?.totp_enabled && totpCode.trim().length < 6)}
             onClick={register}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             {busy ? 'Waiting for authenticator…' : 'Register passkey'}
           </button>
@@ -633,7 +633,7 @@ export function PasskeyCard({ me, onChanged }: PanelProps) {
             type="button"
             disabled={!renameName.trim() || renaming}
             onClick={rename}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             {renaming ? 'Saving…' : 'Save name'}
           </button>

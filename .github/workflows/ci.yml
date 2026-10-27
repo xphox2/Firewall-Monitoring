@@ -337,7 +337,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install deps
@@ -353,6 +353,44 @@ jobs:
             git --no-pager diff -- cmd/api/static/css/tailwind.css
             exit 1
           fi
+
+  ui-v2-unit:
+    name: Admin UI V2 unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    # Pull requests only (merge gate), and only when ui-v2/ changed —
+    # backend-only PRs skip it entirely.
+    #
+    # The vitest suite has NEVER run on the server. Every assertion in it
+    # — the API client's envelope handling, the filter builders, the report
+    # export, the deploy info, the chart series — was checked locally and
+    # nowhere else, so a regression could land on master and be green.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.ui == 'true'
+    steps:
+      - name: Check out
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd7f6820020  # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui-v2/package-lock.json
+
+      - name: Install deps
+        working-directory: ui-v2
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ui-v2
+        run: npm run typecheck
+
+      - name: Run the unit tests
+        working-directory: ui-v2
+        run: npm test
 
   ui-v2-e2e:
     name: Admin UI V2 E2E
@@ -374,7 +412,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: ui-v2/package-lock.json
 
@@ -420,7 +458,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: ui-v2/package-lock.json
 
