@@ -463,7 +463,7 @@ function DeviceInventoryView() {
         <button
           type="button"
           onClick={openCreateDrawer}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90 self-start"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-xs font-semibold text-on-accent hover:opacity-90 self-start"
         >
           <Plus className="h-4 w-4" />
           Add Firewall / Device
@@ -577,7 +577,7 @@ function DeviceInventoryView() {
                 type="button"
                 disabled={!editingDevice.name || !editingDevice.ip_address || saveDeviceMutation.isPending}
                 onClick={() => saveDeviceMutation.mutate()}
-                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
               >
                 {saveDeviceMutation.isPending ? 'Saving…' : 'Save Device'}
               </button>
@@ -1008,7 +1008,7 @@ function DeviceInventoryView() {
               type="button"
               onClick={() => testConnectionMutation.mutate()}
               disabled={testConnectionMutation.isPending}
-              className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-white hover:opacity-90"
+              className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               <Play className="h-3.5 w-3.5" />
               {testConnectionMutation.isPending ? 'Dialing device…' : 'Run Live SNMP Check'}
@@ -1552,7 +1552,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
           onClick={() => setChartRange(range)}
           className={cn(
             'rounded px-2 py-1 font-mono text-xs font-medium transition-colors',
-            chartRange === range ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+            chartRange === range ? 'bg-accent text-on-accent' : 'text-text-dim hover:text-text',
           )}
         >
           {range}
@@ -1665,7 +1665,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                             className={cn(
                               'rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase transition-colors',
                               expandedIface === iface.index
-                                ? 'border-accent/40 bg-accent/15 text-accent'
+                                ? 'border-accent/40 bg-accent/15 text-accent-text'
                                 : 'border-border bg-bg-card text-text-dim hover:text-text',
                             )}
                           >
@@ -1714,7 +1714,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                         traffic
                       </h3>
                       {ifaceChart?.source && (
-                        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-accent">
+                        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-accent-text">
                           {ifaceChart.source}
                         </span>
                       )}
@@ -1775,7 +1775,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                           className={cn(
                             'rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase transition-colors',
                             expandedTunnel === v.tunnel_name
-                              ? 'border-accent/40 bg-accent/15 text-accent'
+                              ? 'border-accent/40 bg-accent/15 text-accent-text'
                               : 'border-border bg-bg-card text-text-dim hover:text-text',
                           )}
                         >
@@ -1978,7 +1978,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                     type="button"
                     disabled={!selectedFrom || !selectedTo || selectedFrom.id === selectedTo.id}
                     onClick={() => setDiffOpen(true)}
-                    className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-40"
+                    className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-40"
                   >
                     Compare revisions
                   </button>
@@ -2130,7 +2130,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                       <button
                         type="button"
                         onClick={() => setRevisionToView(null)}
-                        className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white"
+                        className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent"
                       >
                         Close
                       </button>
@@ -2193,7 +2193,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                     <button
                       type="button"
                       onClick={() => retireMutation.mutate('restore')}
-                      className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white"
+                      className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent"
                     >
                       <RotateCcw className="h-3.5 w-3.5" /> Restore Active Polling
                     </button>

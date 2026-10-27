@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks } from './mocks';
+import { dataRows, dataView } from './helpers';
 
 const ALERTS = [
   {
@@ -70,13 +71,15 @@ test('filters alerts and bulk-acknowledges a selection', async ({ page }) => {
   ]);
 
   await page.goto('/admin/v2/alerts');
-  await expect(page.getByTestId('responsive-desktop-table').getByText('CPU is above threshold')).toBeVisible();
+  await expect(dataRows(page, 'CPU is above threshold')).toBeVisible();
 
   // A filter change must reach the list endpoint, not just the local state.
   await page.getByLabel('Filter by severity').selectOption('critical');
   await expect.poll(() => listUrls.at(-1) ?? '').toContain('severity=critical');
 
-  await page.getByLabel('Select alert 1').check();
+  // The view for the CURRENT viewport: both views are in the DOM and one
+  // of them is hidden, so a bare label locator matches two.
+  await dataView(page).getByLabel('Select alert 1').check();
   await expect(page.getByText('1 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Acknowledge' }).click();
 

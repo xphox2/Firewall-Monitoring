@@ -13,7 +13,7 @@ const TONE_CLASS: Record<CapabilityTone, string> = {
   ok: 'bg-sig-ok/15 text-sig-ok',
   warn: 'bg-sig-warn/15 text-sig-warn',
   crit: 'bg-sig-crit/15 text-sig-crit',
-  accent: 'bg-accent/15 text-accent',
+  accent: 'bg-accent/15 text-accent-text',
   muted: 'bg-bg-panel text-text-faint',
 };
 

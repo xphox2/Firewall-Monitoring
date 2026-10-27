@@ -83,7 +83,7 @@ export function CommandPalette({
                         key={item.id}
                         value={`${ws.title} ${item.label} ${item.description} ${item.keywords.join(' ')}`}
                         onSelect={() => runAction(() => navigate(item.path))}
-                        className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent"
+                        className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent-text"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <Icon className="h-4 w-4 shrink-0 text-text-faint" />
@@ -111,7 +111,7 @@ export function CommandPalette({
                       key={dev.id}
                       value={`device firewall ${dev.name} ${dev.status}`}
                       onSelect={() => runAction(() => navigate(`/devices/${dev.id}`))}
-                      className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent"
+                      className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent-text"
                     >
                       <div className="flex items-center gap-2.5">
                         <Server className="h-3.5 w-3.5 text-text-faint" />
@@ -138,7 +138,7 @@ export function CommandPalette({
                 <Command.Item
                   value="toggle day night theme dark light mode"
                   onSelect={() => runAction(toggleTheme)}
-                  className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent"
+                  className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent-text"
                 >
                   <div className="flex items-center gap-2.5">
                     {theme === 'dark' ? (
@@ -156,7 +156,7 @@ export function CommandPalette({
                       window.location.href = '/admin/dashboard';
                     })
                   }
-                  className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent"
+                  className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2 text-xs text-text cursor-pointer data-[selected=true]:bg-accent/15 data-[selected=true]:text-accent-text"
                 >
                   <div className="flex items-center gap-2.5">
                     <ExternalLink className="h-3.5 w-3.5 text-text-faint" />

@@ -238,7 +238,7 @@ export function EventsWorkspace() {
                 className={cn(
                   'rounded px-2 py-1 text-xs font-mono font-medium transition-colors',
                   windowRange === w
-                    ? 'bg-accent text-white'
+                    ? 'bg-accent text-on-accent'
                     : 'text-text-dim hover:text-text'
                 )}
               >
@@ -247,13 +247,20 @@ export function EventsWorkspace() {
             ))}
           </div>
 
-          {/* Sub-Tabs */}
-          <div className="flex items-center gap-1 rounded-lg bg-bg-panel p-1 border border-border">
+          {/*
+            The Sub-Tabs.
+
+            The strip SCROLLS rather than wraps: four tab labels do not fit
+            a 390px phone, and the shell clips whatever overflows, so a
+            non-scrolling strip silently cut the last tab off. The new
+            viewport check found it.
+          */}
+          <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-bg-panel p-1 border border-border">
             <button
               type="button"
               onClick={() => setTab('stream')}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'stream'
                   ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
@@ -266,7 +273,7 @@ export function EventsWorkspace() {
               type="button"
               onClick={() => setTab('analytics')}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'analytics'
                   ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
@@ -279,7 +286,7 @@ export function EventsWorkspace() {
               type="button"
               onClick={() => setTab('security')}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'security'
                   ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
@@ -292,7 +299,7 @@ export function EventsWorkspace() {
               type="button"
               onClick={() => setTab('security-analytics')}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-colors',
                 activeTab === 'security-analytics'
                   ? 'bg-bg-card text-text shadow-xs border border-border'
                   : 'text-text-dim hover:text-text'
@@ -924,7 +931,7 @@ function severityTone(value: number | null | undefined): string {
   const v = value ?? 0;
   if (v >= 7) return 'bg-sig-crit/15 text-sig-crit';
   if (v >= 4) return 'bg-sig-warn/15 text-sig-warn';
-  return 'bg-accent/15 text-accent';
+  return 'bg-accent/15 text-accent-text';
 }
 
 function SecEventInspector({ event }: { event: SecEventRow | undefined }) {
@@ -936,7 +943,7 @@ function SecEventInspector({ event }: { event: SecEventRow | undefined }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+        <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
           {classLabel(event.class)}
         </span>
         <span className="rounded bg-bg-panel px-2 py-0.5 text-[10px] uppercase text-text-dim">
@@ -1282,7 +1289,7 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
         id: 'class',
         header: 'Class',
         cell: ({ row }) => (
-          <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent">
+          <span className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-accent-text">
             {classLabel(row.original.class)}
           </span>
         ),

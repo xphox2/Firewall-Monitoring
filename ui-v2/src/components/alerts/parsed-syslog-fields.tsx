@@ -11,7 +11,7 @@ import {
 const SEVERITY_TONE: Record<string, string> = {
   crit: 'bg-sig-crit/15 text-sig-crit',
   warn: 'bg-sig-warn/15 text-sig-warn',
-  notice: 'bg-accent/15 text-accent',
+  notice: 'bg-accent/15 text-accent-text',
   info: 'bg-bg-panel text-text-dim',
 };
 

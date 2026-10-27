@@ -123,7 +123,7 @@ export function AppShell() {
         {/* Brand Header */}
         <div className="flex items-center justify-between px-4 h-14 border-b border-border shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent border border-accent/30">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent-text border border-accent/30">
               <Shield className="h-4 w-4" />
             </div>
             <div>
@@ -131,7 +131,7 @@ export function AppShell() {
                 <span className="font-display text-sm font-bold tracking-tight text-text">
                   FIREWALL-MON
                 </span>
-                <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent">
+                <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent-text">
                   V2
                 </span>
                 <span className="rounded bg-sig-warn/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-sig-warn">
@@ -185,7 +185,7 @@ export function AppShell() {
                           cn(
                             'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium transition-colors',
                             isActive
-                              ? 'bg-accent/15 text-accent font-semibold border-l-2 border-accent'
+                              ? 'bg-accent/15 text-accent-text font-semibold border-l-2 border-accent'
                               : 'text-text-dim hover:bg-bg-hover hover:text-text',
                           )
                         }
@@ -264,7 +264,7 @@ export function AppShell() {
             <div className="flex items-center gap-1.5">
               <Shield className="h-4 w-4 text-accent" />
               <span className="font-display text-xs font-bold tracking-tight">FW-MON</span>
-              <span className="rounded bg-accent/20 px-1 py-0.2 font-mono text-[9px] font-semibold text-accent">
+              <span className="rounded bg-accent/20 px-1 py-0.2 font-mono text-[9px] font-semibold text-accent-text">
                 V2
               </span>
               <span className="rounded bg-sig-warn/20 px-1 py-0.2 font-mono text-[9px] font-semibold uppercase text-sig-warn">
@@ -503,7 +503,7 @@ export function AppShell() {
                             'flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs font-medium',
                             'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent',
                             isActive
-                              ? 'bg-accent/15 text-accent font-semibold'
+                              ? 'bg-accent/15 text-accent-text font-semibold'
                               : 'text-text-dim hover:bg-bg-hover hover:text-text',
                           )
                         }

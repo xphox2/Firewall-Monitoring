@@ -167,7 +167,7 @@ export function ProfileMatrixDrawer({ open, onOpenChange, profile, types, onSave
               type="button"
               disabled={dirty === 0 || saving}
               onClick={save}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save matrix'}
             </button>

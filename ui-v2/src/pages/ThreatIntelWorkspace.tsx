@@ -64,7 +64,7 @@ function expiryLabel(value: string): string {
 const SEVERITY_STYLE: Record<string, string> = {
   critical: 'bg-sig-crit/15 text-sig-crit',
   warning: 'bg-sig-warn/15 text-sig-warn',
-  info: 'bg-accent/15 text-accent',
+  info: 'bg-accent/15 text-accent-text',
 };
 
 const FEED_TONE: Record<string, string> = {
@@ -176,7 +176,7 @@ function LookupTab() {
             type="button"
             onClick={run}
             disabled={!query.trim() || loading}
-            className="rounded-md bg-accent px-4 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            className="rounded-md bg-accent px-4 py-2 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {loading ? 'Checking…' : 'Look up'}
           </button>
@@ -715,7 +715,7 @@ function IndicatorsSection() {
             type="button"
             disabled={!cidr.trim() || addMutation.isPending}
             onClick={() => addMutation.mutate()}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             <Plus className="h-3.5 w-3.5" />
             Add indicator
@@ -932,7 +932,7 @@ function StormTab() {
         type="button"
         disabled={save.isPending || value === null || !valid || isLoading}
         onClick={() => save.mutate()}
-        className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+        className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
       >
         {save.isPending ? 'Saving…' : 'Save threshold'}
       </button>

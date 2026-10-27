@@ -411,7 +411,7 @@ export function IpsecWizard({
               type="button"
               onClick={runPreview}
               disabled={!canPreview || previewing}
-              className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent disabled:opacity-50"
+              className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent-text disabled:opacity-50"
             >
               {previewing ? 'Rendering…' : 'Preview the config'}
             </button>
@@ -424,7 +424,7 @@ export function IpsecWizard({
               // no findings, so nothing would stand between an invalid
               // intent and the database.
               disabled={saving || !preview || blocking.length > 0}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create tunnel'}
             </button>

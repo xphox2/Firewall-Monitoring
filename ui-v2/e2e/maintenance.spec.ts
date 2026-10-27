@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks } from './mocks';
+import { dataView } from './helpers';
 
 test('schedules a weekly recurring maintenance window', async ({ page }) => {
   const posted: Array<Record<string, unknown>> = [];
@@ -48,7 +49,7 @@ test('schedules a weekly recurring maintenance window', async ({ page }) => {
   await expect(page.getByText('Maintenance window scheduled')).toBeVisible();
   // The list is refetched after the create: the card/table must show the
   // recurrence, not just accept the payload.
-  const table = page.getByTestId('responsive-desktop-table');
+  const table = dataView(page);
   await expect(table.getByText('Weekly patching')).toBeVisible();
   await expect(table.getByText('Weekly · Mon, Wed')).toBeVisible();
 

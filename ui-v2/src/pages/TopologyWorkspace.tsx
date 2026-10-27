@@ -656,7 +656,7 @@ function ConnectionsSubTab() {
             setConnToEdit(null);
             setEditorOpen(true);
           }}
-          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent"
+          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent-text"
         >
           New connection
         </button>
@@ -1175,7 +1175,7 @@ function IpsecTunnelsSubTab() {
               ? 'Declare a new IPSec tunnel'
               : 'Admin only — provisioning a tunnel is an admin action'
           }
-          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent-text disabled:cursor-not-allowed disabled:opacity-50"
         >
           New tunnel
         </button>

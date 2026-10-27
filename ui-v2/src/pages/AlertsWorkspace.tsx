@@ -99,13 +99,13 @@ interface IncidentRow {
 const SEVERITY_STYLE: Record<string, string> = {
   critical: 'bg-sig-crit/15 text-sig-crit',
   warning: 'bg-sig-warn/15 text-sig-warn',
-  info: 'bg-accent/15 text-accent',
+  info: 'bg-accent/15 text-accent-text',
 };
 
 const STATE_STYLE: Record<string, string> = {
   open: 'bg-sig-crit/15 text-sig-crit',
   acknowledged: 'bg-sig-ok/15 text-sig-ok',
-  snoozed: 'bg-accent/15 text-accent',
+  snoozed: 'bg-accent/15 text-accent-text',
   resolved: 'bg-bg-panel text-text-faint',
 };
 
@@ -710,7 +710,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                   onClick={() => setRange(r.value)}
                   className={cn(
                     'rounded px-2 py-1 font-mono text-[11px] font-medium',
-                    range === r.value ? 'bg-accent text-white' : 'text-text-dim hover:text-text',
+                    range === r.value ? 'bg-accent text-on-accent' : 'text-text-dim hover:text-text',
                   )}
                 >
                   {r.value}
@@ -1151,7 +1151,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                     type="button"
                     disabled={!suggestedRule?.rule || createSuggestedRule.isPending}
                     onClick={() => createSuggestedRule.mutate()}
-                    className="w-full rounded bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    className="w-full rounded bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
                   >
                     Create rule and acknowledge
                   </button>
@@ -1181,7 +1181,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               type="button"
               onClick={() => (selectAllMatching ? bulkSnoozeFilter.mutate() : bulkSnooze.mutate())}
               disabled={bulkSnooze.isPending || bulkSnoozeFilter.isPending}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {selectAllMatching
                 ? `Snooze all ${total.toLocaleString()} matching`

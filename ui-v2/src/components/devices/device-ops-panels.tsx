@@ -359,7 +359,7 @@ export function RecentAlertsPanel({ alerts }: { alerts: any[] }) {
                         ? 'bg-sig-crit/15 text-sig-crit'
                         : alert.severity === 'warning'
                           ? 'bg-sig-warn/15 text-sig-warn'
-                          : 'bg-accent/15 text-accent',
+                          : 'bg-accent/15 text-accent-text',
                     )}
                   >
                     {alert.severity || 'info'}

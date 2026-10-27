@@ -267,7 +267,7 @@ export function MaintenanceWorkspace() {
             <span
               className={cn(
                 'rounded px-2 py-0.5 text-[10px] font-semibold',
-                recurring ? 'bg-accent/15 text-accent' : 'bg-bg-panel text-text-faint',
+                recurring ? 'bg-accent/15 text-accent-text' : 'bg-bg-panel text-text-faint',
               )}
             >
               {recurrenceLabel(
@@ -405,7 +405,7 @@ export function MaintenanceWorkspace() {
             });
             setDrawerOpen(true);
           }}
-          className="flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90 self-start"
+          className="flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-xs font-semibold text-on-accent hover:opacity-90 self-start"
         >
           <Plus className="h-4 w-4" />
           Schedule Window
@@ -465,7 +465,7 @@ export function MaintenanceWorkspace() {
               type="button"
               disabled={!editing.name?.trim() || saveMutation.isPending}
               onClick={() => saveMutation.mutate()}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
             >
               Save Window
             </button>
@@ -554,7 +554,7 @@ export function MaintenanceWorkspace() {
                             className={cn(
                               'inline-flex cursor-pointer items-center rounded border px-2 py-1 text-[11px] font-medium',
                               active
-                                ? 'border-accent/40 bg-accent/15 text-accent'
+                                ? 'border-accent/40 bg-accent/15 text-accent-text'
                                 : 'border-border bg-bg-panel text-text-dim',
                             )}
                           >

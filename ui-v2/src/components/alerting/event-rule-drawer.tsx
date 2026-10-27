@@ -231,7 +231,7 @@ export function EventRuleDrawer({
               type="button"
               disabled={saving}
               onClick={save}
-              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : rule ? 'Save changes' : 'Create rule'}
             </button>
@@ -790,7 +790,7 @@ export function EventRuleDrawer({
             type="button"
             disabled={previewing}
             onClick={runPreview}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90 disabled:opacity-50"
           >
             <FlaskConical className="h-3.5 w-3.5" />
             {previewing ? 'Scanning…' : 'Run preview'}

@@ -876,7 +876,7 @@ export function AlertingWorkspace() {
               'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
               row.original.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
               row.original.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
-              row.original.action === 'customize' && 'bg-accent/15 text-accent',
+              row.original.action === 'customize' && 'bg-accent/15 text-accent-text',
             )}
           >
             {row.original.action}
@@ -1335,7 +1335,7 @@ export function AlertingWorkspace() {
                       setProfileForm({ name: '', description: '' });
                       setProfileFormOpen(true);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     New Profile
@@ -1353,7 +1353,7 @@ export function AlertingWorkspace() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-display text-xs font-bold text-text">{prof.name}</span>
                       {prof.is_default && (
-                        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent">
+                        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent-text">
                           DEFAULT
                         </span>
                       )}
@@ -1459,7 +1459,7 @@ export function AlertingWorkspace() {
                       setEditingRule(null);
                       setRuleDrawerOpen(true);
                     }}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:opacity-90"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     New Rule
@@ -1486,7 +1486,7 @@ export function AlertingWorkspace() {
                           'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
                           r.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
                           r.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
-                          r.action === 'customize' && 'bg-accent/15 text-accent',
+                          r.action === 'customize' && 'bg-accent/15 text-accent-text',
                         )}
                       >
                         {r.action}
@@ -1555,7 +1555,7 @@ export function AlertingWorkspace() {
                 <button
                   type="button"
                   onClick={handleRunRuleTest}
-                  className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover"
+                  className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover"
                 >
                   Test Match Expression
                 </button>
@@ -1609,7 +1609,7 @@ export function AlertingWorkspace() {
                 type="button"
                 onClick={() => openPolicyDrawer()}
                 data-testid="new-notification-profile-btn"
-                className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover"
+                className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>New Profile</span>
@@ -1750,7 +1750,7 @@ export function AlertingWorkspace() {
                   onClick={handleSavePolicy}
                   disabled={savingPolicy}
                   data-testid="save-policy-drawer-btn"
-                  className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent-hover disabled:opacity-50"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   <span>{savingPolicy ? 'Saving...' : 'Save Profile'}</span>
@@ -2044,7 +2044,7 @@ export function AlertingWorkspace() {
                     {simChannels.map((channel) => (
                       <span
                         key={channel}
-                        className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent"
+                        className="rounded bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent-text"
                       >
                         {channel}
                       </span>
@@ -2089,7 +2089,7 @@ export function AlertingWorkspace() {
               type="button"
               disabled={!profileForm.name.trim() || profileBusy}
               onClick={saveProfile}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               {profileForm.id ? 'Save profile' : 'Create profile'}
             </button>
@@ -2148,7 +2148,7 @@ export function AlertingWorkspace() {
               type="button"
               disabled={!cloneName.trim() || profileBusy}
               onClick={cloneProfile}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
             >
               Clone profile
             </button>

@@ -3,6 +3,11 @@
 package database
 
 import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"firewall-mon/internal/models"
@@ -120,37 +125,40 @@ var testModels = []interface{}{
 	&models.ArchiveRestoreObject{},
 }
 
-// NewDatabaseForTesting creates an in-memory SQLite Database for use in tests.
-// The returned Database has no batch inserters (trapBatch etc. are nil) since
-// handlers use db.Gorm().Create() directly for single-record writes.
-func NewDatabaseForTesting(t interface {
-	Helper()
-	Fatal(...interface{})
-}) *Database {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Fatal("NewDatabaseForTesting: open SQLite:", err)
-	}
+// The schema template.
+//
+// Every test used to build the schema from scratch: AutoMigrate over 80
+// models. That costs 15ms without the race detector and **356ms with it** —
+// the pure-Go SQLite parser is instrumented by the race detector, so every
+// statement costs 23x more. The package has 766 tests, so that was **4.5
+// minutes of the race suite's wall clock spent re-creating an identical
+// schema** — which is why `go test -race ./internal/database/` needed
+// 4m37s and overflowed a 5-minute timeout on a busy machine. It looked
+// like a deadlock; the goroutine dump showed the parser, not a lock.
+//
+// The schema is now built ONCE, into a template file, and each test gets a
+// COPY. The copy is file I/O, so the per-test cost is a few milliseconds
+// of copying instead of 356ms of parsing.
+//
+// The copy is a FILE rather than `:memory:` so the schema arrives without
+// being parsed at all. The pool is still pinned to ONE connection, so the
+// concurrent paths behave exactly as they did: the goroutines queue on the
+// pool instead of running in parallel.
+var (
+	schemaOnce sync.Once
+	schemaPath string
+	schemaErr  error
+)
 
-	// Pin the pool to ONE connection. `:memory:` gives every connection its own
-	// private, empty database, so the moment anything queries concurrently a
-	// second connection opens and reports "no such table" for tables the first
-	// connection migrated. Sequential code never noticed because the single
-	// connection was returned to the pool between queries; GetFlowStats now runs
-	// its rolled-up panels concurrently, which exposed it. One connection also
-	// keeps that concurrent path under test: the goroutines queue on the pool
-	// instead of running in parallel, so the scheduling and merge ordering are
-	// still exercised.
-	if sqlDB, dbErr := db.DB(); dbErr == nil {
-		sqlDB.SetMaxOpenConns(1)
-	}
-
+// buildTestSchema creates the harness's schema on db.
+//
+// It is factored out so the template and a direct migration build the
+// IDENTICAL schema: the template is only a faster way to get there, not a
+// different database.
+func buildTestSchema(fatal func(...interface{}), db *gorm.DB) {
 	for _, m := range testModels {
 		if err := db.AutoMigrate(m); err != nil {
-			t.Fatal("NewDatabaseForTesting: AutoMigrate:", err)
+			fatal("NewDatabaseForTesting: AutoMigrate:", err)
 		}
 	}
 
@@ -163,14 +171,110 @@ func NewDatabaseForTesting(t interface {
 	db.Raw(`SELECT count(*) FROM sqlite_master WHERE type='index' AND name='idx_devices_name' AND sql LIKE 'CREATE UNIQUE%'`).Scan(&uniqueName)
 	if uniqueName > 0 {
 		if err := db.Exec(`DROP INDEX IF EXISTS idx_devices_name`).Error; err != nil {
-			t.Fatal("NewDatabaseForTesting: drop unique idx_devices_name:", err)
+			fatal("NewDatabaseForTesting: drop unique idx_devices_name:", err)
 		}
 		if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_devices_name ON devices (name)`).Error; err != nil {
-			t.Fatal("NewDatabaseForTesting: create idx_devices_name:", err)
+			fatal("NewDatabaseForTesting: create idx_devices_name:", err)
 		}
 	}
 	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_name_active ON devices (name) WHERE retired_at IS NULL`).Error; err != nil {
-		t.Fatal("NewDatabaseForTesting: create idx_devices_name_active:", err)
+		fatal("NewDatabaseForTesting: create idx_devices_name_active:", err)
+	}
+}
+
+// schemaTemplate builds the schema ONCE and returns the path of a SQLite
+// file holding it.
+func schemaTemplate() (string, error) {
+	schemaOnce.Do(func() {
+		db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Silent),
+		})
+		if err != nil {
+			schemaErr = fmt.Errorf("open the schema template database: %w", err)
+			return
+		}
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			sqlDB.SetMaxOpenConns(1)
+		}
+		buildTestSchema(func(args ...interface{}) {
+			schemaErr = fmt.Errorf("%v", args...)
+		}, db)
+		if schemaErr != nil {
+			return
+		}
+		dir, err := os.MkdirTemp("", "fwmon-schema-")
+		if err != nil {
+			schemaErr = fmt.Errorf("create the schema template directory: %w", err)
+			return
+		}
+		path := filepath.Join(dir, "schema.db")
+		// VACUUM INTO writes a compacted copy of the database to a file.
+		if err := db.Exec("VACUUM INTO ?", path).Error; err != nil {
+			schemaErr = fmt.Errorf("write the schema template: %w", err)
+			return
+		}
+		schemaPath = path
+	})
+	return schemaPath, schemaErr
+}
+
+// copyFile copies a file. The schema template is a couple of hundred
+// kilobytes, so a whole-file copy is cheaper than a streamed one and lets
+// the page cache do the work.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Close()
+}
+
+// NewDatabaseForTesting creates a SQLite Database for use in tests.
+// The returned Database has no batch inserters (trapBatch etc. are nil) since
+// handlers use db.Gorm().Create() directly for single-record writes.
+//
+// The schema comes from a template that is built once per process and copied
+// per test: re-migrating 80 models costs 356ms under the race detector, and
+// this package has 766 tests.
+func NewDatabaseForTesting(t interface {
+	Helper()
+	Fatal(...interface{})
+	// TempDir gives each test its own directory, so the copy is removed
+	// when the test ends.
+	TempDir() string
+}) *Database {
+	t.Helper()
+	template, err := schemaTemplate()
+	if err != nil {
+		t.Fatal("NewDatabaseForTesting: build the schema template:", err)
+	}
+	path := filepath.Join(t.TempDir(), "fwmon-test.db")
+	if err := copyFile(template, path); err != nil {
+		t.Fatal("NewDatabaseForTesting: copy the schema template:", err)
+	}
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal("NewDatabaseForTesting: open SQLite:", err)
+	}
+
+	// Pin the pool to ONE connection. The pool is pinned so the concurrent
+	// paths stay under test: the goroutines queue on the pool instead of
+	// running in parallel, so the scheduling and the merge ordering are
+	// still exercised. It also keeps a single SQLite connection, so the
+	// database has one writer and one reader.
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		sqlDB.SetMaxOpenConns(1)
 	}
 
 	// The ingest meter is real here: SaveSyslogMessages must count on the test

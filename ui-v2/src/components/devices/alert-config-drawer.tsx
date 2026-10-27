@@ -262,7 +262,7 @@ export function AlertConfigDrawer({
             type="button"
             onClick={save}
             disabled={!valid || isLoading}
-            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            className="rounded-md bg-accent px-3.5 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
           >
             <Save className="mr-1 inline h-3.5 w-3.5" />
             Save override

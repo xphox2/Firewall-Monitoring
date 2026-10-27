@@ -119,7 +119,27 @@ export function ResponsiveDataView<TData>({
     <div className={cn('w-full min-w-0', className)}>
       {/* Mobile (<768px): Touch-Friendly NOC Card Stack — Zero Horizontal Overflow */}
       <div className="md:hidden space-y-2.5" data-testid="responsive-mobile-cards">
-        {rows.map((row, idx) => (
+        {rows.map((row, idx) => {
+          /*
+           * The row's actions.
+           *
+           * The card and the table had SEPARATE markup, and thirteen tables
+           * forgot the actions in the card — so on a phone an operator
+           * could not approve a collector, disable a user, reset a
+           * password, delete a flow or open a connection. The three-viewport
+           * matrix found it: the interaction specs passed at the desktop
+           * width and could not find the button at the phone width.
+           *
+           * The actions column and the selection column are rendered HERE,
+           * from the columns themselves, so a table cannot forget them. A
+           * table with neither gets neither.
+           */
+          const carriedCells = row
+            .getVisibleCells()
+            .filter(
+              (cell) => cell.column.id === 'actions' || cell.column.id === 'select',
+            );
+          return (
           <div
             key={row.id}
             onClick={onRowClick ? () => onRowClick(row.original) : undefined}
@@ -145,8 +165,21 @@ export function ResponsiveDataView<TData>({
             )}
           >
             {renderMobileCard(row.original, idx)}
+            {carriedCells.length > 0 ? (
+              <div
+                className="mt-2 flex items-center justify-end gap-2"
+                // The card is a button, so a press on an action must not
+                // also trigger the card.
+                onClick={(event) => event.stopPropagation()}
+              >
+                {carriedCells.map((cell) =>
+                  flexRender(cell.column.columnDef.cell, cell.getContext()),
+                )}
+              </div>
+            ) : null}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Tablet & Desktop (>=768px): High-Density Tabular-Nums Data Grid */}
@@ -174,12 +207,20 @@ export function ResponsiveDataView<TData>({
                         scope="col"
                         // The sort state belongs on the header cell, so a
                         // screen reader announces it.
+                        //
+                        // A SORTABLE column that is not the sorted one
+                        // carries "none", not nothing: the ARIA spec asks
+                        // for aria-sort on every sortable header, so an
+                        // operator can hear that the column can be sorted
+                        // at all.
                         aria-sort={
-                          sorted === 'asc'
-                            ? 'ascending'
-                            : sorted === 'desc'
-                              ? 'descending'
-                              : undefined
+                          !canSort
+                            ? undefined
+                            : sorted === 'asc'
+                              ? 'ascending'
+                              : sorted === 'desc'
+                                ? 'descending'
+                                : 'none'
                         }
                         className={cn(
                           'px-3.5 py-2.5 select-none whitespace-nowrap',

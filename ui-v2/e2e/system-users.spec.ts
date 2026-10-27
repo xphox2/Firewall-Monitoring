@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installApiMocks } from './mocks';
+import { dataRowByName } from './helpers';
 
 test('disables another user but blocks disabling yourself', async ({ page }) => {
   const putBodies: unknown[] = [];
@@ -37,15 +38,15 @@ test('disables another user but blocks disabling yourself', async ({ page }) => 
   ]);
 
   await page.goto('/admin/v2/configuration/system');
-  const table = page.getByTestId('responsive-desktop-table');
-  await expect(table.getByText('operator', { exact: true })).toBeVisible();
+  // The card carries the username AND the role badge, and both read
+  // "operator", so the row is located by the ROLE and the button by its
+  // name.
+  const operatorRow = dataRowByName(page, 'operator');
+  await expect(operatorRow).toBeVisible();
 
-  const selfRow = table.getByRole('row').filter({ hasText: 'e2e-admin' });
+  const selfRow = dataRowByName(page, 'e2e-admin');
   await expect(selfRow.getByRole('button', { name: 'Disable' })).toBeDisabled();
 
-  const operatorRow = table
-    .getByRole('row')
-    .filter({ has: page.getByText('operator', { exact: true }) });
   await operatorRow.getByRole('button', { name: 'Disable' }).click();
 
   await expect(page.getByText('User disabled')).toBeVisible();

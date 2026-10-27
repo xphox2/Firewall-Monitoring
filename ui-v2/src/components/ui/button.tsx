@@ -5,7 +5,7 @@ export type ButtonVariant = 'default' | 'secondary' | 'ghost' | 'destructive' | 
 export type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 
 const VARIANTS: Record<ButtonVariant, string> = {
-  default: 'bg-accent text-white hover:bg-accent-hover',
+  default: 'bg-accent text-on-accent hover:bg-accent-hover',
   secondary: 'border border-border bg-bg-panel text-text-dim hover:text-text',
   ghost: 'text-text-dim hover:bg-bg-hover hover:text-text',
   destructive: 'bg-sig-crit text-white hover:opacity-90',
