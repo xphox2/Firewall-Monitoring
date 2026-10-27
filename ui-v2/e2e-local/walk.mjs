@@ -71,7 +71,12 @@ const axeFindings = [];
 /** What the page actually rendered. */
 async function rendered(page) {
   return page.evaluate(() => {
-    const rows = document.querySelectorAll('table tbody tr').length;
+    // The DATA VIEW's rows, not every table on the page: a page can carry
+    // a filter table or a summary table, and counting those makes a page
+    // with no data look like it has some.
+    const view = document.querySelector('[data-testid="responsive-desktop-table"]');
+    const rows = view ? view.querySelectorAll('tbody tr').length : 0;
+    const allRows = document.querySelectorAll('table tbody tr').length;
     const cards = document.querySelectorAll('[data-testid="row-card"], article').length;
     const text = (document.body.innerText || '').trim();
     const headings = [...document.querySelectorAll('h1, h2')].map((h) => h.innerText.trim());
@@ -79,6 +84,7 @@ async function rendered(page) {
       theme: document.documentElement.getAttribute('data-theme'),
       bodyBg: getComputedStyle(document.body).backgroundColor,
       rows,
+      allRows,
       cards,
       buttons: document.querySelectorAll('button').length,
       inputs: document.querySelectorAll('input, select, textarea').length,
@@ -181,6 +187,7 @@ for (const [name, viewport] of Object.entries(VIEWPORTS)) {
         label,
         headings: info.headings,
         tableRows: info.rows,
+        allTableRows: info.allRows,
         cards: info.cards,
         buttons: info.buttons,
         inputs: info.inputs,
