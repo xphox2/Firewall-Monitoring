@@ -15,7 +15,9 @@ All notable changes to this project are documented in this file.
   work.
 - The action also has a **name** now. The card's content is caller-provided
   and may hold its own buttons ("Edit"), so the name comes from the row's
-  identity, with a `rowLabel` prop for the callers that know better.
+  identity — with a `rowLabel` prop for the callers that know better —
+  and a row that nothing names falls back to **the card's own text**, which
+  is what the name was before.
 
 ### Fixed — The tinted chips were below the contrast bar
 

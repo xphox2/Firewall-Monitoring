@@ -69,9 +69,9 @@ function defaultRowLabel(row: unknown): string | null {
     'key',
     'alert_type',
     'trap_type',
+    'trap_oid',
     'type',
     'category',
-    'severity',
     'site_name',
     'collector_name',
     'address',
@@ -86,8 +86,10 @@ function defaultRowLabel(row: unknown): string | null {
   if (record) {
     for (const field of fields) {
       const value = record[field];
+      // A STRING only. A number is never a name: `severity` is a number
+      // on a syslog row, and "Open 6" reads as a row index while meaning
+      // a severity level - worse than "Open row 3".
       if (typeof value === 'string' && value.trim()) return value.trim();
-      if (typeof value === 'number') return String(value);
     }
   }
   return null;
@@ -127,6 +129,10 @@ export function ResponsiveDataView<TData>({
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
   // Re-read the cards' text whenever the rows change.
+  //
+  // The dependency is the DATA, and a sort does not need one: the labels
+  // are keyed by row id and a sort reorders the rows without changing a
+  // row's text, so the labels stay correct.
   useEffect(() => {
     const next: Record<string, string> = {};
     contentRefs.current.forEach((el, id) => {

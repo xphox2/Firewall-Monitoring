@@ -77,7 +77,10 @@ async function rendered(page) {
     const view = document.querySelector('[data-testid="responsive-desktop-table"]');
     const rows = view ? view.querySelectorAll('tbody tr').length : 0;
     const allRows = document.querySelectorAll('table tbody tr').length;
-    const cards = document.querySelectorAll('[data-testid="row-card"], article').length;
+    // The mobile card stack's cards. The stack is the data view's own
+    // testid; the cards inside it are bare divs.
+    const stack = document.querySelector('[data-testid="responsive-mobile-cards"]');
+    const cards = stack ? stack.querySelectorAll(':scope > div').length : 0;
     const text = (document.body.innerText || '').trim();
     const headings = [...document.querySelectorAll('h1, h2')].map((h) => h.innerText.trim());
     return {
