@@ -29,6 +29,38 @@ const (
 	uiV2Package = "ui-v2/package.json"
 )
 
+// TestV2TheWorkflowActionPinsAreWellFormed pins the action pins.
+//
+// The workflow pins every action to a commit SHA, which is right. But a
+// mistyped SHA is a 39-character string that looks right in a diff and
+// fails the whole job at "Set up job" — before a single step runs, with an
+// error that says nothing about which line was wrong.
+//
+// So: every pin is a full 40-character SHA, and the same action always
+// uses the same one.
+func TestV2TheWorkflowActionPinsAreWellFormed(t *testing.T) {
+	root, _ := hygieneRepoFiles(t)
+	data, err := os.ReadFile(filepath.Join(root, ciWorkflow))
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	uses := regexp.MustCompile(`uses:\s*([a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+)@([0-9a-fA-F]+)`)
+	seen := map[string]string{}
+	for _, m := range uses.FindAllStringSubmatch(string(data), -1) {
+		action, sha := m[1], m[2]
+		if len(sha) != 40 {
+			t.Errorf("%s pins %s to %q — that is %d characters, not a 40-character commit SHA, and the job will fail at 'Set up job' with an error that does not say which line is wrong", ciWorkflow, action, sha, len(sha))
+		}
+		if prev, ok := seen[action]; ok && prev != sha {
+			t.Errorf("%s pins %s to two different SHAs (%s and %s) — one of them is wrong", ciWorkflow, action, prev, sha)
+		}
+		seen[action] = sha
+	}
+	if len(seen) == 0 {
+		t.Error("the workflow pins no actions — the check is not reading the file")
+	}
+}
+
 // TestV2TheUnitTestsRunInCI pins that the console's unit tests execute on
 // the server.
 func TestV2TheUnitTestsRunInCI(t *testing.T) {
