@@ -440,7 +440,7 @@ function DeviceInventoryView() {
             <span
               className={cn(
                 'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                published ? 'bg-sig-warn/15 text-sig-warn' : 'bg-bg-panel text-text-faint',
+                published ? 'bg-sig-warn/15 text-sig-warn-text' : 'bg-bg-panel text-text-faint',
               )}
               title={
                 published
@@ -1069,8 +1069,8 @@ function DeviceInventoryView() {
                 className={cn(
                   'rounded-lg border p-3 text-xs flex items-start gap-2',
                   testResult.success
-                    ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok'
-                    : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit'
+                    ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok-text'
+                    : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit-text'
                 )}
               >
                 {testResult.success ? (
@@ -1161,7 +1161,7 @@ function PurgeJobsPanel({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/5 p-4">
-      <h3 className="text-xs font-semibold text-sig-warn">
+      <h3 className="text-xs font-semibold text-sig-warn-text">
         {rows.length} purge job{rows.length === 1 ? '' : 's'} running
       </h3>
       <ul className="mt-2 space-y-1.5">
@@ -1179,7 +1179,7 @@ function PurgeJobsPanel({ isAdmin }: { isAdmin: boolean }) {
               type="button"
               onClick={() => cancelMutation.mutate(job.device_id)}
               disabled={cancelMutation.isPending}
-              className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-0.5 text-[10px] font-medium text-sig-crit disabled:opacity-50"
+              className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-0.5 text-[10px] font-medium text-sig-crit-text disabled:opacity-50"
             >
               Cancel
             </button>
@@ -1235,10 +1235,10 @@ function PurgeJobPanel({ deviceId, isAdmin }: { deviceId: number; isAdmin: boole
           className={cn(
             'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
             running
-              ? 'bg-sig-warn/15 text-sig-warn'
+              ? 'bg-sig-warn/15 text-sig-warn-text'
               : job.status === 'done'
-                ? 'bg-sig-ok/15 text-sig-ok'
-                : 'bg-sig-crit/15 text-sig-crit',
+                ? 'bg-sig-ok/15 text-sig-ok-text'
+                : 'bg-sig-crit/15 text-sig-crit-text',
           )}
         >
           {job.status}
@@ -1252,13 +1252,13 @@ function PurgeJobPanel({ deviceId, isAdmin }: { deviceId: number; isAdmin: boole
       <div className="text-[10px] text-text-faint">
         Requested by {job.requested_by || 'unknown'}
       </div>
-      {job.error ? <div className="text-[11px] text-sig-crit">{job.error}</div> : null}
+      {job.error ? <div className="text-[11px] text-sig-crit-text">{job.error}</div> : null}
       {running ? (
         <button
           type="button"
           onClick={() => cancelMutation.mutate()}
           disabled={cancelMutation.isPending}
-          className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1 text-[11px] font-medium text-sig-crit disabled:opacity-50"
+          className="rounded-md border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1 text-[11px] font-medium text-sig-crit-text disabled:opacity-50"
         >
           Cancel the purge
         </button>
@@ -1811,8 +1811,8 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 className={cn(
                   'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
                   device?.status === 'online'
-                    ? 'bg-sig-ok/15 text-sig-ok'
-                    : 'bg-sig-crit/15 text-sig-crit'
+                    ? 'bg-sig-ok/15 text-sig-ok-text'
+                    : 'bg-sig-crit/15 text-sig-crit-text'
                 )}
               >
                 {device?.status || 'unknown'}
@@ -1893,7 +1893,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                             className={cn(
                               'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
                               iface.status === 'up'
-                                ? 'bg-sig-ok/15 text-sig-ok'
+                                ? 'bg-sig-ok/15 text-sig-ok-text'
                                 : 'bg-bg-card text-text-faint'
                             )}
                           >
@@ -1976,8 +1976,8 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                           className={cn(
                             'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
                             v.status === 'up'
-                              ? 'bg-sig-ok/15 text-sig-ok'
-                              : 'bg-sig-crit/15 text-sig-crit'
+                              ? 'bg-sig-ok/15 text-sig-ok-text'
+                              : 'bg-sig-crit/15 text-sig-crit-text'
                           )}
                         >
                           {v.status || 'down'}
@@ -2325,7 +2325,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                 {revisionLoading ? (
                   <p className="p-6 text-center text-xs text-text-dim">Loading revision…</p>
                 ) : revisionError ? (
-                  <div className="m-4 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+                  <div className="m-4 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
                     Could not load the revision:{' '}
                     {revisionError instanceof Error ? revisionError.message : 'request failed'}
                   </div>
@@ -2393,7 +2393,7 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                   <button
                     type="button"
                     onClick={() => retireMutation.mutate('retire')}
-                    className="flex items-center gap-1.5 rounded-md border border-sig-warn/40 bg-sig-warn/10 px-3 py-1.5 text-xs font-semibold text-sig-warn"
+                    className="flex items-center gap-1.5 rounded-md border border-sig-warn/40 bg-sig-warn/10 px-3 py-1.5 text-xs font-semibold text-sig-warn-text"
                   >
                     <Archive className="h-3.5 w-3.5" /> Retire Device (Preserve History)
                   </button>

@@ -837,9 +837,9 @@ export function AlertingWorkspace() {
   const simSeverity = String(simEffective?.severity ?? 'info').toLowerCase();
   const simSeverityTone =
     simSeverity === 'critical'
-      ? 'text-sig-crit'
+      ? 'text-sig-crit-text'
       : simSeverity === 'warning'
-        ? 'text-sig-warn'
+        ? 'text-sig-warn-text'
         : 'text-text';
   const simThresholdHint = `from ${provenanceLabel(simProvenance?.threshold)}${
     simProvenance?.threshold === 'rule' && simProvenance?.rule_name
@@ -876,8 +876,8 @@ export function AlertingWorkspace() {
           <span
             className={cn(
               'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-              row.original.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
-              row.original.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
+              row.original.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn-text',
+              row.original.action === 'alert' && 'bg-sig-crit/15 text-sig-crit-text',
               row.original.action === 'customize' && 'bg-accent/15 text-accent-text',
             )}
           >
@@ -903,7 +903,7 @@ export function AlertingWorkspace() {
             onClick={() => toggleRule(row.original)}
             className={cn(
               'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
-              row.original.enabled ? 'bg-sig-ok/15 text-sig-ok' : 'bg-bg-panel text-text-mute',
+              row.original.enabled ? 'bg-sig-ok/15 text-sig-ok-text' : 'bg-bg-panel text-text-mute',
             )}
           >
             {row.original.enabled ? 'Enabled' : 'Disabled'}
@@ -932,7 +932,7 @@ export function AlertingWorkspace() {
               disabled={!isAdmin}
               onClick={() => setRuleToDelete(row.original)}
               aria-label={`Delete ${row.original.name}`}
-              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
+              className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit-text disabled:opacity-40"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -980,7 +980,7 @@ export function AlertingWorkspace() {
             <Sliders className="h-3.5 w-3.5" />
             <span>Thresholds & Detection</span>
             {dirtyKeys.length > 0 && (
-              <span className="rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn">
+              <span className="rounded-full bg-sig-warn/20 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn-text">
                 {dirtyKeys.length}
               </span>
             )}
@@ -1422,7 +1422,7 @@ export function AlertingWorkspace() {
                         <button
                           type="button"
                           onClick={() => setProfileToDelete(prof)}
-                          className="rounded border border-sig-crit/30 bg-sig-crit/10 px-2 py-1 text-[10px] font-semibold uppercase text-sig-crit"
+                          className="rounded border border-sig-crit/30 bg-sig-crit/10 px-2 py-1 text-[10px] font-semibold uppercase text-sig-crit-text"
                         >
                           Delete
                         </button>
@@ -1486,8 +1486,8 @@ export function AlertingWorkspace() {
                       <span
                         className={cn(
                           'rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                          r.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn',
-                          r.action === 'alert' && 'bg-sig-crit/15 text-sig-crit',
+                          r.action === 'suppress' && 'bg-sig-warn/15 text-sig-warn-text',
+                          r.action === 'alert' && 'bg-sig-crit/15 text-sig-crit-text',
                           r.action === 'customize' && 'bg-accent/15 text-accent-text',
                         )}
                       >
@@ -1505,7 +1505,7 @@ export function AlertingWorkspace() {
                         onClick={() => toggleRule(r)}
                         className={cn(
                           'rounded px-2 py-0.5 font-mono text-[10px] font-semibold uppercase',
-                          r.enabled ? 'bg-sig-ok/15 text-sig-ok' : 'bg-bg-panel text-text-mute',
+                          r.enabled ? 'bg-sig-ok/15 text-sig-ok-text' : 'bg-bg-panel text-text-mute',
                         )}
                       >
                         {r.enabled ? 'Enabled' : 'Disabled'}
@@ -1527,7 +1527,7 @@ export function AlertingWorkspace() {
                         disabled={!isAdmin}
                         onClick={() => setRuleToDelete(r)}
                         aria-label={`Delete ${r.name}`}
-                        className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit disabled:opacity-40"
+                        className="rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit-text disabled:opacity-40"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -1640,7 +1640,7 @@ export function AlertingWorkspace() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-display text-sm font-bold text-text">{pol.name}</span>
                       {pol.is_default && (
-                        <span className="rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok">
+                        <span className="rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok-text">
                           DEFAULT
                         </span>
                       )}
@@ -1706,7 +1706,7 @@ export function AlertingWorkspace() {
                           }}
                           title="Delete profile"
                           aria-label={`Delete ${pol.name}`}
-                          className="rounded border border-border bg-bg-panel p-1 text-text-faint hover:text-sig-crit"
+                          className="rounded border border-border bg-bg-panel p-1 text-text-faint hover:text-sig-crit-text"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1876,8 +1876,8 @@ export function AlertingWorkspace() {
                           className={cn(
                             'font-mono text-[10px] uppercase px-1.5 py-0.5 rounded',
                             r.enabled
-                              ? 'bg-sig-ok/15 text-sig-ok'
-                              : 'bg-sig-crit/15 text-sig-crit',
+                              ? 'bg-sig-ok/15 text-sig-ok-text'
+                              : 'bg-sig-crit/15 text-sig-crit-text',
                           )}
                         >
                           {r.enabled ? `Enabled (${r.severity || 'any'})` : 'Muted'}
@@ -1943,7 +1943,7 @@ export function AlertingWorkspace() {
           ) : simLoading ? (
             <p className="p-6 text-center text-xs text-text-dim">Resolving the effective policy…</p>
           ) : simError ? (
-            <p className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+            <p className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
               Could not resolve this policy. The alert engine may still be starting; try again in a
               moment.
             </p>
@@ -1953,10 +1953,10 @@ export function AlertingWorkspace() {
                 className={cn(
                   'rounded-lg border px-3 py-2 text-xs',
                   simState.tone === 'ok'
-                    ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok'
+                    ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok-text'
                     : simState.tone === 'warn'
-                      ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn'
-                      : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit',
+                      ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn-text'
+                      : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit-text',
                 )}
               >
                 <span className="font-semibold">{simState.label}.</span>{' '}
@@ -2032,7 +2032,7 @@ export function AlertingWorkspace() {
                   value={simEffective?.alert_enabled === false ? 'Off' : 'On'}
                   hint={simEffective?.in_maintenance ? 'maintenance window active' : 'scope switch'}
                   tone={
-                    simEffective?.alert_enabled === false ? 'text-sig-crit' : 'text-sig-ok'
+                    simEffective?.alert_enabled === false ? 'text-sig-crit-text' : 'text-sig-ok-text'
                   }
                 />
               </div>

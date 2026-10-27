@@ -36,7 +36,7 @@ export function RuleTestResultPanel({ result }: { result: RuleTestResult | null 
         <Kpi
           label="Matched"
           value={String(matched)}
-          tone={matched > 0 ? 'text-sig-ok' : 'text-text'}
+          tone={matched > 0 ? 'text-sig-ok-text' : 'text-text'}
         />
         <Kpi label="Match rate" value={`${rate.toFixed(1)}%`} />
         <Kpi label="Scanned" value={String(scanned)} />

@@ -89,9 +89,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               item.variant === 'info' && 'border-l-4 border-l-accent',
             )}
           >
-            {item.variant === 'success' && <CheckCircle2 className="h-4 w-4 text-sig-ok shrink-0 mt-0.5" />}
-            {item.variant === 'error' && <XCircle className="h-4 w-4 text-sig-crit shrink-0 mt-0.5" />}
-            {item.variant === 'warning' && <AlertTriangle className="h-4 w-4 text-sig-warn shrink-0 mt-0.5" />}
+            {item.variant === 'success' && <CheckCircle2 className="h-4 w-4 text-sig-ok-text shrink-0 mt-0.5" />}
+            {item.variant === 'error' && <XCircle className="h-4 w-4 text-sig-crit-text shrink-0 mt-0.5" />}
+            {item.variant === 'warning' && <AlertTriangle className="h-4 w-4 text-sig-warn-text shrink-0 mt-0.5" />}
             {item.variant === 'info' && <Info className="h-4 w-4 text-accent shrink-0 mt-0.5" />}
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-text">{item.title}</div>

@@ -29,7 +29,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   // The small square icon button.
   icon: 'rounded border border-border bg-bg-panel p-1 text-text-dim hover:text-text',
   // The destructive icon button.
-  'danger-icon': 'rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit',
+  'danger-icon': 'rounded border border-sig-crit/30 bg-sig-crit/10 p-1 text-sig-crit-text',
   // The ghost button.
   ghost: 'rounded-md text-text-dim hover:bg-bg-hover hover:text-text',
   // The destructive button.

@@ -156,9 +156,9 @@ function StatusChip({ status }: { status?: string }) {
       className={cn(
         'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
         up
-          ? 'bg-sig-ok/15 text-sig-ok'
+          ? 'bg-sig-ok/15 text-sig-ok-text'
           : down
-            ? 'bg-sig-crit/15 text-sig-crit'
+            ? 'bg-sig-crit/15 text-sig-crit-text'
             : 'bg-bg-panel text-text-faint',
       )}
     >
@@ -262,7 +262,7 @@ export function ConnectionOverview({ detail }: { detail: ConnectionDetail | unde
       ) : null}
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-text-dim">
-        <span className={cn('flex items-center gap-1', detail.has_flow_data ? 'text-sig-ok' : '')}>
+        <span className={cn('flex items-center gap-1', detail.has_flow_data ? 'text-sig-ok-text' : '')}>
           <Activity className="h-3.5 w-3.5" />
           {detail.has_flow_data ? 'Flow telemetry available' : 'No flow telemetry in the window'}
         </span>
@@ -463,11 +463,11 @@ export function ConnectionEvidence({ detail }: { detail: ConnectionDetail | unde
                       {row.vlan_id ? row.vlan_id : '—'}
                     </td>
                     <td className="px-2 py-1.5 text-[10px]">
-                      <span className={row.fresh ? 'text-sig-ok' : 'text-text-faint'}>
+                      <span className={row.fresh ? 'text-sig-ok-text' : 'text-text-faint'}>
                         {row.fresh ? 'fresh' : 'stale'}
                       </span>
                       {row.note && (
-                        <span className="ml-1 text-sig-warn" title={row.note}>
+                        <span className="ml-1 text-sig-warn-text" title={row.note}>
                           note
                         </span>
                       )}
@@ -524,7 +524,7 @@ export function ConnectionEvidence({ detail }: { detail: ConnectionDetail | unde
       </div>
 
       {(detail.source_provenance?.shared_counter || detail.dest_provenance?.shared_counter) && (
-        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+        <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
           One endpoint reports a single counter series across all of its phase-2 names, so
           per-selector byte totals cannot be attributed. Use the window totals above.
         </div>
@@ -594,13 +594,13 @@ export function ConnectionTraffic({
             <span className="text-accent">{formatBytes(chart.totalIn)}</span> in
           </span>
           <span>
-            <span className="text-sig-warn">{formatBytes(chart.totalOut)}</span> out
+            <span className="text-sig-warn-text">{formatBytes(chart.totalOut)}</span> out
           </span>
         </div>
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load connection traffic.
         </div>
       ) : (
@@ -636,7 +636,7 @@ export function ConnectionTraffic({
         <Kpi
           label="Peak out"
           value={formatBitsPerSecond(Math.max(0, ...chart.outbound))}
-          tone="text-sig-warn"
+          tone="text-sig-warn-text"
         />
       </div>
     </div>

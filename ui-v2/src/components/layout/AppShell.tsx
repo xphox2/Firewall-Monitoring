@@ -134,7 +134,7 @@ export function AppShell() {
                 <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-accent-text">
                   V2
                 </span>
-                <span className="rounded bg-sig-warn/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-sig-warn">
+                <span className="rounded bg-sig-warn/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-sig-warn-text">
                   Preview
                 </span>
               </div>
@@ -217,7 +217,7 @@ export function AppShell() {
                 </>
               ) : (
                 <>
-                  <Sun className="h-3.5 w-3.5 text-sig-warn" />
+                  <Sun className="h-3.5 w-3.5 text-sig-warn-text" />
                   <span>Day</span>
                 </>
               )}
@@ -228,7 +228,7 @@ export function AppShell() {
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-2.5 py-1.5 text-xs text-text-dim hover:text-text"
               title="Account Profile, 2FA & Passkeys"
             >
-              <UserCheck className="h-3.5 w-3.5 text-sig-ok" />
+              <UserCheck className="h-3.5 w-3.5 text-sig-ok-text" />
               <span className="truncate max-w-[75px]">{me?.username || 'admin'}</span>
             </button>
             <button
@@ -236,7 +236,7 @@ export function AppShell() {
               onClick={handleLogout}
               aria-label="Log out"
               title="Log out"
-              className="inline-flex items-center justify-center rounded-md border border-border bg-bg-panel p-1.5 text-text-faint hover:text-sig-crit hover:border-sig-crit/40 transition-colors"
+              className="inline-flex items-center justify-center rounded-md border border-border bg-bg-panel p-1.5 text-text-faint hover:text-sig-crit-text hover:border-sig-crit/40 transition-colors"
             >
               <LogOut className="h-3.5 w-3.5" />
             </button>
@@ -267,7 +267,7 @@ export function AppShell() {
               <span className="rounded bg-accent/20 px-1 py-0.2 font-mono text-[9px] font-semibold text-accent-text">
                 V2
               </span>
-              <span className="rounded bg-sig-warn/20 px-1 py-0.2 font-mono text-[9px] font-semibold uppercase text-sig-warn">
+              <span className="rounded bg-sig-warn/20 px-1 py-0.2 font-mono text-[9px] font-semibold uppercase text-sig-warn-text">
                 Preview
               </span>
             </div>
@@ -283,9 +283,9 @@ export function AppShell() {
               onClick={() => navigate('/devices')}
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel/70 px-2.5 py-1 text-xs hover:border-border-strong transition-colors shrink-0"
             >
-              <Server className="h-3.5 w-3.5 text-sig-ok" />
+              <Server className="h-3.5 w-3.5 text-sig-ok-text" />
               <span className="text-text-faint hidden sm:inline">Firewalls:</span>
-              <span className="font-mono font-semibold text-sig-ok tabular-nums">
+              <span className="font-mono font-semibold text-sig-ok-text tabular-nums">
                 <SkeletonValue loading={summaryLoading} width="w-8" height="1rem" />
                 {summaryLoading ? null : onlineDevices}
               </span>
@@ -293,7 +293,7 @@ export function AppShell() {
                 {summaryLoading ? '' : `/ ${totalDevices}`}
               </span>
               {offlineDevices > 0 && (
-                <span className="ml-1 rounded bg-sig-crit/15 px-1.5 py-0.2 font-mono text-[10px] font-semibold text-sig-crit">
+                <span className="ml-1 rounded bg-sig-crit/15 px-1.5 py-0.2 font-mono text-[10px] font-semibold text-sig-crit-text">
                   {offlineDevices} down
                 </span>
               )}
@@ -311,7 +311,7 @@ export function AppShell() {
                 {summaryLoading ? null : activeProbes}
               </span>
               {staleProbes > 0 && (
-                <span className="ml-1 rounded bg-sig-warn/15 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn">
+                <span className="ml-1 rounded bg-sig-warn/15 px-1.5 py-0.2 font-mono text-[10px] text-sig-warn-text">
                   {staleProbes} stale
                 </span>
               )}
@@ -333,7 +333,7 @@ export function AppShell() {
             {summary?.partial && (
               <span
                 title={`Degraded summary blocks: ${(summary.partial_blocks || []).join(', ')}`}
-                className="inline-flex items-center gap-1 rounded bg-sig-warn/15 px-2 py-0.5 text-[11px] text-sig-warn"
+                className="inline-flex items-center gap-1 rounded bg-sig-warn/15 px-2 py-0.5 text-[11px] text-sig-warn-text"
               >
                 <AlertTriangle className="h-3 w-3" />
                 Partial
@@ -376,12 +376,15 @@ export function AppShell() {
               role="status"
               className="mb-4 flex items-start gap-2.5 rounded-lg border border-sig-warn/30 bg-sig-warn/[0.06] px-3 py-2"
             >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sig-warn" aria-hidden="true" />
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sig-warn-text" aria-hidden="true" />
               <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-text-dim">
                 <strong className="text-text">Preview build.</strong> This console is now at feature
                 parity with the classic one. Classic remains the default while the preview is
                 evaluated — if anything looks off, switch to{' '}
-                <a href={v1EquivalentUrl} className="font-medium text-accent hover:underline">
+                {/* The accent TEXT variant, not the accent: this link sits
+                    on the banner's tinted background, and the accent on a
+                    tint measures 4.4:1 where WCAG AA wants 4.5:1. */}
+                <a href={v1EquivalentUrl} className="font-medium text-accent-text hover:underline">
                   Classic V1
                 </a>
                 .
@@ -471,7 +474,7 @@ export function AppShell() {
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-sig-crit"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs text-sig-crit-text"
             >
               <LogOut className="h-3.5 w-3.5" />
               <span>Logout</span>

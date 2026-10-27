@@ -26,8 +26,8 @@ export interface IpsecPreview {
 
 function findingTone(severity?: string): string {
   const value = String(severity ?? '').toLowerCase();
-  if (/block|error|critical|deny/.test(value)) return 'bg-sig-crit/15 text-sig-crit';
-  if (/warn/.test(value)) return 'bg-sig-warn/15 text-sig-warn';
+  if (/block|error|critical|deny/.test(value)) return 'bg-sig-crit/15 text-sig-crit-text';
+  if (/warn/.test(value)) return 'bg-sig-warn/15 text-sig-warn-text';
   return 'bg-accent/15 text-accent-text';
 }
 
@@ -38,7 +38,7 @@ export function IpsecPreviewPanel({ preview }: { preview: IpsecPreview | null | 
   }
   if (preview.error) {
     return (
-      <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+      <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
         {preview.error}
       </div>
     );
@@ -63,14 +63,14 @@ export function IpsecPreviewPanel({ preview }: { preview: IpsecPreview | null | 
       <section className="space-y-1.5">
         <h3 className="flex items-center gap-1.5 text-xs font-semibold text-text">
           {findings.length === 0 ? (
-            <ShieldCheck className="h-3.5 w-3.5 text-sig-ok" />
+            <ShieldCheck className="h-3.5 w-3.5 text-sig-ok-text" />
           ) : (
-            <ShieldAlert className="h-3.5 w-3.5 text-sig-warn" />
+            <ShieldAlert className="h-3.5 w-3.5 text-sig-warn-text" />
           )}
           Validation ({findings.length})
         </h3>
         {findings.length === 0 ? (
-          <p className="text-[11px] text-sig-ok">No validation findings — the preview is deployable.</p>
+          <p className="text-[11px] text-sig-ok-text">No validation findings — the preview is deployable.</p>
         ) : (
           <div className="space-y-1">
             {findings.map((finding, idx) => (

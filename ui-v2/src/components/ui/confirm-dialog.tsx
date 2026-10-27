@@ -61,7 +61,7 @@ export function ConfirmDialog({
             <div
               className={cn(
                 'rounded-full p-2',
-                destructive ? 'bg-sig-crit/15 text-sig-crit' : 'bg-sig-warn/15 text-sig-warn',
+                destructive ? 'bg-sig-crit/15 text-sig-crit-text' : 'bg-sig-warn/15 text-sig-warn-text',
               )}
             >
               <AlertTriangle className="h-4 w-4" />

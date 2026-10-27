@@ -102,7 +102,7 @@ export function Field({
           </span>
         ) : null}
         {error ? (
-          <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit">
+          <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit-text">
             {error}
           </span>
         ) : null}
@@ -127,7 +127,7 @@ export function Field({
         </span>
       ) : null}
       {error ? (
-        <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit">
+        <span id={errorId} role="alert" className="mt-1 block text-[10px] text-sig-crit-text">
           {error}
         </span>
       ) : null}

@@ -10,9 +10,9 @@ import {
 } from '@/lib/device-capabilities';
 
 const TONE_CLASS: Record<CapabilityTone, string> = {
-  ok: 'bg-sig-ok/15 text-sig-ok',
-  warn: 'bg-sig-warn/15 text-sig-warn',
-  crit: 'bg-sig-crit/15 text-sig-crit',
+  ok: 'bg-sig-ok/15 text-sig-ok-text',
+  warn: 'bg-sig-warn/15 text-sig-warn-text',
+  crit: 'bg-sig-crit/15 text-sig-crit-text',
   accent: 'bg-accent/15 text-accent-text',
   muted: 'bg-bg-panel text-text-faint',
 };
@@ -69,23 +69,23 @@ export function DeviceCapabilitiesPanel({
           Observed over the last {capabilities.window_hours}h
         </span>
         {capabilities.hardware && (
-          <span className="rounded bg-sig-warn/15 px-1.5 py-0.5 text-[10px] font-medium text-sig-warn">
+          <span className="rounded bg-sig-warn/15 px-1.5 py-0.5 text-[10px] font-medium text-sig-warn-text">
             {capabilities.hardware}
           </span>
         )}
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        <span className="rounded bg-sig-ok/15 px-2 py-0.5 text-[10px] font-semibold text-sig-ok">
+        <span className="rounded bg-sig-ok/15 px-2 py-0.5 text-[10px] font-semibold text-sig-ok-text">
           {summary.supported} supported
         </span>
-        <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold text-sig-warn">
+        <span className="rounded bg-sig-warn/15 px-2 py-0.5 text-[10px] font-semibold text-sig-warn-text">
           {summary.degraded} degraded
         </span>
         <span className="rounded bg-bg-panel px-2 py-0.5 text-[10px] font-semibold text-text-faint">
           {summary.inactive} inactive
         </span>
-        <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold text-sig-crit">
+        <span className="rounded bg-sig-crit/15 px-2 py-0.5 text-[10px] font-semibold text-sig-crit-text">
           {summary.unsupported} unsupported
         </span>
       </div>

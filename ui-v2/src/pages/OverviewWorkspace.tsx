@@ -98,7 +98,7 @@ export function OverviewWorkspace() {
                   : 'text-text-dim hover:text-text'
               )}
             >
-              <Tv className="h-3.5 w-3.5 text-sig-ok" />
+              <Tv className="h-3.5 w-3.5 text-sig-ok-text" />
               Live NOC Stream
             </button>
           </div>
@@ -117,12 +117,12 @@ export function OverviewWorkspace() {
             >
               <div className="flex items-center justify-between text-xs text-text-faint">
                 <span>Firewalls Online</span>
-                <Server className="h-4 w-4 text-sig-ok" />
+                <Server className="h-4 w-4 text-sig-ok-text" />
               </div>
               <div className="mt-2 flex items-baseline gap-2">
                 <SkeletonValue loading={summaryLoading} width="w-14" height="2rem" />
                 {summaryLoading ? null : (
-                  <span className="font-display text-2xl font-bold text-sig-ok tabular-nums">{online}</span>
+                  <span className="font-display text-2xl font-bold text-sig-ok-text tabular-nums">{online}</span>
                 )}
                 <span className="font-mono text-xs text-text-mute">
                   {summaryLoading ? '' : `/ ${total} total`}
@@ -132,7 +132,7 @@ export function OverviewWorkspace() {
                 {summaryLoading ? (
                   ''
                 ) : offline > 0 ? (
-                  <span className="text-sig-crit font-medium">{offline} offline</span>
+                  <span className="text-sig-crit-text font-medium">{offline} offline</span>
                 ) : (
                   'All monitored firewalls reachable'
                 )}
@@ -182,7 +182,7 @@ export function OverviewWorkspace() {
             >
               <div className="flex items-center justify-between text-xs text-text-faint">
                 <span>24h SNMP Traps</span>
-                <BellRing className="h-4 w-4 text-sig-warn" />
+                <BellRing className="h-4 w-4 text-sig-warn-text" />
               </div>
               <div className="mt-2 font-display text-2xl font-bold text-text tabular-nums">
                 <SkeletonValue loading={summaryLoading} width="w-20" height="2rem" />
@@ -256,7 +256,7 @@ export function OverviewWorkspace() {
                       <HardDrive className="h-4 w-4" />
                       Storage, Retention & Archive
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok">
+                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok-text">
                       <CheckCircle2 className="h-3 w-3" />
                       LIVE
                     </span>
@@ -278,10 +278,10 @@ export function OverviewWorkspace() {
                 <div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1.5 font-display text-xs font-bold text-text">
-                      <BellRing className="h-4 w-4 text-sig-warn" />
+                      <BellRing className="h-4 w-4 text-sig-warn-text" />
                       Unified Alerting & Detection
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok">
+                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok-text">
                       <CheckCircle2 className="h-3 w-3" />
                       LIVE
                     </span>
@@ -306,7 +306,7 @@ export function OverviewWorkspace() {
                       <Sliders className="h-4 w-4 text-accent" />
                       System, Users & Access
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok">
+                    <span className="inline-flex items-center gap-1 rounded bg-sig-ok/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-sig-ok-text">
                       <CheckCircle2 className="h-3 w-3" />
                       LIVE
                     </span>
@@ -354,8 +354,8 @@ export function OverviewWorkspace() {
                     <span
                       className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase ${
                         dev.status === 'online'
-                          ? 'bg-sig-ok/15 text-sig-ok'
-                          : 'bg-sig-crit/15 text-sig-crit'
+                          ? 'bg-sig-ok/15 text-sig-ok-text'
+                          : 'bg-sig-crit/15 text-sig-crit-text'
                       }`}
                     >
                       {dev.status}
@@ -449,7 +449,7 @@ function ServerTrend() {
       </div>
 
       {isError ? (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load the server resource history.
         </div>
       ) : (
@@ -570,9 +570,9 @@ interface NocSnapshot {
 type FeedKind = 'all' | 'alerts' | 'detections' | 'silenced';
 
 const severityBadge: Record<string, string> = {
-  ok: 'bg-sig-ok/15 text-sig-ok',
-  critical: 'bg-sig-crit/15 text-sig-crit',
-  warning: 'bg-sig-warn/15 text-sig-warn',
+  ok: 'bg-sig-ok/15 text-sig-ok-text',
+  critical: 'bg-sig-crit/15 text-sig-crit-text',
+  warning: 'bg-sig-warn/15 text-sig-warn-text',
   info: 'bg-accent/15 text-accent-text',
 };
 
@@ -758,8 +758,8 @@ function LiveNocWallboard() {
             className={cn(
               'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
               row.original.status === 'online'
-                ? 'bg-sig-ok/15 text-sig-ok'
-                : 'bg-sig-crit/15 text-sig-crit',
+                ? 'bg-sig-ok/15 text-sig-ok-text'
+                : 'bg-sig-crit/15 text-sig-crit-text',
             )}
           >
             {row.original.status || 'unknown'}
@@ -869,17 +869,17 @@ function LiveNocWallboard() {
           {
             label: 'Threat flows',
             value: formatCompactNumber(snapshot.threat_flows ?? 0),
-            tone: (snapshot.threat_flows ?? 0) > 0 ? 'text-sig-crit' : 'text-text',
+            tone: (snapshot.threat_flows ?? 0) > 0 ? 'text-sig-crit-text' : 'text-text',
           },
           {
             label: 'Probes',
             value: `${snapshot.probes_online ?? 0} up · ${snapshot.probes_offline ?? 0} down`,
-            tone: (snapshot.probes_offline ?? 0) > 0 ? 'text-sig-warn' : 'text-text',
+            tone: (snapshot.probes_offline ?? 0) > 0 ? 'text-sig-warn-text' : 'text-text',
           },
           {
             label: 'Devices',
             value: `${snapshot.devices_online ?? 0} up · ${snapshot.devices_offline ?? 0} down`,
-            tone: (snapshot.devices_offline ?? 0) > 0 ? 'text-sig-warn' : 'text-text',
+            tone: (snapshot.devices_offline ?? 0) > 0 ? 'text-sig-warn-text' : 'text-text',
           },
           {
             label: 'Threat intel IOCs',
@@ -959,13 +959,13 @@ function LiveNocWallboard() {
                   </span>
                   <span>{formatBitsPerSecond(site.bits_per_second ?? 0)}</span>
                   {(site.alerts_critical ?? 0) + (site.alerts_warning ?? 0) > 0 && (
-                    <span className="text-sig-warn">
+                    <span className="text-sig-warn-text">
                       {site.alerts_critical ?? 0} crit · {site.alerts_warning ?? 0} warn
                     </span>
                   )}
-                  {site.probe_offline && <span className="text-sig-crit">probe offline</span>}
+                  {site.probe_offline && <span className="text-sig-crit-text">probe offline</span>}
                   {(site.threat_flows ?? 0) > 0 && (
-                    <span className="text-sig-crit">{site.threat_flows} threat flows</span>
+                    <span className="text-sig-crit-text">{site.threat_flows} threat flows</span>
                   )}
                 </div>
                 {(site.devices ?? []).length > 0 && (
@@ -981,8 +981,8 @@ function LiveNocWallboard() {
                         className={cn(
                           'rounded px-1.5 py-0.5 text-[10px] font-mono',
                           d.status === 'online'
-                            ? 'bg-sig-ok/10 text-sig-ok'
-                            : 'bg-sig-crit/10 text-sig-crit',
+                            ? 'bg-sig-ok/10 text-sig-ok-text'
+                            : 'bg-sig-crit/10 text-sig-crit-text',
                         )}
                         title={d.ip}
                       >
@@ -1025,8 +1025,8 @@ function LiveNocWallboard() {
                       className={cn(
                         'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
                         d.status === 'online'
-                          ? 'bg-sig-ok/15 text-sig-ok'
-                          : 'bg-sig-crit/15 text-sig-crit',
+                          ? 'bg-sig-ok/15 text-sig-ok-text'
+                          : 'bg-sig-crit/15 text-sig-crit-text',
                       )}
                     >
                       {d.status || 'unknown'}
@@ -1070,7 +1070,7 @@ function LiveNocWallboard() {
                 </span>
               ) : null}
               {paused && (
-                <span className="ml-2 rounded bg-sig-warn/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-sig-warn">
+                <span className="ml-2 rounded bg-sig-warn/15 px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase text-sig-warn-text">
                   {manualPause ? 'paused' : 'held'}
                 </span>
               )}
@@ -1083,7 +1083,7 @@ function LiveNocWallboard() {
                 className={cn(
                   'rounded border px-2 py-1 text-[10px] font-semibold uppercase',
                   manualPause
-                    ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn'
+                    ? 'border-sig-warn/40 bg-sig-warn/10 text-sig-warn-text'
                     : 'border-border bg-bg-panel text-text-dim hover:text-text',
                 )}
               >
@@ -1184,13 +1184,13 @@ function LiveNocWallboard() {
                           <span>{entry.requests ?? 0} req</span>
                           <span>{formatBytes(entry.bytes ?? 0)}</span>
                           {entry.ip_match ? (
-                            <span className="text-sig-crit">IP match</span>
+                            <span className="text-sig-crit-text">IP match</span>
                           ) : (
-                            <span className="text-sig-warn">ASN match</span>
+                            <span className="text-sig-warn-text">ASN match</span>
                           )}
                           {entry.inferred && <span className="text-text-faint">inferred</span>}
                           {(entry.blocked ?? 0) > 0 && (
-                            <span className="text-sig-ok">{entry.blocked} blocked</span>
+                            <span className="text-sig-ok-text">{entry.blocked} blocked</span>
                           )}
                         </div>
                         {(entry.internal_hosts ?? []).length > 0 && (
@@ -1268,8 +1268,8 @@ function SiteDrilldown({
           <span
             className={
               row.original.status === 'online'
-                ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
-                : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok-text'
+                : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit-text'
             }
           >
             {row.original.status || 'unknown'}
@@ -1283,10 +1283,10 @@ function SiteDrilldown({
           <span
             className={
               row.original.worst_severity === 'critical'
-                ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit-text'
                 : row.original.worst_severity === 'warning'
-                  ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
-                  : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                  ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn-text'
+                  : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok-text'
             }
           >
             {row.original.worst_severity || 'ok'}
@@ -1319,7 +1319,7 @@ function SiteDrilldown({
       {isLoading ? (
         <p className="p-6 text-center text-xs text-text-dim">Loading site snapshot…</p>
       ) : isError ? (
-        <p className="p-6 text-center text-xs text-sig-crit" role="alert">
+        <p className="p-6 text-center text-xs text-sig-crit-text" role="alert">
           Could not load this site's snapshot.
         </p>
       ) : !filtered ? (
@@ -1351,7 +1351,7 @@ function SiteDrilldown({
           </div>
 
           {filtered.probe_offline && (
-            <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-[11px] text-sig-crit">
+            <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-[11px] text-sig-crit-text">
               The site probe is offline — device status may be stale.
             </div>
           )}
@@ -1385,8 +1385,8 @@ function SiteDrilldown({
                     <span
                       className={
                         device.status === 'online'
-                          ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
-                          : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                          ? 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok-text'
+                          : 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit-text'
                       }
                     >
                       {device.status || 'unknown'}
@@ -1394,10 +1394,10 @@ function SiteDrilldown({
                     <span
                       className={
                         device.worst_severity === 'critical'
-                          ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit'
+                          ? 'rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit-text'
                           : device.worst_severity === 'warning'
-                            ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn'
-                            : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok'
+                            ? 'rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn-text'
+                            : 'rounded bg-sig-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-ok-text'
                       }
                     >
                       {device.worst_severity || 'ok'}

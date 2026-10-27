@@ -257,7 +257,7 @@ export function ConnectionEditor({
 
         {sameDevice && (
           <div
-            className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit"
+            className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text"
             role="alert"
           >
             The source and destination cannot be the same device.

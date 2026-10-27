@@ -460,8 +460,8 @@ function SmtpSubTab() {
               className={cn(
                 'rounded-lg border p-3 text-xs flex items-start gap-2',
                 smtpDiag.success
-                  ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok'
-                  : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit'
+                  ? 'border-sig-ok/40 bg-sig-ok/10 text-sig-ok-text'
+                  : 'border-sig-crit/40 bg-sig-crit/10 text-sig-crit-text'
               )}
             >
               {smtpDiag.success ? (
@@ -496,9 +496,9 @@ function SmtpSubTab() {
                           className={cn(
                             'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
                             step.status === 'ok'
-                              ? 'bg-sig-ok/15 text-sig-ok'
+                              ? 'bg-sig-ok/15 text-sig-ok-text'
                               : step.status === 'fail'
-                                ? 'bg-sig-crit/15 text-sig-crit'
+                                ? 'bg-sig-crit/15 text-sig-crit-text'
                                 : 'bg-bg-card text-text-faint'
                           )}
                         >
@@ -511,10 +511,10 @@ function SmtpSubTab() {
                       <div className="text-[11px] font-mono text-text-faint mt-0.5">{step.response}</div>
                     )}
                     {step.error && (
-                      <div className="text-[11px] font-mono text-sig-crit mt-1">{step.error}</div>
+                      <div className="text-[11px] font-mono text-sig-crit-text mt-1">{step.error}</div>
                     )}
                     {step.hint && (
-                      <div className="mt-1.5 rounded border border-sig-warn/30 bg-sig-warn/10 p-2 text-[11px] text-sig-warn">
+                      <div className="mt-1.5 rounded border border-sig-warn/30 bg-sig-warn/10 p-2 text-[11px] text-sig-warn-text">
                         {step.hint}
                       </div>
                     )}
@@ -1057,7 +1057,7 @@ function IrcBotsSubTab() {
             className={cn(
               'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
               row.original.status === 'connected'
-                ? 'bg-sig-ok/15 text-sig-ok'
+                ? 'bg-sig-ok/15 text-sig-ok-text'
                 : 'bg-bg-panel text-text-dim'
             )}
           >
@@ -1082,7 +1082,7 @@ function IrcBotsSubTab() {
               <button
                 type="button"
                 onClick={() => toggleConnectionMutation.mutate({ id: row.original.id, action: 'connect' })}
-                className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] text-sig-ok"
+                className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] text-sig-ok-text"
               >
                 <Power className="h-3 w-3" /> Connect
               </button>
@@ -1143,7 +1143,7 @@ function IrcBotsSubTab() {
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.send_alerts && (
-              <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit">
+              <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-crit-text">
                 alerts
               </span>
             )}
@@ -1227,7 +1227,7 @@ function IrcBotsSubTab() {
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
             {row.original.admin_only && (
-              <span className="rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn">
+              <span className="rounded bg-sig-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-sig-warn-text">
                 admin only
               </span>
             )}
@@ -1235,7 +1235,7 @@ function IrcBotsSubTab() {
               className={cn(
                 'rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase',
                 row.original.enabled
-                  ? 'bg-sig-ok/15 text-sig-ok'
+                  ? 'bg-sig-ok/15 text-sig-ok-text'
                   : 'bg-bg-panel text-text-faint',
               )}
             >

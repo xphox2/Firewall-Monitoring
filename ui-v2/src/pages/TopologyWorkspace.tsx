@@ -420,14 +420,14 @@ function NetworkMapSubTab({
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Up Links</div>
-          <div className="mt-0.5 text-xl font-mono font-bold text-sig-ok">
+          <div className="mt-0.5 text-xl font-mono font-bold text-sig-ok-text">
             <SkeletonValue loading={linksLoading} width="w-10" />
             {linksLoading ? null : upLinks}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[11px] uppercase text-text-faint">Down / Degraded</div>
-          <div className="mt-0.5 text-xl font-mono font-bold text-sig-crit">
+          <div className="mt-0.5 text-xl font-mono font-bold text-sig-crit-text">
             <SkeletonValue loading={linksLoading} width="w-10" />
             {linksLoading ? null : downLinks}
           </div>
@@ -467,7 +467,7 @@ function NetworkMapSubTab({
 
       {deadPeers.length > 0 && (
         <div className="rounded-xl border border-sig-warn/40 bg-sig-warn/5 p-3.5">
-          <div className="text-[11px] uppercase tracking-wide text-sig-warn">
+          <div className="text-[11px] uppercase tracking-wide text-sig-warn-text">
             {deadPeers.length} tunnel{deadPeers.length === 1 ? '' : 's'} point at a decommissioned peer
           </div>
           <ul className="mt-1.5 space-y-0.5 text-[11px] text-text-dim">
@@ -589,8 +589,8 @@ function ConnectionsSubTab() {
             className={cn(
               'rounded px-2 py-0.5 text-[10px] font-semibold uppercase',
               row.original.status === 'up' || row.original.status === 'online'
-                ? 'bg-sig-ok/15 text-sig-ok'
-                : 'bg-sig-crit/15 text-sig-crit'
+                ? 'bg-sig-ok/15 text-sig-ok-text'
+                : 'bg-sig-crit/15 text-sig-crit-text'
             )}
           >
             {row.original.status || 'unknown'}
@@ -711,7 +711,7 @@ function ConnectionsSubTab() {
         onTabChange={(id) => setDetailTab(id as typeof detailTab)}
       >
         {connDetailError && (
-          <div className="mb-3 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+          <div className="mb-3 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
             Could not load connection detail. It may have been deleted or the endpoint retired.
           </div>
         )}
@@ -1093,7 +1093,7 @@ function IpsecTunnelsSubTab() {
             <button
               type="button"
               onClick={() => setTunnelToDeploy(row.original)}
-              className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok"
+              className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok-text"
             >
               <Play className="h-3 w-3" /> Deploy
             </button>
@@ -1119,7 +1119,7 @@ function IpsecTunnelsSubTab() {
               <button
                 type="button"
                 onClick={() => setTunnelToRollback(row.original)}
-                className="flex items-center gap-1 rounded border border-sig-warn/40 bg-sig-warn/10 px-2 py-1 text-[11px] font-semibold text-sig-warn"
+                className="flex items-center gap-1 rounded border border-sig-warn/40 bg-sig-warn/10 px-2 py-1 text-[11px] font-semibold text-sig-warn-text"
                 title="Remove the deployed configuration from the devices"
               >
                 <Undo2 className="h-3 w-3" /> Rollback
@@ -1132,7 +1132,7 @@ function IpsecTunnelsSubTab() {
               className={cn(
                 'flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px]',
                 ipsecTunnelDeletable(row.original)
-                  ? 'text-sig-crit hover:bg-sig-crit/10'
+                  ? 'text-sig-crit-text hover:bg-sig-crit/10'
                   : 'cursor-not-allowed text-text-faint opacity-60',
               )}
               title={
@@ -1226,12 +1226,12 @@ function IpsecTunnelsSubTab() {
                 <span className="font-mono text-text">{o.uuid}</span>
                 <span className="font-mono text-text-dim">{o.description}</span>
                 {o.unverified && o.unverified.length > 0 && (
-                  <span className="text-sig-warn">
+                  <span className="text-sig-warn-text">
                     not confirmed by: {o.unverified.join(', ')}
                   </span>
                 )}
                 {o.duplicate && (
-                  <span className="text-sig-crit">
+                  <span className="text-sig-crit-text">
                     duplicate — the removal addresses only one of them
                   </span>
                 )}
@@ -1239,19 +1239,19 @@ function IpsecTunnelsSubTab() {
             ))}
           </ul>
           {discovery.unresolved.length > 0 && (
-            <p className="mt-2 text-[11px] text-sig-warn">
+            <p className="mt-2 text-[11px] text-sig-warn-text">
               Not located on the device: {discovery.unresolved.join(', ')} — those objects were not
               found, so they cannot be removed by uuid.
             </p>
           )}
           {discovery.unsearched && discovery.unsearched.length > 0 && (
-            <p className="mt-1 text-[11px] text-sig-crit">
+            <p className="mt-1 text-[11px] text-sig-crit-text">
               Not searched: {discovery.unsearched.join(', ')} — the device did not answer for those,
               so their absence is not proven.
             </p>
           )}
           {discovery.duplicates && discovery.duplicates.length > 0 && (
-            <p className="mt-1 text-[11px] text-sig-crit">
+            <p className="mt-1 text-[11px] text-sig-crit-text">
               Duplicated on the device: {discovery.duplicates.join(', ')} — the removal addresses one
               of each, so the other stays behind.
             </p>

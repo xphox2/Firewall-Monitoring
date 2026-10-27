@@ -47,10 +47,10 @@ const RANGES = [
 type Range = (typeof RANGES)[number]['value'];
 
 const SEVERITY_STYLE: Record<string, string> = {
-  critical: 'bg-sig-crit/15 text-sig-crit',
-  high: 'bg-sig-crit/15 text-sig-crit',
-  warning: 'bg-sig-warn/15 text-sig-warn',
-  error: 'bg-sig-warn/15 text-sig-warn',
+  critical: 'bg-sig-crit/15 text-sig-crit-text',
+  high: 'bg-sig-crit/15 text-sig-crit-text',
+  warning: 'bg-sig-warn/15 text-sig-warn-text',
+  error: 'bg-sig-warn/15 text-sig-warn-text',
   info: 'bg-accent/15 text-accent-text',
 };
 
@@ -217,7 +217,7 @@ export function TrapsWorkspace() {
       </div>
 
       {statsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load trap statistics.
         </div>
       )}

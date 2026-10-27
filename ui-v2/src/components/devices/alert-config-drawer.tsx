@@ -244,7 +244,7 @@ export function AlertConfigDrawer({
         )}
       />
       {max != null && !isValidAlertConfig({ ...form, [key]: form[key] }) ? (
-        <span className="mt-1 block text-[10px] text-sig-crit">Must be between 0 and 100.</span>
+        <span className="mt-1 block text-[10px] text-sig-crit-text">Must be between 0 and 100.</span>
       ) : null}
     </label>
   );

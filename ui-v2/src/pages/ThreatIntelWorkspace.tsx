@@ -63,15 +63,15 @@ function expiryLabel(value: string): string {
 }
 
 const SEVERITY_STYLE: Record<string, string> = {
-  critical: 'bg-sig-crit/15 text-sig-crit',
-  warning: 'bg-sig-warn/15 text-sig-warn',
+  critical: 'bg-sig-crit/15 text-sig-crit-text',
+  warning: 'bg-sig-warn/15 text-sig-warn-text',
   info: 'bg-accent/15 text-accent-text',
 };
 
 const FEED_TONE: Record<string, string> = {
-  ok: 'bg-sig-ok/15 text-sig-ok',
-  warn: 'bg-sig-warn/15 text-sig-warn',
-  crit: 'bg-sig-crit/15 text-sig-crit',
+  ok: 'bg-sig-ok/15 text-sig-ok-text',
+  warn: 'bg-sig-warn/15 text-sig-warn-text',
+  crit: 'bg-sig-crit/15 text-sig-crit-text',
   muted: 'bg-bg-panel text-text-faint',
 };
 
@@ -184,7 +184,7 @@ function LookupTab() {
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+          <div className="flex items-start gap-2 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{error}</span>
           </div>
@@ -202,11 +202,11 @@ function LookupTab() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 {verdict.tone === 'crit' ? (
-                  <ShieldAlert className="h-5 w-5 text-sig-crit" />
+                  <ShieldAlert className="h-5 w-5 text-sig-crit-text" />
                 ) : verdict.tone === 'ok' ? (
-                  <ShieldCheck className="h-5 w-5 text-sig-ok" />
+                  <ShieldCheck className="h-5 w-5 text-sig-ok-text" />
                 ) : (
-                  <AlertTriangle className="h-5 w-5 text-sig-warn" />
+                  <AlertTriangle className="h-5 w-5 text-sig-warn-text" />
                 )}
                 <span className="font-display text-base font-bold text-text">{verdict.label}</span>
               </div>
@@ -409,8 +409,8 @@ function FeedsTab() {
                 className={cn(
                   'rounded border px-2 py-1 text-[10px] font-semibold uppercase',
                   enabled
-                    ? 'border-sig-crit/30 bg-sig-crit/10 text-sig-crit'
-                    : 'border-sig-ok/30 bg-sig-ok/10 text-sig-ok',
+                    ? 'border-sig-crit/30 bg-sig-crit/10 text-sig-crit-text'
+                    : 'border-sig-ok/30 bg-sig-ok/10 text-sig-ok-text',
                 )}
               >
                 {enabled ? 'Disable' : 'Enable'}
@@ -426,7 +426,7 @@ function FeedsTab() {
   return (
     <div className="space-y-4">
       {feedsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load threat feeds: {feedsErrorObj instanceof Error ? feedsErrorObj.message : 'request failed'}
         </div>
       )}
@@ -461,9 +461,9 @@ function FeedsTab() {
       >
         <div className="flex items-center gap-2 text-xs">
           {feedsEnabled ? (
-            <CheckCircle2 className="h-4 w-4 text-sig-ok" />
+            <CheckCircle2 className="h-4 w-4 text-sig-ok-text" />
           ) : (
-            <AlertTriangle className="h-4 w-4 text-sig-warn" />
+            <AlertTriangle className="h-4 w-4 text-sig-warn-text" />
           )}
           <span className="font-semibold text-text">
             {feedsEnabled ? 'Threat matching is ON' : 'Threat matching is OFF'}
@@ -794,7 +794,7 @@ function IndicatorsSection() {
       </div>
 
       {searchError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text">
           Could not search indicators: {searchErrorObj instanceof Error ? searchErrorObj.message : 'request failed'}
         </div>
       )}
@@ -904,7 +904,7 @@ function StormTab() {
   return (
     <div className="max-w-xl rounded-xl border border-border bg-bg-card p-5 space-y-3">
       {isError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load the storm threshold: {error instanceof Error ? error.message : 'request failed'}
         </div>
       )}

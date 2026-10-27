@@ -41,11 +41,11 @@ interface SyslogStats {
 }
 
 const SEVERITY_NAMES: Record<number, { label: string; badgeClass: string }> = {
-  0: { label: '0 Emerg', badgeClass: 'bg-sig-crit/20 text-sig-crit' },
-  1: { label: '1 Alert', badgeClass: 'bg-sig-crit/20 text-sig-crit' },
-  2: { label: '2 Crit', badgeClass: 'bg-sig-crit/15 text-sig-crit' },
-  3: { label: '3 Error', badgeClass: 'bg-sig-warn/20 text-sig-warn' },
-  4: { label: '4 Warn', badgeClass: 'bg-sig-warn/15 text-sig-warn' },
+  0: { label: '0 Emerg', badgeClass: 'bg-sig-crit/20 text-sig-crit-text' },
+  1: { label: '1 Alert', badgeClass: 'bg-sig-crit/20 text-sig-crit-text' },
+  2: { label: '2 Crit', badgeClass: 'bg-sig-crit/15 text-sig-crit-text' },
+  3: { label: '3 Error', badgeClass: 'bg-sig-warn/20 text-sig-warn-text' },
+  4: { label: '4 Warn', badgeClass: 'bg-sig-warn/15 text-sig-warn-text' },
   5: { label: '5 Notice', badgeClass: 'bg-accent/15 text-accent-text' },
   6: { label: '6 Info', badgeClass: 'bg-bg-panel text-text-dim' },
   7: { label: '7 Debug', badgeClass: 'bg-bg-panel text-text-faint' },
@@ -245,7 +245,7 @@ export function SyslogWorkspace() {
       </div>
 
       {statsError && (
-        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit" role="alert">
+        <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load syslog statistics.
         </div>
       )}

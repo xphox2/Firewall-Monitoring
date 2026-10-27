@@ -28,21 +28,21 @@ import { Button } from '@/components/ui/button';
 const ROW_PAGE = 1500;
 
 const OP_STYLE: Record<string, string> = {
-  added: 'bg-sig-ok/15 text-sig-ok',
-  removed: 'bg-sig-crit/15 text-sig-crit',
-  modified: 'bg-sig-warn/15 text-sig-warn',
+  added: 'bg-sig-ok/15 text-sig-ok-text',
+  removed: 'bg-sig-crit/15 text-sig-crit-text',
+  modified: 'bg-sig-warn/15 text-sig-warn-text',
 };
 
 const SEV_STYLE: Record<string, string> = {
-  critical: 'bg-sig-crit/15 text-sig-crit border-sig-crit/40',
-  high: 'bg-sig-warn/15 text-sig-warn border-sig-warn/40',
+  critical: 'bg-sig-crit/15 text-sig-crit-text border-sig-crit/40',
+  high: 'bg-sig-warn/15 text-sig-warn-text border-sig-warn/40',
   medium: 'bg-accent/15 text-accent-text border-accent/40',
   info: 'bg-bg-panel text-text-dim border-border',
 };
 
 const LINE_STYLE: Record<string, string> = {
-  insert: 'bg-sig-ok/10 text-sig-ok',
-  delete: 'bg-sig-crit/10 text-sig-crit',
+  insert: 'bg-sig-ok/10 text-sig-ok-text',
+  delete: 'bg-sig-crit/10 text-sig-crit-text',
   volatile: 'bg-accent/5 text-text-faint italic',
   equal: 'text-text-dim',
 };
@@ -180,7 +180,7 @@ export function ConfigDiffDrawer({
         </div>
       ) : (from?.normalized_checksum && to?.normalized_checksum &&
           from.normalized_checksum === to.normalized_checksum) ? (
-        <div className="mb-4 rounded-lg border border-sig-ok/40 bg-sig-ok/10 px-3.5 py-2.5 text-xs text-sig-ok">
+        <div className="mb-4 rounded-lg border border-sig-ok/40 bg-sig-ok/10 px-3.5 py-2.5 text-xs text-sig-ok-text">
           Both revisions share the same normalized hash: no real configuration change between them.
         </div>
       ) : null}
@@ -191,7 +191,7 @@ export function ConfigDiffDrawer({
 
       {!isLoading && error && (
         <div className="space-y-3 p-4">
-          <div className="flex items-start gap-2 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3.5 py-2.5 text-xs text-sig-crit">
+          <div className="flex items-start gap-2 rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3.5 py-2.5 text-xs text-sig-crit-text">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{error instanceof Error ? error.message : 'Could not compute the diff.'}</span>
           </div>
@@ -220,11 +220,11 @@ export function ConfigDiffDrawer({
             >
               <div className="flex items-center gap-2">
                 {verdict.tone === 'ok' ? (
-                  <CheckCircle2 className="h-4 w-4 text-sig-ok" />
+                  <CheckCircle2 className="h-4 w-4 text-sig-ok-text" />
                 ) : verdict.tone === 'crit' ? (
-                  <ShieldAlert className="h-4 w-4 text-sig-crit" />
+                  <ShieldAlert className="h-4 w-4 text-sig-crit-text" />
                 ) : verdict.tone === 'warn' ? (
-                  <AlertTriangle className="h-4 w-4 text-sig-warn" />
+                  <AlertTriangle className="h-4 w-4 text-sig-warn-text" />
                 ) : (
                   <Info className="h-4 w-4 text-text-dim" />
                 )}
@@ -308,7 +308,7 @@ export function ConfigDiffDrawer({
           </div>
 
           {data.line_diff.note && (
-            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn">
+            <div className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text">
               {data.line_diff.note}
             </div>
           )}
@@ -371,10 +371,10 @@ export function ConfigDiffDrawer({
                             {(change.attrs ?? []).map((attr) => (
                               <tr key={attr.key}>
                                 <td className="py-1 pr-3 font-mono text-text">{attr.key}</td>
-                                <td className="py-1 pr-3 font-mono text-sig-crit">
+                                <td className="py-1 pr-3 font-mono text-sig-crit-text">
                                   {attr.old || '—'}
                                 </td>
-                                <td className="py-1 font-mono text-sig-ok">{attr.new || '—'}</td>
+                                <td className="py-1 font-mono text-sig-ok-text">{attr.new || '—'}</td>
                               </tr>
                             ))}
                           </tbody>

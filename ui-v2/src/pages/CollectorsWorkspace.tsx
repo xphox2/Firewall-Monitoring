@@ -258,10 +258,10 @@ function ProbesSubTab() {
                 row.original.decommissioned_at
                   ? 'bg-bg-panel text-text-faint'
                   : row.original.approval_status !== 'approved'
-                    ? 'bg-sig-warn/15 text-sig-warn'
+                    ? 'bg-sig-warn/15 text-sig-warn-text'
                     : row.original.status === 'online' || row.original.status === 'active'
-                      ? 'bg-sig-ok/15 text-sig-ok'
-                      : 'bg-sig-crit/15 text-sig-crit'
+                      ? 'bg-sig-ok/15 text-sig-ok-text'
+                      : 'bg-sig-crit/15 text-sig-crit-text'
               )}
             >
               {row.original.decommissioned_at
@@ -292,7 +292,7 @@ function ProbesSubTab() {
                 <button
                   type="button"
                   onClick={() => actionMutation.mutate({ id: row.original.id, action: 'approve' })}
-                  className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok"
+                  className="flex items-center gap-1 rounded border border-sig-ok/40 bg-sig-ok/10 px-2 py-1 text-[11px] font-semibold text-sig-ok-text"
                 >
                   <Check className="h-3 w-3" /> Approve
                 </button>
@@ -302,7 +302,7 @@ function ProbesSubTab() {
                     setRejectTarget(row.original);
                     setRejectReason('');
                   }}
-                  className="flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] font-semibold text-sig-crit"
+                  className="flex items-center gap-1 rounded border border-sig-crit/40 bg-sig-crit/10 px-2 py-1 text-[11px] font-semibold text-sig-crit-text"
                 >
                   <X className="h-3 w-3" /> Reject
                 </button>
@@ -383,7 +383,7 @@ function ProbesSubTab() {
 
       {mintedKey && (
         <div className="rounded-lg border border-sig-ok/40 bg-sig-ok/10 p-3 text-xs">
-          <div className="font-semibold text-sig-ok">One-Time Collector Registration Key:</div>
+          <div className="font-semibold text-sig-ok-text">One-Time Collector Registration Key:</div>
           <code className="block mt-1 font-mono text-text break-all">{mintedKey}</code>
         </div>
       )}

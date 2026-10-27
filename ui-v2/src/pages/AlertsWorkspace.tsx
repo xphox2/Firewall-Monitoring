@@ -98,14 +98,14 @@ interface IncidentRow {
 }
 
 const SEVERITY_STYLE: Record<string, string> = {
-  critical: 'bg-sig-crit/15 text-sig-crit',
-  warning: 'bg-sig-warn/15 text-sig-warn',
+  critical: 'bg-sig-crit/15 text-sig-crit-text',
+  warning: 'bg-sig-warn/15 text-sig-warn-text',
   info: 'bg-accent/15 text-accent-text',
 };
 
 const STATE_STYLE: Record<string, string> = {
-  open: 'bg-sig-crit/15 text-sig-crit',
-  acknowledged: 'bg-sig-ok/15 text-sig-ok',
+  open: 'bg-sig-crit/15 text-sig-crit-text',
+  acknowledged: 'bg-sig-ok/15 text-sig-ok-text',
   snoozed: 'bg-accent/15 text-accent-text',
   resolved: 'bg-bg-panel text-text-faint',
 };
@@ -155,7 +155,7 @@ export function AlertsWorkspace() {
                 : 'text-text-dim hover:text-text',
             )}
           >
-            <Flame className="h-3.5 w-3.5 text-sig-warn" />
+            <Flame className="h-3.5 w-3.5 text-sig-warn-text" />
             Storm Incidents
           </button>
           <button
@@ -610,7 +610,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                 onClick={() => ackOne.mutate(row.original.id)}
                 className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text hover:bg-bg-hover"
               >
-                <Check className="h-3 w-3 text-sig-ok" /> Ack
+                <Check className="h-3 w-3 text-sig-ok-text" /> Ack
               </button>
             )}
           </div>
@@ -660,14 +660,14 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Critical</div>
-          <div className="mt-0.5 font-mono text-xl font-bold text-sig-crit">
+          <div className="mt-0.5 font-mono text-xl font-bold text-sig-crit-text">
             <SkeletonValue loading={statsLoading} width="w-10" />
             {statsLoading ? null : severityCounts.critical}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-bg-card p-3.5">
           <div className="text-[10px] uppercase text-text-faint">Warning</div>
-          <div className="mt-0.5 font-mono text-xl font-bold text-sig-warn">
+          <div className="mt-0.5 font-mono text-xl font-bold text-sig-warn-text">
             <SkeletonValue loading={statsLoading} width="w-10" />
             {statsLoading ? null : severityCounts.warning}
           </div>
@@ -980,7 +980,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                 </span>
               )}
               {sourceAddr && (
-                <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 font-mono text-[10px] text-sig-crit">
+                <span className="rounded bg-sig-crit/15 px-1.5 py-0.5 font-mono text-[10px] text-sig-crit-text">
                   source {sourceAddr}
                 </span>
               )}
@@ -1020,7 +1020,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
               {alertDetailLoading ? (
                 <p className="text-[11px] text-text-dim">Loading linked detections…</p>
               ) : alertDetailError ? (
-                <p className="text-[11px] text-sig-crit" role="alert">Could not load linked detections.</p>
+                <p className="text-[11px] text-sig-crit-text" role="alert">Could not load linked detections.</p>
               ) : linkedDetections.length === 0 ? (
                 <p className="text-[11px] text-text-faint">No linked flow detections.</p>
               ) : (
@@ -1120,7 +1120,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
                 <button
                   type="button"
                   onClick={() => unsnooze.mutate(detail.id)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-sig-warn/40 bg-sig-warn/10 px-3 py-1.5 text-xs font-medium text-sig-warn"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-sig-warn/40 bg-sig-warn/10 px-3 py-1.5 text-xs font-medium text-sig-warn-text"
                 >
                   <BellOff className="h-3.5 w-3.5" /> Unsnooze
                 </button>

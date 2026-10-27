@@ -151,9 +151,9 @@ export function LicencePanel({ licences }: { licences: any[] }) {
                 <span
                   className={cn(
                     'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                    state.tone === 'crit' && 'bg-sig-crit/15 text-sig-crit',
-                    state.tone === 'warn' && 'bg-sig-warn/15 text-sig-warn',
-                    state.tone === 'ok' && 'bg-sig-ok/15 text-sig-ok',
+                    state.tone === 'crit' && 'bg-sig-crit/15 text-sig-crit-text',
+                    state.tone === 'warn' && 'bg-sig-warn/15 text-sig-warn-text',
+                    state.tone === 'ok' && 'bg-sig-ok/15 text-sig-ok-text',
                   )}
                 >
                   {state.label}
@@ -162,7 +162,7 @@ export function LicencePanel({ licences }: { licences: any[] }) {
               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-text-dim">
                 <span>expires {lic.expiry_date || '—'}</span>
                 {days != null && (
-                  <span className={expired ? 'text-sig-crit' : expiring ? 'text-sig-warn' : ''}>
+                  <span className={expired ? 'text-sig-crit-text' : expiring ? 'text-sig-warn-text' : ''}>
                     {expired
                       ? days === 0
                         ? 'today'
@@ -216,9 +216,9 @@ export function HAPanel({ rows }: { rows: any[] }) {
                       <span
                         className={cn(
                           'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
-                          tone === 'ok' && 'bg-sig-ok/15 text-sig-ok',
-                          tone === 'crit' && 'bg-sig-crit/15 text-sig-crit',
-                          tone === 'warn' && 'bg-sig-warn/15 text-sig-warn',
+                          tone === 'ok' && 'bg-sig-ok/15 text-sig-ok-text',
+                          tone === 'crit' && 'bg-sig-crit/15 text-sig-crit-text',
+                          tone === 'warn' && 'bg-sig-warn/15 text-sig-warn-text',
                         )}
                       >
                         {ha.sync_status || 'unknown'}
@@ -263,8 +263,8 @@ export function SdwanPanel({ rows }: { rows: any[] }) {
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
                       /up|ok|alive/i.test(row.state || '')
-                        ? 'bg-sig-ok/15 text-sig-ok'
-                        : 'bg-sig-crit/15 text-sig-crit',
+                        ? 'bg-sig-ok/15 text-sig-ok-text'
+                        : 'bg-sig-crit/15 text-sig-crit-text',
                     )}
                   >
                     {row.state || 'unknown'}
@@ -312,7 +312,7 @@ export function PingSlaPanel({ rows }: { rows: any[] }) {
                 <td
                   className={cn(
                     'px-2 py-1.5 text-right',
-                    Number(row.packet_loss ?? 0) > 0 ? 'text-sig-warn' : '',
+                    Number(row.packet_loss ?? 0) > 0 ? 'text-sig-warn-text' : '',
                   )}
                 >
                   {Number(row.packet_loss ?? 0).toFixed(1)}%
@@ -356,9 +356,9 @@ export function RecentAlertsPanel({ alerts }: { alerts: any[] }) {
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase',
                       alert.severity === 'critical'
-                        ? 'bg-sig-crit/15 text-sig-crit'
+                        ? 'bg-sig-crit/15 text-sig-crit-text'
                         : alert.severity === 'warning'
-                          ? 'bg-sig-warn/15 text-sig-warn'
+                          ? 'bg-sig-warn/15 text-sig-warn-text'
                           : 'bg-accent/15 text-accent-text',
                     )}
                   >

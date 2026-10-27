@@ -17,6 +17,15 @@ export interface ResponsiveDataViewProps<TData> {
   renderMobileCard: (row: TData, index: number) => React.ReactNode;
   renderExpandedRow?: (row: TData) => React.ReactNode;
   onRowClick?: (row: TData) => void;
+  /**
+   * The accessible name of the mobile card's action.
+   *
+   * The card's content is caller-provided and may hold its own buttons
+   * ("Edit"), so the action cannot be named by the whole card text. The
+   * default takes the name from the row's identity - the first field that
+   * names the row - and this prop overrides it.
+   */
+  rowLabel?: (row: TData) => string;
   getRowId?: (row: TData, index: number) => string;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -35,6 +44,40 @@ export interface ResponsiveDataViewProps<TData> {
   className?: string;
 }
 
+/**
+ * The name of a row, for the mobile card's action.
+ *
+ * The card's content is caller-provided and may hold its own buttons, so
+ * the action's name is taken from the row's identity instead: the first
+ * field that names the row. It is a fallback, not a rule - a caller that
+ * knows better passes the rowLabel prop.
+ */
+function defaultRowLabel(row: unknown, id: string): string {
+  const fields = [
+    'name',
+    'device_name',
+    'hostname',
+    'username',
+    'title',
+    'label',
+    'key',
+    'alert_type',
+    'type',
+    'category',
+    'severity',
+    'ip_address',
+  ];
+  const record = row as Record<string, unknown> | null;
+  if (record) {
+    for (const field of fields) {
+      const value = record[field];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      if (typeof value === 'number') return String(value);
+    }
+  }
+  return `row ${id}`;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'string' && error) return error;
@@ -47,6 +90,7 @@ export function ResponsiveDataView<TData>({
   renderMobileCard,
   renderExpandedRow,
   onRowClick,
+  rowLabel,
   getRowId,
   emptyTitle = 'No matching records',
   emptyDescription = 'Adjust your filters or time window to see results.',
@@ -85,7 +129,7 @@ export function ResponsiveDataView<TData>({
         className="rounded-lg border border-sig-crit/40 bg-sig-crit/5 p-10 text-center"
         role="alert"
       >
-        <TriangleAlert className="mx-auto mb-2.5 h-8 w-8 text-sig-crit" />
+        <TriangleAlert className="mx-auto mb-2.5 h-8 w-8 text-sig-crit-text" />
         <div className="text-sm font-semibold text-text">Could not load this data</div>
         <div className="mx-auto mt-1 max-w-md text-xs text-text-dim">
           {errorMessage(error)}
@@ -142,36 +186,52 @@ export function ResponsiveDataView<TData>({
           return (
           <div
             key={row.id}
-            onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-            // A clickable card is a control, so it has to be one: role,
-            // focusability and the Enter/Space keys. Without them the card
-            // was mouse-only.
-            role={onRowClick ? 'button' : undefined}
-            tabIndex={onRowClick ? 0 : undefined}
-            onKeyDown={
-              onRowClick
-                ? (event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      onRowClick(row.original);
-                    }
-                  }
-                : undefined
-            }
             className={cn(
-              'rounded-lg border border-border bg-bg-card p-3.5 transition-colors',
+              'relative rounded-lg border border-border bg-bg-card p-3.5 transition-colors',
               onRowClick &&
-                'cursor-pointer hover:border-border-strong active:bg-bg-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+                'cursor-pointer hover:border-border-strong active:bg-bg-hover',
             )}
           >
-            {renderMobileCard(row.original, idx)}
+            {onRowClick ? (
+              // The card's action is a REAL button, stretched over the card
+              // and placed UNDER the content.
+              //
+              // The card used to carry role="button" itself, which made it a
+              // control that CONTAINED the row's own buttons - a control
+              // inside a control. A screen reader announces the card as a
+              // button and the buttons inside it are inside another button;
+              // axe's nested-interactive rule catches it, and it is a real
+              // defect rather than a rule artefact.
+              //
+              // A sibling button cannot nest inside anything, so the
+              // stretched button is a SIBLING of the content. The content
+              // is pointer-events-none so a press lands on the button, and
+              // the content's own controls are re-enabled so they still
+              // work.
+              <button
+                type="button"
+                onClick={() => onRowClick(row.original)}
+                aria-label={
+                  rowLabel
+                    ? rowLabel(row.original)
+                    : `Open ${defaultRowLabel(row.original, String(row.id))}`
+                }
+                className="absolute inset-0 z-0 h-full w-full cursor-pointer rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              />
+            ) : null}
+            <div
+              className={cn(
+                'relative z-10',
+                // The press belongs to the stretched button, not to the
+                // card's own text. The content's controls are put back.
+                onRowClick &&
+                  'pointer-events-none [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_input]:pointer-events-auto [&_select]:pointer-events-auto [&_textarea]:pointer-events-auto',
+              )}
+            >
+              {renderMobileCard(row.original, idx)}
+            </div>
             {carriedCells.length > 0 ? (
-              <div
-                className="mt-2 flex items-center justify-end gap-2"
-                // The card is a button, so a press on an action must not
-                // also trigger the card.
-                onClick={(event) => event.stopPropagation()}
-              >
+              <div className="relative z-20 mt-2 flex items-center justify-end gap-2">
                 {carriedCells.map((cell) =>
                   flexRender(cell.column.columnDef.cell, cell.getContext()),
                 )}

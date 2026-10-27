@@ -120,8 +120,8 @@ export function CommandPalette({
                       <span
                         className={`font-mono text-[10px] uppercase px-1.5 py-0.5 rounded ${
                           dev.status === 'online'
-                            ? 'bg-sig-ok/15 text-sig-ok'
-                            : 'bg-sig-crit/15 text-sig-crit'
+                            ? 'bg-sig-ok/15 text-sig-ok-text'
+                            : 'bg-sig-crit/15 text-sig-crit-text'
                         }`}
                       >
                         {dev.status}
@@ -142,7 +142,7 @@ export function CommandPalette({
                 >
                   <div className="flex items-center gap-2.5">
                     {theme === 'dark' ? (
-                      <Sun className="h-3.5 w-3.5 text-sig-warn" />
+                      <Sun className="h-3.5 w-3.5 text-sig-warn-text" />
                     ) : (
                       <Moon className="h-3.5 w-3.5 text-accent" />
                     )}
