@@ -1,6 +1,30 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.456] - 2026-10-27
+
+### Fixed — The container's memory limit is now the deployment's choice
+
+- The compose file hard-coded `mem_limit: 2g`, which suits a small install.
+  It does **not** suit a large one: PostgreSQL's buffer manager fills
+  whatever it is allowed, so with a 2g cgroup and a PostgreSQL tuned with
+  `ALTER SYSTEM` to `shared_buffers = 8GB`, the **OOM killer takes out the
+  whole container** — the API, the poller and PostgreSQL all die together
+  (status 137). Docker's `restart: unless-stopped` policy then brings back
+  a fresh stack, and because the entrypoint is killed with everything else,
+  PostgreSQL does not get its clean `pg_ctl` shutdown on that path.
+- That happened on 2026-10-27, twice: once during the daily `pg_dump` (which
+  reads ~3.6 GB) and once when the limit was lowered again while the buffer
+  pool was still full.
+- The limit, the swap limit and the CPU count are now **environment
+  overridable** — `FIREWALL_MON_MEM_LIMIT`, `FIREWALL_MON_MEMSWAP_LIMIT`,
+  `FIREWALL_MON_CPUS` — the same way the image already was, so a large
+  deployment raises them in its `.env` instead of editing a tracked file.
+  The defaults are unchanged: a fresh install is still bounded at 2g.
+- The swap limit must be raised **together** with the memory limit: Docker
+  clamps the swap to the memory limit, so a raised limit with the default
+  swap silently means no swap at all.
+
 ## [0.11.455] - 2026-10-27
 
 ### Fixed — A stored credential could never be removed
