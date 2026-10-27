@@ -378,12 +378,17 @@ func TestV2TheFocusRingSurvives(t *testing.T) {
 	for _, rel := range v2SourceFiles(t) {
 		src := stripComments(readV2(t, rel))
 		for _, m := range broken.FindAllStringIndex(src, -1) {
-			// The class string around the match.
+			// The class string around the match. The window is BOUNDED:
+			// an unbounded one ran past the end of the file and panicked.
 			from := m[0] - 200
 			if from < 0 {
 				from = 0
 			}
-			window := src[from : m[1]+200]
+			to := m[1] + 200
+			if to > len(src) {
+				to = len(src)
+			}
+			window := src[from:to]
 			if solid.MatchString(window) {
 				continue
 			}

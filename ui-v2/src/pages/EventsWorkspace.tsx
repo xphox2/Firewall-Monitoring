@@ -5,8 +5,6 @@ import {
   Activity,
   BarChart3,
   ShieldAlert,
-  Search,
-  Filter,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatBytes, formatCompactNumber, formatRelativeTime, countryCodeToFlag } from '@/lib/utils';
@@ -20,14 +18,19 @@ import {
   severityLabel,
 } from '@/lib/events';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { RefreshButton } from '@/components/ui/refresh-button';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
 import { DetailSection } from '@/components/ui/detail-section';
 import { TimeSeriesChart } from '@/components/charts/time-series-chart';
 import { ColumnDef } from '@tanstack/react-table';
 import { Select } from '@/components/ui/input';
+import { EventFilterBar, EventSearchBox } from '@/components/events/event-filter-bar';
+import { EventPager } from '@/components/events/event-pager';
+import { secDayCountSeries, type SecDayCount } from '@/lib/events';
+import { buildNetEventQuery, buildSecEventQuery, EVENT_PAGE_SIZE, type EventFilters } from '@/lib/event-filters';
 
-type EventsTab = 'stream' | 'analytics' | 'security';
+type EventsTab = 'stream' | 'analytics' | 'security' | 'security-analytics';
 type TimeWindow = '1h' | '6h' | '12h' | '24h' | '7d' | '30d';
 
 interface NetEventRow {
@@ -285,6 +288,19 @@ export function EventsWorkspace() {
               <ShieldAlert className="h-3.5 w-3.5 text-accent" />
               Security Events
             </button>
+            <button
+              type="button"
+              onClick={() => setTab('security-analytics')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                activeTab === 'security-analytics'
+                  ? 'bg-bg-card text-text shadow-xs border border-border'
+                  : 'text-text-dim hover:text-text'
+              )}
+            >
+              <BarChart3 className="h-3.5 w-3.5 text-accent" />
+              Security Analytics
+            </button>
           </div>
         </div>
       </div>
@@ -292,6 +308,7 @@ export function EventsWorkspace() {
       {activeTab === 'stream' && <EventStreamSubTab windowRange={windowRange} />}
       {activeTab === 'analytics' && <EventAnalyticsSubTab windowRange={windowRange} />}
       {activeTab === 'security' && <SecurityEventsSubTab windowRange={windowRange} />}
+      {activeTab === 'security-analytics' && <SecurityAnalyticsSubTab windowRange={windowRange} />}
     </div>
   );
 }
@@ -303,7 +320,10 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const [actionFilter, setActionFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
+  const [filters, setFilters] = useState<EventFilters>({});
+  const [page, setPage] = useState(0);
   const hours = windowToHours(windowRange);
+  const offset = page * EVENT_PAGE_SIZE;
 
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
@@ -312,12 +332,20 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
   }, [searchQuery]);
   const srcFilter = isIpOrCidr(debouncedSearch.trim()) ? debouncedSearch.trim() : '';
 
+  /*
+   * The server's filters for `GET /admin/api/events`: device_id, probe_id,
+   * site_id, activity, action, src_ip, dst_ip and rule_key. The console
+   * offered only the action and the source address.
+   */
+  const netFilters: EventFilters = useMemo(
+    () => ({ ...filters, action: actionFilter, srcIp: srcFilter }),
+    [filters, actionFilter, srcFilter],
+  );
+
   const { data: eventsRes, isLoading } = useQuery({
-    queryKey: ['net-events', hours, actionFilter, srcFilter],
+    queryKey: ['net-events', hours, netFilters, page],
     queryFn: () => {
-      const params = new URLSearchParams({ hours: String(hours), limit: '100' });
-      if (actionFilter) params.set('action', actionFilter);
-      if (srcFilter) params.set('src_ip', srcFilter);
+      const params = buildNetEventQuery(netFilters, hours, EVENT_PAGE_SIZE, offset);
       return apiFetch<any>(`/admin/api/events?${params.toString()}`);
     },
     refetchInterval: 15_000,
@@ -332,6 +360,10 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const events: NetEventRow[] = Array.isArray(eventsRes)
     ? eventsRes
     : eventsRes?.events ?? eventsRes?.rows ?? eventsRes?.items ?? eventsRes?.data ?? [];
+  // The server reports the total and whether it was CAPPED (the count is
+  // only computed up to a limit, so a capped total is a lower bound).
+  const eventsTotal: number | undefined = Array.isArray(eventsRes) ? undefined : eventsRes?.total;
+  const eventsCapped: boolean = !Array.isArray(eventsRes) && Boolean(eventsRes?.total_capped);
 
   const columns = useMemo<ColumnDef<NetEventRow, unknown>[]>(
     () => [
@@ -425,13 +457,33 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
   return (
     <div className="space-y-3">
       {/* Compact single-row filter bar so the table starts at y < 380px */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
-        <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <Select className="px-2.5 py-1"
+      <EventFilterBar
+        filters={filters}
+        onChange={(next) => {
+          setFilters(next);
+          setPage(0);
+        }}
+        // The action and the source address live in their own state, so
+        // "Clear" has to reset them as well or the operator is left with a
+        // filter they cannot see.
+        onClear={() => {
+          setActionFilter('');
+          setSearchQuery('');
+          setPage(0);
+        }}
+        withSite
+        withRuleKey
+        withDestination
+        withActivity
+      >
+        <Select
+          className="px-2.5 py-1"
           value={actionFilter}
-          onChange={(e) => setActionFilter(e.target.value)}
+          onChange={(e) => {
+            setActionFilter(e.target.value);
+            setPage(0);
+          }}
           aria-label="Filter by firewall action"
-         
         >
           <option value="">All Actions</option>
           <option value="1">Accept / Allow (1)</option>
@@ -439,17 +491,19 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
           <option value="3">Reject / Reset (3)</option>
         </Select>
 
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="h-3.5 w-3.5 text-text-faint absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter by exact source IP or CIDR..."
-            className="w-full rounded border border-border bg-bg-panel pl-8 pr-3 py-1 text-xs font-mono text-text focus:border-accent focus:outline-hidden"
-          />
-        </div>
-      </div>
+        <EventSearchBox
+          value={searchQuery}
+          onChange={(next) => {
+            setSearchQuery(next);
+            setPage(0);
+          }}
+          placeholder="Filter by exact source IP or CIDR..."
+        />
+        <RefreshButton
+          queryKeys={[['net-events'], ['net-event-analytics'], ['net-event-rollups']]}
+          label="Refresh"
+        />
+      </EventFilterBar>
 
       <ResponsiveDataView
         data={events}
@@ -480,6 +534,14 @@ function EventStreamSubTab({ windowRange }: { windowRange: TimeWindow }) {
             </div>
           );
         }}
+      />
+
+      <EventPager
+        page={page}
+        total={eventsTotal}
+        pageSize={EVENT_PAGE_SIZE}
+        onChange={setPage}
+        capped={eventsCapped}
       />
 
       <SlideOverDrawer
@@ -977,14 +1039,206 @@ function SecEventInspector({ event }: { event: SecEventRow | undefined }) {
   );
 }
 
+// ============================================================================
+// SUB-TAB 4: SECURITY ANALYTICS
+// ============================================================================
+/**
+ * The security-event analytics.
+ *
+ * `GET /admin/api/security-events/analytics` is implemented on the server and
+ * was never called by the console: the Security tab was a list and nothing
+ * else. It carries the findings trend, the admin-login and config-change
+ * trends, the VPN-session trend, the top-N rankings and the WAN health.
+ */
+function SecurityAnalyticsSubTab({ windowRange }: { windowRange: TimeWindow }) {
+  const hours = windowToHours(windowRange);
+  const days = windowToDays(windowRange);
+
+  /*
+   * The window.
+   *
+   * The endpoint takes `days` OR `hours`, and the server gives `days`
+   * PRECEDENCE whenever it is set. So sending both made every sub-24h pill
+   * show the same "since UTC midnight" window - the 1h, 6h, 12h and 24h
+   * pills were all the same. So the sub-24h windows send `hours` and only
+   * the multi-day ones send `days`.
+   */
+  const isLongWindow = windowRange === '7d' || windowRange === '30d';
+  const windowParams = isLongWindow ? `days=${days}` : `hours=${hours}`;
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['sec-event-analytics', windowParams],
+    queryFn: () =>
+      apiFetch<any>(`/admin/api/security-events/analytics?${windowParams}`),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="rounded-xl border border-border bg-bg-card p-8 text-center text-sm text-text-dim">
+        Loading security analytics…
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div
+        role="alert"
+        className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit"
+      >
+        Could not load security analytics:{' '}
+        {error instanceof Error ? error.message : 'request failed'}
+      </div>
+    );
+  }
+
+  const findings = secDayCountSeries(data?.findings as SecDayCount[] | undefined);
+  const adminLogins = secDayCountSeries(data?.admin_logins as SecDayCount[] | undefined);
+  const configChanges = secDayCountSeries(data?.config_changes as SecDayCount[] | undefined);
+  const vpnSessions = secDayCountSeries(data?.vpn_sessions as SecDayCount[] | undefined);
+
+  const keyRows = (rows: Array<{ key: string; count: number }> | undefined) =>
+    (rows ?? []).map((row) => ({ key: row.key, value: Number(row.count) || 0 }));
+
+  const wanHealth = (data?.wan_health ?? []) as Array<{
+    day: string;
+    wan_name: string;
+    avg: number;
+    last: number;
+  }>;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <TimeSeriesChart
+          title="Security findings over time"
+          kind="count"
+          timestamps={findings.timestamps}
+          series={[{ label: 'Findings', color: 'var(--fwmon-series-2)', values: findings.values }]}
+          emptyMessage="No security findings in this window."
+        />
+        <TimeSeriesChart
+          title="Admin logins over time"
+          kind="count"
+          timestamps={adminLogins.timestamps}
+          series={[{ label: 'Admin logins', color: 'var(--fwmon-series-1)', values: adminLogins.values }]}
+          emptyMessage="No admin logins in this window."
+        />
+        <TimeSeriesChart
+          title="Configuration changes over time"
+          kind="count"
+          timestamps={configChanges.timestamps}
+          series={[{ label: 'Config changes', color: 'var(--fwmon-series-3)', values: configChanges.values }]}
+          emptyMessage="No configuration changes in this window."
+        />
+        <TimeSeriesChart
+          title="VPN sessions over time"
+          kind="count"
+          timestamps={vpnSessions.timestamps}
+          series={[{ label: 'VPN sessions', color: 'var(--fwmon-series-4)', values: vpnSessions.values }]}
+          emptyMessage="No VPN sessions in this window."
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <BarList
+          title="Top signatures"
+          rows={(data?.top_signatures ?? []).map((r: any) => ({
+            key: r.sig_name || 'Unknown',
+            value: Number(r.count) || 0,
+          }))}
+          empty="No signatures in this window."
+        />
+        <BarList
+          title="Top admin users"
+          rows={keyRows(data?.top_admin_users)}
+          empty="No admin activity in this window."
+        />
+        <BarList
+          title="Top admin source addresses"
+          rows={keyRows(data?.top_admin_src_ips)}
+          empty="No admin activity in this window."
+        />
+        <BarList
+          title="Top configuration paths"
+          rows={keyRows(data?.top_config_paths)}
+          empty="No configuration changes in this window."
+        />
+        <BarList
+          title="Top configuration admins"
+          rows={keyRows(data?.top_config_admins)}
+          empty="No configuration changes in this window."
+        />
+        <BarList
+          title="Top tunnels"
+          rows={keyRows(data?.top_tunnels)}
+          empty="No tunnel activity in this window."
+        />
+        <BarList
+          title="Top tunnel peers"
+          rows={keyRows(data?.top_tunnel_peers)}
+          empty="No tunnel activity in this window."
+        />
+      </div>
+
+      <div className="rounded-xl border border-border bg-bg-card p-4">
+        <h3 className="mb-2 text-xs font-semibold text-text">WAN health</h3>
+        {wanHealth.length === 0 ? (
+          <p className="text-[11px] text-text-faint">No WAN health readings in this window.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs">
+              <thead>
+                <tr className="border-b border-border text-[10px] uppercase tracking-wider text-text-faint">
+                  <th scope="col" className="px-2 py-1.5">Day</th>
+                  <th scope="col" className="px-2 py-1.5">WAN</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Average</th>
+                  <th scope="col" className="px-2 py-1.5 text-right">Latest</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {wanHealth.map((w, i) => (
+                  <tr key={`${w.day}-${w.wan_name}-${i}`}>
+                    <td className="px-2 py-1.5 font-mono text-text-dim">{w.day}</td>
+                    <td className="px-2 py-1.5 font-mono text-text">{w.wan_name}</td>
+                    <td className="px-2 py-1.5 text-right font-mono text-text-dim">
+                      {Number(w.avg).toFixed(2)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-mono text-text">
+                      {Number(w.last).toFixed(2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const [selectedSecId, setSelectedSecId] = useState<number | null>(null);
   const [classFilter, setClassFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
+  const [filters, setFilters] = useState<EventFilters>({});
   const [page, setPage] = useState(0);
   const hours = windowToHours(windowRange);
   const PAGE_SIZE = 50;
   const offset = page * PAGE_SIZE;
+
+  /*
+   * The server's filters for `GET /admin/api/security-events`: device_id,
+   * probe_id, class, activity, action, severity, admin_user, sig_name,
+   * tunnel_name and wan_name. The console offered only the class and the
+   * severity. There is NO site_id on this endpoint — the security events
+   * are filtered by device or probe, not by site.
+   */
+  const secFilters: EventFilters = useMemo(
+    () => ({ ...filters, class: classFilter, severity: severityFilter }),
+    [filters, classFilter, severityFilter],
+  );
 
   const {
     data: secRes,
@@ -992,15 +1246,9 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
     isError,
     error,
   } = useQuery({
-    queryKey: ['sec-events', hours, classFilter, severityFilter, page],
+    queryKey: ['sec-events', hours, secFilters, page],
     queryFn: () => {
-      const params = new URLSearchParams({
-        hours: String(hours),
-        limit: String(PAGE_SIZE),
-        offset: String(offset),
-      });
-      if (classFilter) params.set('class', classFilter);
-      if (severityFilter) params.set('severity', severityFilter);
+      const params = buildSecEventQuery(secFilters, hours, PAGE_SIZE, offset);
       return apiFetch<any>(`/admin/api/security-events?${params.toString()}`);
     },
   });
@@ -1014,7 +1262,10 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
   const secEvents: SecEventRow[] = Array.isArray(secRes)
     ? secRes
     : secRes?.events ?? secRes?.rows ?? secRes?.items ?? secRes?.data ?? [];
-  const total: number = Number(secRes?.total ?? secEvents.length) || 0;
+  // The server reports the total and whether it was CAPPED (the count is
+  // only computed up to a limit, so a capped total is a lower bound).
+  const secTotal: number | undefined = Array.isArray(secRes) ? undefined : secRes?.total;
+  const secCapped: boolean = !Array.isArray(secRes) && Boolean(secRes?.total_capped);
 
   const columns = useMemo<ColumnDef<SecEventRow, unknown>[]>(
     () => [
@@ -1102,16 +1353,29 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
-        <Filter className="ml-1 h-3.5 w-3.5 text-text-faint" />
-        <Select className="px-2.5 py-1"
+      <EventFilterBar
+        filters={filters}
+        onChange={(next) => {
+          setFilters(next);
+          setPage(0);
+        }}
+        // The class and the severity live in their own state.
+        onClear={() => {
+          setClassFilter('');
+          setSeverityFilter('');
+          setPage(0);
+        }}
+        withSecText
+        withActivity
+      >
+        <Select
+          className="px-2.5 py-1"
           value={classFilter}
           onChange={(e) => {
             setClassFilter(e.target.value);
             setPage(0);
           }}
           aria-label="Filter by event class"
-         
         >
           <option value="">All classes</option>
           {SEC_CLASSES.map((c) => (
@@ -1120,14 +1384,14 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
             </option>
           ))}
         </Select>
-        <Select className="px-2.5 py-1"
+        <Select
+          className="px-2.5 py-1"
           value={severityFilter}
           onChange={(e) => {
             setSeverityFilter(e.target.value);
             setPage(0);
           }}
           aria-label="Filter by severity"
-         
         >
           <option value="">All severities</option>
           {SEC_SEVERITIES.map((s) => (
@@ -1136,18 +1400,11 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
             </option>
           ))}
         </Select>
-        <button
-          type="button"
-          onClick={() => {
-            setClassFilter('');
-            setSeverityFilter('');
-            setPage(0);
-          }}
-          className="ml-auto rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text"
-        >
-          Clear
-        </button>
-      </div>
+        <RefreshButton
+          queryKeys={[['sec-events'], ['sec-event-analytics']]}
+          label="Refresh"
+        />
+      </EventFilterBar>
 
       <ResponsiveDataView
         data={secEvents}
@@ -1173,33 +1430,14 @@ function SecurityEventsSubTab({ windowRange }: { windowRange: TimeWindow }) {
         )}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[11px] text-text-dim">
-          {secEvents.length === 0
-            ? `0 of ${secRes?.total_capped ? '10,000+' : total}`
-            : `${offset + 1}–${offset + secEvents.length} of ${
-                secRes?.total_capped ? '10,000+' : total
-              }`}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
-          >
-            Prev
-          </button>
-          <button
-            type="button"
-            disabled={offset + secEvents.length >= total}
-            onClick={() => setPage((p) => p + 1)}
-            className="rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      <EventPager
+        page={page}
+        total={secTotal}
+        pageSize={PAGE_SIZE}
+        onChange={setPage}
+        capped={secCapped}
+      />
+
 
       <SlideOverDrawer
         open={Boolean(selectedSecId)}

@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Send,
   Eye,
+  FileDown,
   Lock,
 } from 'lucide-react';
 import { apiFetch, SystemSetting, type MeResponse } from '@/lib/api';
@@ -862,12 +863,31 @@ function DisplayAndFlowsSubTab() {
     queryFn: () => apiFetch<SystemSetting[]>('/admin/api/settings'),
   });
 
+  /*
+   * The backfill status.
+   *
+   * The field names are the SERVER's: `models.NormalizeBackfillJob` has
+   * `status`, `rows_scanned`, `rows_written` and `error` — there is no
+   * `state`, no `processed`, no `total` and no `last_error`. The console
+   * read `state`, so the status line always read "idle" no matter what the
+   * job was doing.
+   *
+   * `history`, `resumable` and `hint` are SIBLINGS of `data` in the
+   * response envelope, so they only arrive because the API client keeps
+   * them (see `unwrapEnvelope` in lib/api.ts).
+   */
   const { data: backfillStatus } = useQuery({
     queryKey: ['normalize-backfill'],
     queryFn: () =>
-      apiFetch<{ state?: string; processed?: number; total?: number; last_error?: string }>(
-        '/admin/api/normalize/backfill/status'
-      ),
+      apiFetch<{
+        status?: string;
+        rows_scanned?: number;
+        rows_written?: number;
+        error?: string;
+        resumable?: boolean;
+        hint?: string;
+        history?: Array<{ id?: number; status?: string; finished_at?: string }>;
+      }>('/admin/api/normalize/backfill/status'),
     refetchInterval: 10_000,
   });
 
@@ -1074,8 +1094,41 @@ function DisplayAndFlowsSubTab() {
           <div>
             <div className="text-xs font-semibold text-text">Normalized Event Backfill</div>
             <div className="text-[11px] text-text-dim">
-              Status: <span className="font-mono">{backfillStatus?.state || 'idle'}</span>
+              Status: <span className="font-mono">{backfillStatus?.status || 'idle'}</span>
+              {backfillStatus?.rows_scanned != null ? (
+                <span className="font-mono text-text-faint">
+                  {' '}
+                  · {backfillStatus.rows_scanned} scanned /{' '}
+                  {backfillStatus.rows_written ?? 0} written
+                </span>
+              ) : null}
             </div>
+            {backfillStatus?.error ? (
+              <div className="mt-1 text-[11px] text-sig-crit">{backfillStatus.error}</div>
+            ) : null}
+            {backfillStatus?.hint ? (
+              <div className="mt-1 text-[11px] text-text-faint">{backfillStatus.hint}</div>
+            ) : null}
+            {backfillStatus?.resumable ? (
+              <div className="mt-1 text-[11px] text-sig-warn">
+                The job can be resumed from where it stopped.
+              </div>
+            ) : null}
+            {backfillStatus?.history && backfillStatus.history.length > 0 ? (
+              <div className="mt-1.5">
+                <div className="text-[10px] uppercase tracking-wider text-text-faint">
+                  Recent runs
+                </div>
+                <ul className="mt-0.5 space-y-0.5">
+                  {backfillStatus.history.slice(0, 5).map((h, i) => (
+                    <li key={h.id ?? i} className="font-mono text-[10px] text-text-faint">
+                      {h.status ?? 'unknown'}
+                      {h.finished_at ? ` · ${h.finished_at.slice(0, 16).replace('T', ' ')}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -1158,6 +1211,11 @@ function EmailReportsSubTab() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState('');
+  // The preview's own parameters. The server takes `period`, `theme` and
+  // `layout`; without them the preview is always the daily dark web one.
+  const [previewPeriod, setPreviewPeriod] = useState<'daily' | 'weekly'>('daily');
+  const [previewTheme, setPreviewTheme] = useState<'dark' | 'light'>('dark');
+  const [previewLayout, setPreviewLayout] = useState<'web' | 'email'>('web');
 
   useEffect(() => {
     setDraft(serverMap);
@@ -1199,22 +1257,100 @@ function EmailReportsSubTab() {
     },
   });
 
-  const loadPreview = async () => {
+  const loadPreview = async (): Promise<string> => {
     try {
       // PreviewReport returns {success, data:{subject, html}} as JSON; putting
       // the raw body in srcDoc rendered the JSON, not the report.
-      const res = await fetch('/admin/api/reports/preview', { credentials: 'same-origin' });
+      const params = new URLSearchParams({
+        period: previewPeriod,
+        theme: previewTheme,
+        layout: previewLayout,
+      });
+      const res = await fetch(`/admin/api/reports/preview?${params.toString()}`, {
+        credentials: 'same-origin',
+      });
       if (!res.ok) throw new Error(`Preview failed (${res.status})`);
       const body = (await res.json()) as { data?: { html?: string } };
-      setPreviewHtml(body.data?.html ?? '<p>Report preview returned no HTML.</p>');
+      const html = body.data?.html ?? '<p>Report preview returned no HTML.</p>';
+      setPreviewHtml(html);
       setPreviewOpen(true);
+      return html;
     } catch (err) {
       toast({
         title: 'Preview failed',
         description: err instanceof Error ? err.message : 'Unable to load preview',
         variant: 'error',
       });
+      return '';
     }
+  };
+
+  /**
+   * The PDF export.
+   *
+   * There is NO server-side PDF: the legacy console printed the preview
+   * iframe, which is why the report HTML carries the print stylesheet. So
+   * the PDF is the browser's own print-to-PDF of the preview.
+   */
+  const exportPdf = async () => {
+    const html = previewHtml || (await loadPreview());
+    if (!html) return;
+    // A hidden iframe with the report, printed and removed. Printing the
+    // visible preview would print the drawer around it.
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    document.body.appendChild(frame);
+    const doc = frame.contentDocument;
+    if (!doc) {
+      frame.remove();
+      return;
+    }
+    doc.open();
+    doc.write(html);
+    doc.close();
+    const print = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      } finally {
+        window.setTimeout(() => frame.remove(), 1000);
+      }
+    };
+    // The report's own images have to load before it is printed, or the
+    // print comes out with blank charts.
+    if (frame.contentWindow?.document.readyState === 'complete') {
+      window.setTimeout(print, 250);
+    } else {
+      frame.onload = () => window.setTimeout(print, 250);
+    }
+  };
+
+  /**
+   * The HTML export.
+   *
+   * The legacy console downloaded the report as a file. It is a Blob of the
+   * same HTML the preview renders.
+   */
+  const exportHtml = async () => {
+    const html = previewHtml || (await loadPreview());
+    if (!html) return;
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fwmon-report-${previewPeriod}-${new Date().toISOString().slice(0, 10)}.html`;
+    // Safari will not download from a detached anchor, and revoking the URL
+    // before the download starts aborts it in Firefox.
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   return (
@@ -1230,11 +1366,27 @@ function EmailReportsSubTab() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={loadPreview}
+              onClick={() => void loadPreview()}
               className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
             >
               <Eye className="h-3.5 w-3.5 text-accent" />
               Preview HTML
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportPdf()}
+              className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
+            >
+              <FileDown className="h-3.5 w-3.5 text-accent" />
+              Export PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportHtml()}
+              className="flex items-center gap-1.5 rounded-md border border-border bg-bg-panel px-3 py-1.5 text-xs font-medium text-text hover:bg-bg-hover"
+            >
+              <FileDown className="h-3.5 w-3.5 text-accent" />
+              Export HTML
             </button>
             <button
               type="button"
@@ -1338,6 +1490,42 @@ function EmailReportsSubTab() {
         title="Executive Report HTML Preview"
         size="2xl"
       >
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Select
+            className="px-2.5 py-1"
+            value={previewPeriod}
+            onChange={(e) => setPreviewPeriod(e.target.value as 'daily' | 'weekly')}
+            aria-label="Preview period"
+          >
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </Select>
+          <Select
+            className="px-2.5 py-1"
+            value={previewTheme}
+            onChange={(e) => setPreviewTheme(e.target.value as 'dark' | 'light')}
+            aria-label="Preview theme"
+          >
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </Select>
+          <Select
+            className="px-2.5 py-1"
+            value={previewLayout}
+            onChange={(e) => setPreviewLayout(e.target.value as 'web' | 'email')}
+            aria-label="Preview layout"
+          >
+            <option value="web">Web</option>
+            <option value="email">Email</option>
+          </Select>
+          <button
+            type="button"
+            onClick={() => void loadPreview()}
+            className="rounded-md border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text"
+          >
+            Re-render
+          </button>
+        </div>
         <div className="rounded-lg border border-border overflow-hidden bg-white">
           <iframe
             title="Report Preview"

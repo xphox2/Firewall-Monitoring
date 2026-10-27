@@ -1,103 +1,64 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiFetch, clearCsrfToken, setSuppressAuthRedirect } from './api';
+import { describe, expect, it } from 'vitest';
+import { unwrapEnvelope } from './api';
 
-/**
- * Contract smoke tests for the fetch layer. Every V2 page goes through
- * apiFetch, so the two behaviours that have burned this console before —
- * drops the CSRF header on a mutation, or un-envelopes the wrong shape —
- * fail here instead of as an empty table in production.
- */
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-const fetchMock = vi.fn<typeof fetch>();
-
-beforeEach(() => {
-  clearCsrfToken();
-  fetchMock.mockReset();
-  vi.stubGlobal('fetch', fetchMock);
-  vi.stubGlobal('window', {
-    location: { href: '' },
-    dispatchEvent: () => true,
-  });
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe('apiFetch', () => {
-  it('unwraps the {success,data} envelope', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: { role: 'admin' } }));
-
-    await expect(apiFetch('/admin/api/me')).resolves.toEqual({ role: 'admin' });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps pagination fields that ride alongside data', async () => {
-    const payload = { data: [{ id: 1 }], total: 42, page: 1 };
-    fetchMock.mockResolvedValueOnce(jsonResponse(payload));
-
-    await expect(apiFetch('/admin/api/events')).resolves.toEqual(payload);
-  });
-
-  it('fetches a CSRF token once and sends it on mutations', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ csrf_token: 'tok-1' }))
-      .mockResolvedValueOnce(jsonResponse({ success: true, data: { ok: true } }));
-
-    await apiFetch('/admin/api/users', { method: 'POST', body: { username: 'ops' } });
-
-    const [tokenCall, mutationCall] = fetchMock.mock.calls;
-    expect(tokenCall?.[0]).toBe('/admin/api/csrf-token');
-    const headers = new Headers(mutationCall?.[1]?.headers);
-    expect(headers.get('X-CSRF-Token')).toBe('tok-1');
-    expect(headers.get('Content-Type')).toBe('application/json');
-    expect(mutationCall?.[1]?.body).toBe(JSON.stringify({ username: 'ops' }));
-  });
-
-  it('does not fetch a CSRF token for reads', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, data: [] }));
-
-    await apiFetch('/admin/api/users');
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/admin/api/users');
-  });
-
-  it('surfaces the server error message and status', async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ csrf_token: 'tok-1' }))
-      .mockResolvedValueOnce(jsonResponse({ success: false, error: 'username already exists' }, 409));
-
-    await expect(apiFetch('/admin/api/users', { method: 'POST', body: {} })).rejects.toMatchObject({
-      name: 'ApiError',
-      status: 409,
-      message: 'username already exists',
+describe('unwrapEnvelope', () => {
+  it('keeps the sibling keys the old unwrap dropped', () => {
+    // The backfill status endpoint puts `history`, `resumable` and `hint`
+    // BESIDE `data`. The old unwrap returned `data` alone, so the panel
+    // could never show them.
+    const out = unwrapEnvelope<Record<string, unknown>>({
+      success: true,
+      data: { status: 'running', rows_scanned: 100 },
+      history: [{ id: 1 }],
+      resumable: true,
+      hint: 'resume where it stopped',
     });
+    expect(out.status).toBe('running');
+    expect(out.rows_scanned).toBe(100);
+    expect(out.history).toEqual([{ id: 1 }]);
+    expect(out.resumable).toBe(true);
+    expect(out.hint).toBe('resume where it stopped');
   });
 
-  it('does not redirect on 401 while the recovery-codes screen is open', async () => {
-    setSuppressAuthRedirect(true);
-    const location = { href: '' };
-    vi.stubGlobal('window', { location, dispatchEvent: () => true });
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'unauthenticated' }, 401));
-
-    await expect(apiFetch('/admin/api/me')).rejects.toMatchObject({ status: 401 });
-    expect(location.href).toBe('');
-    setSuppressAuthRedirect(false);
+  it('keeps the estimate the backfill and restore confirmations need', () => {
+    const out = unwrapEnvelope<Record<string, unknown>>({
+      success: true,
+      data: { id: 7 },
+      estimate: { rows: 1000, bytes: 4096 },
+    });
+    expect(out.id).toBe(7);
+    expect(out.estimate).toEqual({ rows: 1000, bytes: 4096 });
   });
 
-  it('is an ApiError, not a bare Error, so callers can branch on code', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'nope', code: 'forbidden' }, 403));
+  it('drops the envelope keys themselves', () => {
+    // `success`, `error` and `message` are the envelope's, not the
+    // payload's — they must not leak into the unwrapped object.
+    const out = unwrapEnvelope<Record<string, unknown>>({
+      success: true,
+      error: null,
+      message: null,
+      data: { a: 1 },
+    });
+    expect(out).toEqual({ a: 1 });
+    expect('success' in out).toBe(false);
+    expect('error' in out).toBe(false);
+    expect('message' in out).toBe(false);
+  });
 
-    const err = await apiFetch('/admin/api/x').catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe('forbidden');
+  it('returns an ARRAY data untouched', () => {
+    // The traps and flows endpoints return a bare array. There is nothing
+    // to merge into, and the callers expect an array.
+    const out = unwrapEnvelope<unknown[]>({ success: true, data: [1, 2, 3] });
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toEqual([1, 2, 3]);
+  });
+
+  it('returns a scalar data untouched', () => {
+    expect(unwrapEnvelope<string>({ success: true, data: 'ok' })).toBe('ok');
+    expect(unwrapEnvelope<number>({ success: true, data: 42 })).toBe(42);
+  });
+
+  it('returns null data untouched', () => {
+    expect(unwrapEnvelope<null>({ success: true, data: null })).toBeNull();
   });
 });

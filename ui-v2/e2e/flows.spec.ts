@@ -56,7 +56,10 @@ test('filters flow samples and exports the filtered CSV', async ({ page }) => {
 
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /Export CSV/ }).click();
-  await expect.poll(() => sampleUrls.at(-1) ?? '').toContain('limit=5000');
+  // The export asks for the server's FULL ceiling. It used to ask for
+  // 5,000 — half of what the server allows and half of what the legacy
+  // console exported — so an operator silently got half the rows.
+  await expect.poll(() => sampleUrls.at(-1) ?? '').toContain('limit=10000');
   await expect.poll(() => sampleUrls.at(-1) ?? '').toContain('src_addr=10.0.0.5');
   await expect(page.getByText('2 flow samples exported')).toBeVisible();
 

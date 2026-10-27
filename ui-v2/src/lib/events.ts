@@ -161,3 +161,35 @@ export function eventHitsSeries(rows: EventBucket[] | undefined): {
   points.sort((a, b) => a.ts - b.ts);
   return { timestamps: points.map((p) => p.ts), values: points.map((p) => p.hits) };
 }
+
+
+/**
+ * One day-bucketed count from the security-event analytics.
+ *
+ * The server's `SecEventDayCount` is `{ day, count }` — a DATE string and
+ * a count, not the `{ hits }` bucket the net-event analytics uses.
+ */
+export interface SecDayCount {
+  day: string;
+  count: number;
+}
+
+/**
+ * A day-bucketed series for the chart.
+ *
+ * The day is a UTC calendar date, so it is parsed as UTC midnight. The
+ * points are sorted oldest-first, because the chart draws them in order.
+ */
+export function secDayCountSeries(rows: SecDayCount[] | undefined): {
+  timestamps: number[];
+  values: number[];
+} {
+  const points: Array<{ ts: number; count: number }> = [];
+  for (const row of rows ?? []) {
+    const ts = Date.parse(`${row.day}T00:00:00Z`);
+    if (!Number.isFinite(ts)) continue;
+    points.push({ ts: ts / 1000, count: Number(row.count) || 0 });
+  }
+  points.sort((a, b) => a.ts - b.ts);
+  return { timestamps: points.map((p) => p.ts), values: points.map((p) => p.count) };
+}

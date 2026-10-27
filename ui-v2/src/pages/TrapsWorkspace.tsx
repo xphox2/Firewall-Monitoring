@@ -1,10 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { RadioTower, Search, Filter } from 'lucide-react';
+import { RadioTower, Search } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { cn, formatRelativeTime } from '@/lib/utils';
 import { timeBucketSeries } from '@/lib/events';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
+import { RefreshButton } from '@/components/ui/refresh-button';
+import { buildTrapQuery, LIST_PAGE_SIZE, type TrapFilters } from '@/lib/list-filters';
+import { EventFilterBar } from '@/components/events/event-filter-bar';
+import { EventPager } from '@/components/events/event-pager';
 import { SkeletonValue } from '@/components/ui/skeleton';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { BarList } from '@/components/ui/bar-list';
@@ -55,16 +59,27 @@ export function TrapsWorkspace() {
   const [severityFilter, setSeverityFilter] = useState('');
   const [range, setRange] = useState<Range>('24h');
   const [selectedTrap, setSelectedTrap] = useState<TrapRow | null>(null);
+  const [deviceId, setDeviceId] = useState('');
+  const [trapType, setTrapType] = useState('');
+  const [page, setPage] = useState(0);
 
   const hours = RANGES.find((r) => r.value === range)?.hours ?? 24;
 
+  /*
+   * The server's filters for `GET /admin/api/traps`: device_id, severity
+   * (an EXACT match here, unlike syslog's ceiling), trap_type and hours.
+   * The console offered only the severity.
+   */
+  const trapFilters = useMemo<TrapFilters>(
+    () => ({ severity: severityFilter, deviceId, trapType }),
+    [severityFilter, deviceId, trapType],
+  );
+
   const { data: trapsRes, isLoading } = useQuery({
-    // GetTraps filters by device_id/severity/trap_type/hours; `search` is
-    // client-side over the loaded page (the server ignores it).
-    queryKey: ['snmp-traps', hours, severityFilter],
+    // `search` is client-side over the loaded page (the server ignores it).
+    queryKey: ['snmp-traps', hours, trapFilters, page],
     queryFn: () => {
-      const params = new URLSearchParams({ limit: '100', hours: String(hours) });
-      if (severityFilter) params.set('severity', severityFilter);
+      const params = buildTrapQuery(trapFilters, hours, LIST_PAGE_SIZE, page * LIST_PAGE_SIZE);
       return apiFetch<any>(`/admin/api/traps?${params.toString()}`);
     },
     refetchInterval: 15_000,
@@ -233,13 +248,21 @@ export function TrapsWorkspace() {
         <BarList title="Top trap types" rows={typeRows} empty="No trap type data." />
       )}
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-bg-card p-2.5">
-        <Filter className="h-3.5 w-3.5 text-text-faint ml-1" />
-        <Select className="px-2.5 py-1"
+      <EventFilterBar
+        filters={{ deviceId }}
+        onChange={(next) => {
+          setDeviceId(next.deviceId ?? '');
+          setPage(0);
+        }}
+      >
+        <Select
+          className="px-2.5 py-1"
           value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
+          onChange={(e) => {
+            setSeverityFilter(e.target.value);
+            setPage(0);
+          }}
           aria-label="Filter by trap severity"
-         
         >
           <option value="">All severities</option>
           {severityOptions.map((value) => (
@@ -248,14 +271,20 @@ export function TrapsWorkspace() {
             </option>
           ))}
         </Select>
-        <button
-          type="button"
-          onClick={() => setSeverityFilter('')}
-          className="ml-auto rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text"
-        >
-          Clear
-        </button>
-      </div>
+        <input
+          type="text"
+          value={trapType}
+          onChange={(e) => {
+            setTrapType(e.target.value);
+            setPage(0);
+          }}
+          placeholder="Trap type"
+          aria-label="Filter by trap type"
+          className="rounded-md border border-border bg-bg-card px-2.5 py-1 text-[11px] text-text focus:border-accent focus:outline-hidden focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent w-36"
+        />
+      
+        <RefreshButton queryKeys={[['snmp-traps'], ['trap-stats']]} label="Refresh" />
+      </EventFilterBar>
 
       <ResponsiveDataView
         data={traps}
@@ -276,6 +305,13 @@ export function TrapsWorkspace() {
           </div>
         )}
       />
+
+      <EventPager
+        page={page}
+        pageSize={LIST_PAGE_SIZE}
+        onChange={setPage}
+      />
+
 
       <SlideOverDrawer
         open={Boolean(selectedTrap)}
