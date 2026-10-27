@@ -48,8 +48,17 @@ func TestV2IpsecWizardCallsTheRightEndpoints(t *testing.T) {
 
 	// The preview is a POST, and the create is a POST while the update is a
 	// PUT. A wizard that POSTs the update would create a second tunnel.
-	if !regexp.MustCompile(`method:\s*'POST',\s*body:\s*buildIntent\(form\)`).MatchString(wizard) {
+	if !regexp.MustCompile(`const body = buildIntent\(form\);\s*const res = await apiFetch<PreviewResponse>\('/admin/api/ipsec/preview',\s*\{\s*method:\s*'POST',\s*body,`).MatchString(wizard) {
 		t.Error("the IPSec wizard does not POST the built intent to the preview endpoint")
+	}
+	// Save needs a preview of THIS design. The tabs are free, and an edit
+	// made after a clean preview was once saved on the old preview's
+	// strength - the intent the server stored was never validated.
+	code := stripComments(wizard)
+	if !strings.Contains(code, "setPreviewedIntent(JSON.stringify(body))") ||
+		!strings.Contains(code, "previewedIntent === currentIntent") ||
+		!strings.Contains(code, "disabled={saving || !previewIsCurrent || blocking.length > 0}") {
+		t.Error("the IPSec wizard's Save is not gated on a preview of the CURRENT intent — a stale preview can stand in for a changed design")
 	}
 	if !regexp.MustCompile(`method:\s*'PUT',\s*body\s*\}`).MatchString(wizard) {
 		t.Error("the IPSec wizard does not PUT the built intent to the update endpoint - POSTing it would create a second tunnel")

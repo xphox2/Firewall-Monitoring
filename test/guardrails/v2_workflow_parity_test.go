@@ -101,31 +101,21 @@ func TestV2ConsoleBulkActionsCanCrossPages(t *testing.T) {
 		}
 	}
 
-	// The site filter is NOT one of the filters the endpoint accepts
-	// (internal/api/handlers/handlers_analytics.go: device_id, alert_type,
-	// severity, acknowledged, include_snoozed). A request built from a
-	// site-filtered view would reach alerts outside the site on screen, so
-	// the console must withhold the shortcut rather than build a request
-	// the server cannot scope.
-	if !strings.Contains(alerts, "bulkFilterCanScopeBySite") {
-		t.Error("AlertsWorkspace.tsx missing the site-filter guard — the bulk-by-filter endpoint cannot filter by site, so acting across pages under a site filter would reach alerts the operator cannot see")
+	// The cross-page action must carry the SITE: the server scopes the bulk
+	// action by site (handlers_analytics.go, bulkAlertFilter). It once could
+	// not, and the classic console's "Select all N matching" under a site
+	// filter acknowledged alerts in every site.
+	bulk := stripComments(readV2(t, "lib/alerts.ts"))
+	bulkFn := regexp.MustCompile(`(?s)export function buildAlertBulkFilterQuery\(.*?\n\}`).FindString(bulk)
+	if bulkFn == "" {
+		t.Fatal("lib/alerts.ts missing buildAlertBulkFilterQuery — the cross-page bulk action must build its query in one tested place")
 	}
-	if strings.Contains(alerts, "params.set('site_id'") {
-		t.Error("AlertsWorkspace.tsx must not send site_id to the bulk-by-filter endpoint — the server ignores it, which would silently widen the action")
+	if !strings.Contains(bulkFn, "params.set('site_id'") {
+		t.Error("buildAlertBulkFilterQuery does not send site_id — under a site filter the action would reach every site")
 	}
-	// The query builder may have moved into lib/alerts.ts, so that file is
-	// checked too: the LIST query legitimately sends site_id, but the BULK
-	// query must not, and the two live in the same module.
-	if bulk := readV2(t, "lib/alerts.ts"); strings.Contains(bulk, "params.set('site_id'") {
-		// Allowed only inside buildAlertQuery (the list). The bulk builder
-		// must not have it: split the file and check the bulk function only.
-		if bulkFn := regexp.MustCompile(`(?s)export function buildAlertBulkFilterQuery\(.*?\n\}`).FindString(bulk); bulkFn != "" {
-			if strings.Contains(bulkFn, "site_id") {
-				t.Error("lib/alerts.ts buildAlertBulkFilterQuery sends site_id — the server ignores it, which would silently widen the action")
-			}
-		} else {
-			t.Error("lib/alerts.ts missing buildAlertBulkFilterQuery — the cross-page bulk action must build its query in one tested place")
-		}
+	server := stripComments(readRepoFile(t, "internal/api/handlers/handlers_analytics.go"))
+	if !strings.Contains(server, `c.Query("site_id")`) || !strings.Contains(server, "filter.SiteID = v") {
+		t.Error("the bulk-by-filter handler does not read site_id — a site-scoped request would widen to every site")
 	}
 }
 

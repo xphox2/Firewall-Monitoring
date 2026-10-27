@@ -4,7 +4,6 @@ import {
   alertState,
   buildAlertBulkFilterQuery,
   buildAlertQuery,
-  bulkFilterCanScopeBySite,
   compactBucket,
   pageRange,
   trendBars,
@@ -33,27 +32,28 @@ describe('buildAlertBulkFilterQuery', () => {
     expect(q.get('alert_type')).toBe('CPU_HIGH');
   });
 
-  it('NEVER sends site_id — the server ignores it', () => {
-    // The bulk-by-filter endpoint accepts device_id, alert_type, severity
-    // and acknowledged ONLY. A site_id in the query would be ignored, and
-    // the action would reach alerts outside the site on screen.
+  it('sends the site, so the action stays inside the site on screen', () => {
+    // The server scopes the bulk action by site exactly as the list does.
     const q = new URLSearchParams(
       buildAlertBulkFilterQuery(
         { deviceId: '', siteId: '4', severity: '', alertType: '', includeSnoozed: false },
         false,
       ),
     );
-    expect(q.has('site_id')).toBe(false);
-  });
-});
-
-describe('bulkFilterCanScopeBySite', () => {
-  it('is true when no site filter is active', () => {
-    expect(bulkFilterCanScopeBySite(EMPTY_ALERT_FILTERS)).toBe(true);
+    expect(q.get('site_id')).toBe('4');
+    const unassigned = new URLSearchParams(
+      buildAlertBulkFilterQuery({ ...EMPTY_ALERT_FILTERS, siteId: 'unassigned' }, false),
+    );
+    expect(unassigned.get('site_id')).toBe('unassigned');
   });
 
-  it('is false when a site filter is active', () => {
-    expect(bulkFilterCanScopeBySite({ ...EMPTY_ALERT_FILTERS, siteId: '4' })).toBe(false);
+  it('sends exactly the filters the list sends (besides paging)', () => {
+    const filters = { deviceId: '7', siteId: '4', severity: 'critical', alertType: 'CPU_HIGH', includeSnoozed: true };
+    const bulk = new URLSearchParams(buildAlertBulkFilterQuery(filters, false));
+    const list = new URLSearchParams(buildAlertQuery({ acknowledged: false, filters, offset: 0 }));
+    list.delete('limit');
+    list.delete('offset');
+    expect(Object.fromEntries(bulk)).toEqual(Object.fromEntries(list));
   });
 });
 

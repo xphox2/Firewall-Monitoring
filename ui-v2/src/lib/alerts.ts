@@ -47,12 +47,12 @@ export function buildAlertQuery(opts: {
  * Query string for the BULK-BY-FILTER endpoints
  * (POST /api/alerts/bulk-acknowledge-filter, /bulk-snooze-filter).
  *
- * The server accepts device_id, alert_type, severity, acknowledged and
- * include_snoozed. A SITE filter is NOT one of them, so it is deliberately
- * NOT sent: the server would ignore it and the action would reach alerts
- * outside the site the operator is looking at. The console withholds the
- * cross-page shortcut entirely when a site filter is active rather than build
- * a request the server cannot scope.
+ * It carries EVERY filter the list carries - device, site, type, severity,
+ * include_snoozed - because the server scopes the action with the list's own
+ * predicates (handlers_analytics.go, bulkAlertFilter). The site was once
+ * missing on the server, so the console withheld the cross-page shortcut
+ * under a site filter; the server now scopes by site, and refuses a filter it
+ * cannot apply rather than dropping it.
  *
  * The acknowledged value comes from the QUEUE (the open tab is
  * acknowledged=false, the history tab acknowledged=true), not from a
@@ -64,25 +64,15 @@ export function buildAlertBulkFilterQuery(
 ): string {
   const params = new URLSearchParams();
   if (filters.deviceId) params.set('device_id', filters.deviceId);
+  if (filters.siteId) params.set('site_id', filters.siteId);
   if (filters.alertType) params.set('alert_type', filters.alertType);
   if (filters.severity) params.set('severity', filters.severity);
   // The list hides snoozed alerts unless this is set, and the by-filter
   // endpoints honour it too — so the action reaches exactly the set the
-  // operator is shown. Without it the operator was shown N alerts and the
-  // action touched the snoozed ones as well.
+  // operator is shown.
   if (filters.includeSnoozed) params.set('include_snoozed', 'true');
   params.set('acknowledged', acknowledged ? 'true' : 'false');
   return params.toString();
-}
-
-/**
- * Whether the cross-page bulk action can be offered at all.
- *
- * False when a site filter is active, because the bulk-by-filter endpoints
- * cannot filter by site.
- */
-export function bulkFilterCanScopeBySite(filters: AlertFilters): boolean {
-  return !filters.siteId;
 }
 
 export type AlertState = 'resolved' | 'acknowledged' | 'snoozed' | 'open';

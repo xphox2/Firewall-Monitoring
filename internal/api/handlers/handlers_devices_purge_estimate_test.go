@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +16,9 @@ import (
 )
 
 // TestEstimateDevicePurge_ReportsTheCapAndTheBlockers pins the two
-// things the estimate was NOT telling the operator.
+// things the estimate was NOT telling the operator. (The cap's aggregate flag
+// is proven in the database package, where the cap can be lowered:
+// purge_test.go, est.Capped.)
 //
 // The total: a per-table count is capped, so when any table is capped the
 // TOTAL is a lower bound. Without the flag the dialog rendered "of
@@ -71,6 +75,38 @@ func TestEstimateDevicePurge_ReportsTheCapAndTheBlockers(t *testing.T) {
 		body := decodeEstimate(t, rec.Body.String())
 		if len(body.Blockers) == 0 {
 			t.Error("the estimate did not mention the queued job — the operator would only find out when the purge answered 409")
+		}
+	})
+
+	t.Run("a tunnel that is deploying or rolling back is a blocker", func(t *testing.T) {
+		// A separate retired device, so the queued job above is not what is
+		// being reported.
+		dev := &models.Device{Name: "fw-ipsec", IPAddress: "192.0.2.3", RetiredAt: nowPtr()}
+		peer := &models.Device{Name: "fw-peer", IPAddress: "192.0.2.4"}
+		for _, d := range []*models.Device{dev, peer} {
+			if err := db.Gorm().Create(d).Error; err != nil {
+				t.Fatalf("create the device: %v", err)
+			}
+		}
+		for _, tun := range []*models.IPSecTunnel{
+			{Name: "settled", ADeviceID: dev.ID, BDeviceID: peer.ID, Status: "up"},
+			{Name: "mid-deploy", ADeviceID: peer.ID, BDeviceID: dev.ID, Status: ipsecStatusDeploying},
+		} {
+			if err := db.Gorm().Create(tun).Error; err != nil {
+				t.Fatalf("create the tunnel: %v", err)
+			}
+		}
+		id := strconv.FormatUint(uint64(dev.ID), 10)
+		c, rec := jsonReq(http.MethodGet, "/admin/api/devices/"+id+"/purge/estimate", "")
+		c.Params = paramsFor("id", id)
+		c.Set("role", auth.RoleAdmin)
+		h.EstimateDevicePurge(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the estimate was refused: %d %s", rec.Code, rec.Body.String())
+		}
+		body := decodeEstimate(t, rec.Body.String())
+		if len(body.Blockers) != 1 || !strings.Contains(body.Blockers[0], "mid-deploy") {
+			t.Errorf("blockers = %q, want exactly the deploying tunnel (the settled one is not a blocker)", body.Blockers)
 		}
 	})
 }

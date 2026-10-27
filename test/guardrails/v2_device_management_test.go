@@ -297,16 +297,23 @@ func TestV2PurgeSendsTheConfirmationName(t *testing.T) {
 	}
 }
 
-// TestV2AlertConfigUsesTheEventProfileEndpoint pins that the Event Profile
-// is NOT sent in the alert-config body.
+// TestV2TheEventProfileRidesInTheAlertConfigBody pins how the Event Profile
+// reaches the server.
 //
-// The two are different things: the alert-config PUT BINDS onto the existing
-// row, while the Event Profile is assigned through its own admin-only
-// `/event-profile` endpoint, which is where the server refreshes the
-// resolution cache from. Folding it into the alert-config body would fork
-// the shipped contract and bypass that cache.
-func TestV2AlertConfigUsesTheEventProfileEndpoint(t *testing.T) {
-	builder := readV2(t, "lib/alert-config.ts")
+// It used to be a second request to its own `/event-profile` endpoint, and a
+// failure between the two left HALF an override applied with a save that
+// reported failure. It now rides in the alert-config PUT, which the server
+// writes in one transaction - but only when it CHANGED: assigning or clearing
+// a profile is admin-only, so a key sent on every save would make a
+// non-admin's save fail. So the generic config body never carries it; the
+// drawer adds it from buildEventProfileBody.
+//
+// (This guardrail was called ...UsesTheEventProfileEndpoint and still pinned
+// the OLD two-request design in its name and its messages.)
+func TestV2TheEventProfileRidesInTheAlertConfigBody(t *testing.T) {
+	// Comments stripped: the NEXT function's doc comment names the key, and
+	// it sits inside this capture.
+	builder := stripComments(readV2(t, "lib/alert-config.ts"))
 	// The capture runs to the NEXT exported function (or the end of the file),
 	// so a mutation added anywhere inside the body is inside the capture. A
 	// non-greedy brace match would stop at the first inner `}` and let a
@@ -316,10 +323,10 @@ func TestV2AlertConfigUsesTheEventProfileEndpoint(t *testing.T) {
 		t.Fatal("lib/alert-config.ts: buildAlertConfigBody was not found")
 	}
 	if strings.Contains(bodyBlock, "event_profile_id") {
-		t.Error("buildAlertConfigBody sends event_profile_id — it belongs on the dedicated /event-profile endpoint, which is where the server refreshes the resolution cache from")
+		t.Error("buildAlertConfigBody sends event_profile_id on every save — a non-admin's save would be refused; the drawer adds it only when it changed (buildEventProfileBody)")
 	}
 	if !strings.Contains(builder, "buildEventProfileBody") {
-		t.Error("lib/alert-config.ts has no buildEventProfileBody — the Event Profile still needs somewhere to go")
+		t.Error("lib/alert-config.ts has no buildEventProfileBody — nothing decides when the profile is sent")
 	}
 
 	// The profile rides in the ALERT-CONFIG body, and the server writes

@@ -6,9 +6,11 @@ import { cn } from '@/lib/utils';
 import { SlideOverDrawer } from '@/components/ui/slide-over-drawer';
 import { useToast } from '@/components/ui/toast';
 import {
+  alertConfigUrl,
   buildAlertConfigBody,
   buildEventProfileBody,
   isValidAlertConfig,
+  thresholdField,
 } from '@/lib/alert-config';
 import { Input, Select } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -102,9 +104,9 @@ const EMPTY: FormState = {
  *
  * The server's contract, which the form follows exactly:
  *
- * - The PUT BINDS ONTO the existing row, so an absent field PRESERVES the
- *   stored value rather than zeroing it. The form therefore sends only the
- *   fields the operator actually changed.
+ * - The PUT BINDS ONTO the existing row. The form is seeded from that row and
+ *   sends the whole override back, so a blanked field is really cleared — a
+ *   threshold of 0 and a null pointer both mean "inherit" (lib/alert-config).
  * - `policy_id` and `event_profile_id` are pointers: null means "inherit".
  * - The Event Profile rides in the SAME body. V1 assigned it through a
  *   second, admin-only endpoint, and the server caches the resolution. Two
@@ -127,12 +129,11 @@ export function AlertConfigDrawer({
   const [form, setForm] = useState<FormState>(EMPTY);
 
   const configKey = scope === 'device' ? 'device-alert-config' : 'site-alert-config';
-  const path = scope === 'device' ? `/admin/api/devices/${id}` : `/admin/api/sites/${id}`;
+  const url = alertConfigUrl(scope, id);
 
   const { data: config, isLoading } = useQuery({
     queryKey: [configKey, id],
-    queryFn: () =>
-      apiFetch<DeviceAlertConfig | SiteAlertConfig>(`/admin/api${path}/alert-config`),
+    queryFn: () => apiFetch<DeviceAlertConfig | SiteAlertConfig>(url),
     enabled: open,
     retry: false,
   });
@@ -156,11 +157,11 @@ export function AlertConfigDrawer({
     setForm({
       policy_id: config.policy_id ? String(config.policy_id) : '',
       event_profile_id: config.event_profile_id ? String(config.event_profile_id) : '',
-      cpu_threshold: String(config.cpu_threshold ?? ''),
-      memory_threshold: String(config.memory_threshold ?? ''),
-      disk_threshold: String(config.disk_threshold ?? ''),
-      session_threshold: String(config.session_threshold ?? ''),
-      cooldown_minutes: String(config.cooldown_minutes ?? ''),
+      cpu_threshold: thresholdField(config.cpu_threshold),
+      memory_threshold: thresholdField(config.memory_threshold),
+      disk_threshold: thresholdField(config.disk_threshold),
+      session_threshold: thresholdField(config.session_threshold),
+      cooldown_minutes: thresholdField(config.cooldown_minutes),
       alerts_enabled: device ? device.alerts_enabled !== false : true,
       storm_sources:
         site && site.storm_sources != null ? String(site.storm_sources) : '',
@@ -189,11 +190,11 @@ export function AlertConfigDrawer({
       ? buildEventProfileBody(config?.event_profile_id, form.event_profile_id)
       : null;
     if (profileBody) {
-      body.event_profile_id = profileBody.profile_id;
+      body.event_profile_id = profileBody.event_profile_id;
     }
 
     try {
-      await apiFetch(`/admin/api${path}/alert-config`, { method: 'PUT', body });
+      await apiFetch(url, { method: 'PUT', body });
       toast({
         title: scope === 'device' ? 'Device alert override saved' : 'Site alert override saved',
         variant: 'success',
@@ -212,7 +213,7 @@ export function AlertConfigDrawer({
 
   const reset = async () => {
     try {
-      await apiFetch(`/admin/api${path}/alert-config`, { method: 'DELETE' });
+      await apiFetch(url, { method: 'DELETE' });
       toast({ title: 'Override reset to the global defaults', variant: 'info' });
       queryClient.invalidateQueries({ queryKey: [configKey, id] });
       onOpenChange(false);
@@ -238,6 +239,7 @@ export function AlertConfigDrawer({
         max={max}
         value={form[key]}
         onChange={(e) => set(key, e.target.value)}
+        placeholder="Inherit"
         className={cn(
           'w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text',
           max != null && !isValidAlertConfig({ ...form, [key]: form[key] }) && 'border-sig-crit',
@@ -269,8 +271,10 @@ export function AlertConfigDrawer({
           <Button
             type="button"
             onClick={save}
-            disabled={!valid || isLoading}
-            
+            // The body is the WHOLE override, seeded from the loaded row, so
+            // a save before the row arrived (or after its load failed) would
+            // write the empty form over the stored override.
+            disabled={!valid || isLoading || !config}
           >
             <Save className="inline h-3.5 w-3.5" />
             Save override
@@ -351,12 +355,11 @@ export function AlertConfigDrawer({
               min={0}
               value={form.storm_sources}
               onChange={(e) => set('storm_sources', e.target.value)}
-              placeholder="Unchanged"
-             
+              placeholder="Inherit"
             />
             <span className="mt-1 block text-[10px] text-text-faint">
-              Blank keeps the current override. 0 disables the digest for this
-              site.
+              Blank inherits the global threshold. 0 disables the digest for
+              this site.
             </span>
           </label>
         ) : null}

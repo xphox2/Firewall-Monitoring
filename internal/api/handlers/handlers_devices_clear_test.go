@@ -139,4 +139,34 @@ func TestPrepareDeviceUpdates_ClearsSecretsOnlyWhenAsked(t *testing.T) {
 			t.Errorf("answered %d, want 400", c.Writer.Status())
 		}
 	})
+
+	t.Run("setting and clearing the same field is refused", func(t *testing.T) {
+		// The clear used to win silently over the new value.
+		c, _ := jsonReq(http.MethodPut, "/admin/api/devices/1", `{}`)
+		c.Set("role", auth.RoleAdmin)
+		_, ok := prepareDeviceUpdates(c, db, dev, map[string]interface{}{
+			"api_token":     "a-new-token",
+			"clear_secrets": []interface{}{"api_token"},
+		})
+		if ok {
+			t.Error("a body that both sets and clears api_token was accepted")
+		}
+		if c.Writer.Status() != http.StatusBadRequest {
+			t.Errorf("answered %d, want 400", c.Writer.Status())
+		}
+	})
+
+	t.Run("naming a field twice is still one clear", func(t *testing.T) {
+		c, _ := jsonReq(http.MethodPut, "/admin/api/devices/1", `{}`)
+		c.Set("role", auth.RoleAdmin)
+		out, ok := prepareDeviceUpdates(c, db, dev, map[string]interface{}{
+			"clear_secrets": []interface{}{"api_token", "api_token"},
+		})
+		if !ok {
+			t.Fatalf("a duplicated name was refused: %d", c.Writer.Status())
+		}
+		if v, has := out["api_token"]; !has || v != "" {
+			t.Errorf("api_token was not cleared: %v", v)
+		}
+	})
 }

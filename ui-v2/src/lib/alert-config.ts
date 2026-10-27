@@ -7,15 +7,18 @@
  *
  * The server's contract, which the form follows exactly:
  *
- * - The PUT BINDS ONTO the existing row, so an absent field PRESERVES the
- *   stored value rather than zeroing it. The body therefore carries only the
- *   fields the operator actually changed.
+ * - The PUT BINDS ONTO the existing row. The form is seeded from that row, so
+ *   it sends the WHOLE override back — the same as V1 — and a field the
+ *   operator blanked really is cleared.
+ * - A threshold or cooldown of 0 means "inherit": the alert engine only
+ *   applies an override that is > 0 (internal/alerts/policy.go,
+ *   overrideThreshold). So a stored 0 is shown blank, and a blank is sent as 0.
  * - `policy_id` and `event_profile_id` are pointers: null means "inherit".
- * - The Event Profile is NOT set here. V1 assigns it through the dedicated
- *   admin-only `/event-profile` endpoint, and the server caches the
- *   resolution — so it is sent separately.
- * - `storm_sources` is a site-only tri-state: blank inherits, 0 disables the
- *   digest for that site, and a positive number sets the threshold.
+ * - The Event Profile rides in the SAME body as the config, so the server
+ *   writes both in one transaction. It is only sent when it changed, because
+ *   assigning one is admin-only (see buildEventProfileBody).
+ * - `storm_sources` is a site-only tri-state: blank inherits (null), 0 disables
+ *   the digest for that site, and a positive number sets the threshold.
  */
 
 export interface AlertConfigValues {
@@ -33,61 +36,75 @@ export interface AlertConfigValues {
 export type AlertConfigScope = 'device' | 'site';
 
 /**
+ * The alert-config route for a device or a site.
+ *
+ * One place, because the drawer once built `/admin/api` into a path and then
+ * prefixed it again — `/admin/api/admin/api/...` — and every load, save and
+ * reset 404ed while every gate stayed green.
+ */
+export function alertConfigUrl(scope: AlertConfigScope, id: number | string): string {
+  return scope === 'device'
+    ? `/admin/api/devices/${id}/alert-config`
+    : `/admin/api/sites/${id}/alert-config`;
+}
+
+/**
+ * A stored threshold as the form shows it: 0 is "inherit", so it is blank.
+ */
+export function thresholdField(stored: number | null | undefined): string {
+  return stored ? String(stored) : '';
+}
+
+/**
  * The body for PUT /admin/api/{devices,sites}/:id/alert-config.
  *
- * Only the fields the operator CHANGED are sent, because the server binds
- * onto the existing row: a field sent as 0 would overwrite the stored value
- * with a zero. A field left blank is omitted, which the server reads as
- * "keep what is stored".
+ * Every field is sent. The form was seeded from the stored row, so an
+ * untouched field round-trips its own value, and a field the operator blanked
+ * is sent as its "inherit" value — 0 for a threshold, null for a pointer.
+ * Omitting a blank instead would leave the stored override in place: the
+ * operator could never hand a threshold back to the policy.
  */
 export function buildAlertConfigBody(
   values: AlertConfigValues,
   scope: AlertConfigScope,
 ): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
-
-  // The policy is a POINTER on the model, so "inherit" is an explicit null.
-  // Omitting it would leave the stored policy in place, which is not what
-  // clearing the picker means.
-  body.policy_id = values.policy_id === '' ? null : Number(values.policy_id);
-
-  const num = (v: string) => (v === '' ? undefined : Number(v));
-  const cpu = num(values.cpu_threshold);
-  if (cpu !== undefined) body.cpu_threshold = cpu;
-  const memory = num(values.memory_threshold);
-  if (memory !== undefined) body.memory_threshold = memory;
-  const disk = num(values.disk_threshold);
-  if (disk !== undefined) body.disk_threshold = disk;
-  const sessions = num(values.session_threshold);
-  if (sessions !== undefined) body.session_threshold = sessions;
-  const cooldown = num(values.cooldown_minutes);
-  if (cooldown !== undefined) body.cooldown_minutes = cooldown;
+  const num = (v: string) => (v === '' ? 0 : Number(v));
+  const body: Record<string, unknown> = {
+    policy_id: values.policy_id === '' ? null : Number(values.policy_id),
+    cpu_threshold: num(values.cpu_threshold),
+    memory_threshold: num(values.memory_threshold),
+    disk_threshold: num(values.disk_threshold),
+    session_threshold: num(values.session_threshold),
+    cooldown_minutes: num(values.cooldown_minutes),
+  };
 
   if (scope === 'device') {
     body.alerts_enabled = values.alerts_enabled;
-  } else if (values.storm_sources !== '') {
-    // Site only, and tri-state: blank inherits, so it is omitted.
-    body.storm_sources = Number(values.storm_sources);
+  } else {
+    // Tri-state: blank inherits, and inherit is an explicit null — the
+    // column is a pointer, so an omitted key would keep the stored override.
+    body.storm_sources = values.storm_sources === '' ? null : Number(values.storm_sources);
   }
 
   return body;
 }
 
 /**
- * The Event Profile is assigned through its own admin-only endpoint, not
- * through the alert-config body.
+ * The `event_profile_id` to put in the alert-config body, or null when the
+ * profile did not change and the key must be left OUT.
  *
- * Returns the body for PUT /admin/api/{devices,sites}/:id/event-profile, or
- * null when the profile did not change and no call is needed.
+ * Leaving it out matters: the server reads an absent key as "leave the
+ * assignment alone", and assigning or clearing a profile is admin-only, so a
+ * key sent on every save would make a non-admin's save fail.
  */
 export function buildEventProfileBody(
   currentProfileId: number | null | undefined,
   nextProfileId: string,
-): { profile_id: number | null } | null {
+): { event_profile_id: number | null } | null {
   const next = nextProfileId === '' ? null : Number(nextProfileId);
   const current = currentProfileId ?? null;
   if (next === current) return null;
-  return { profile_id: next };
+  return { event_profile_id: next };
 }
 
 /**

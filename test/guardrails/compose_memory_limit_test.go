@@ -39,10 +39,11 @@ func TestComposeMemoryLimitIsOverridable(t *testing.T) {
 		t.Errorf("the compose file's mem_limit is %q, want ${FIREWALL_MON_MEM_LIMIT:-2g} - a deployment with a large database cannot raise it without editing a tracked file, and the OOM killer takes the whole container down when PostgreSQL's buffer pool outgrows the cgroup", got)
 	}
 	// The swap limit travels with it, and it must be raised TOO: Docker
-	// clamps the swap to the memory limit, so a raised limit with the
-	// default swap silently means NO swap.
+	// refuses to create a container whose memswap_limit is below its
+	// mem_limit, so a raised memory limit with the default swap limit does
+	// not start.
 	if got := values["memswap_limit"]; got != "${FIREWALL_MON_MEMSWAP_LIMIT:-4g}" {
-		t.Errorf("the compose file's memswap_limit is %q, want ${FIREWALL_MON_MEMSWAP_LIMIT:-4g} - it must travel with the memory limit, and a raised limit with the default swap silently means no swap", got)
+		t.Errorf("the compose file's memswap_limit is %q, want ${FIREWALL_MON_MEMSWAP_LIMIT:-4g} - it must travel with the memory limit, and a raised memory limit with the default swap limit makes Docker refuse to create the container", got)
 	}
 	// The CPU count travels with them: it is the other bound on the same
 	// cgroup, and a deployment that raises one raises the others.

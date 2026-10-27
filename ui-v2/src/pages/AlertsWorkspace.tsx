@@ -22,7 +22,6 @@ import {
   alertState,
   buildAlertBulkFilterQuery,
   buildAlertQuery,
-  bulkFilterCanScopeBySite,
   pageRange,
   trendBars,
   type AlertFilters,
@@ -268,18 +267,8 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   const linkedDetections = alertDetailData?.detections ?? [];
   const sourceAddr = alertDetailData?.alert?.source_addr;
 
-  /*
-   * The by-filter bulk endpoints can only express device_id, alert_type,
-   * severity and acknowledged (internal/api/handlers/handlers_analytics.go:
-   * 1437-1458). A SITE filter is not one of them, so a request built from a
-   * site-filtered view would match alerts the operator cannot see. The legacy
-   * console had the same gap and silently dropped the site; acknowledging
-   * alerts that were never on screen is worse than not offering the
-   * shortcut, so it is withheld with an explanation instead.
-   *
-   * Both helpers live in lib/alerts.ts so the rule is unit-tested.
-   */
-  const bulkCanScopeBySite = bulkFilterCanScopeBySite(filters);
+  // The cross-page action carries every filter the list carries, site
+  // included; the server scopes it with the list's own predicates.
   const buildBulkFilterQuery = (ack: boolean) =>
     buildAlertBulkFilterQuery(filters, ack);
 
@@ -498,6 +487,9 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
   });
 
   const toggleSelected = (id: number) => {
+    // Changing the row selection by hand leaves the "all matching" mode: the
+    // operator is now choosing rows, and the bar must act on THOSE rows.
+    setSelectAllMatching(false);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -519,6 +511,7 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
             aria-label="Select all alerts on this page"
             checked={allPageSelected}
             onChange={() => {
+              setSelectAllMatching(false);
               setSelected((current) => {
                 const next = new Set(current);
                 if (allPageSelected) pageIds.forEach((id) => next.delete(id));
@@ -816,11 +809,11 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         </label>
         <button
           type="button"
-          onClick={() => {
-            setFilters(EMPTY_ALERT_FILTERS);
-            setPage(0);
-            setSelected(new Set());
-          }}
+          // Through updateFilters, like every other filter change: it also
+          // drops the cross-page selection. Clearing by hand once kept it, so
+          // one ticked row read "Acknowledge all N" and acted on every open
+          // alert in the unfiltered set.
+          onClick={() => updateFilters(EMPTY_ALERT_FILTERS)}
           className="ml-auto rounded border border-border bg-bg-panel px-2.5 py-1 text-[11px] text-text-dim hover:text-text"
         >
           Clear
@@ -873,26 +866,14 @@ function AlertsQueue({ acknowledged }: { acknowledged: boolean }) {
         total > alerts.length &&
         selected.size === alerts.length && (
         <div className="rounded-lg border border-border bg-bg-panel px-3 py-2 text-[11px] text-text-dim">
-          {bulkCanScopeBySite ? (
-            <>
-              {selected.size} selected on this page.{' '}
-              <button
-                type="button"
-                onClick={() => setSelectAllMatching(true)}
-                className="text-accent underline"
-              >
-                Select all {total.toLocaleString()} matching the current filter
-              </button>
-            </>
-          ) : (
-            <>
-              {selected.size} selected on this page. Selecting across pages is
-              unavailable while a site filter is active — the bulk endpoint
-              filters by device, type, severity and acknowledgement, not by
-              site, so it would reach alerts outside the site on screen. Clear
-              the site filter to select across pages.
-            </>
-          )}
+          {selected.size} selected on this page.{' '}
+          <button
+            type="button"
+            onClick={() => setSelectAllMatching(true)}
+            className="text-accent underline"
+          >
+            Select all {total.toLocaleString()} matching the current filter
+          </button>
         </div>
       )}
 

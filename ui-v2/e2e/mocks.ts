@@ -46,6 +46,13 @@ export async function installApiMocks(page: Page, handlers: ApiHandler[] = []) {
     if (url.pathname === '/admin/api/csrf-token') {
       return fulfill(route, { csrf_token: 'e2e-csrf-token' });
     }
+    // A doubled prefix is never a real route. The catch-all below answers any
+    // unknown GET with [] and any mutation with {ok:true}, which is exactly
+    // how `/admin/api/admin/api/...` once passed this suite while every
+    // alert-override request 404ed in production.
+    if (url.pathname.startsWith('/admin/api/admin/')) {
+      return fulfill(route, { error: `no such route: ${url.pathname}` }, 404);
+    }
     for (const handler of handlers) {
       if (handler.method && handler.method !== method) continue;
       if (!handler.match(url)) continue;

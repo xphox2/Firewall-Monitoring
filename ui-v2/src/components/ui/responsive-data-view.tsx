@@ -101,6 +101,36 @@ function errorMessage(error: unknown): string {
   return 'The request could not be completed.';
 }
 
+/**
+ * The breakpoint at which a column APPEARS, as a literal class.
+ *
+ * The strings must be written out whole. Tailwind only generates classes it
+ * finds in the source, so a class built at runtime (`hidden ${bp}:table-cell`)
+ * produced `hidden` with no way back: the header was gone at every width
+ * while its cells still rendered.
+ */
+const COLUMN_SHOWN_FROM = {
+  sm: 'hidden sm:table-cell',
+  md: 'hidden md:table-cell',
+  lg: 'hidden lg:table-cell',
+  xl: 'hidden xl:table-cell',
+} as const;
+
+/**
+ * The hiding class for a column, shared by its header cell and its body
+ * cells so the two can never disagree.
+ *
+ * `hideUntil` names where the column starts (a column the legacy table hid
+ * below `lg` must not vanish below `xl`); `hideOnTablet` is the older flag and
+ * means `xl`.
+ */
+export function columnHiddenClass(meta: unknown): string | undefined {
+  const m = meta as { hideOnTablet?: boolean; hideUntil?: keyof typeof COLUMN_SHOWN_FROM } | undefined;
+  if (m?.hideUntil) return COLUMN_SHOWN_FROM[m.hideUntil];
+  if (m?.hideOnTablet) return COLUMN_SHOWN_FROM.xl;
+  return undefined;
+}
+
 export function ResponsiveDataView<TData>({
   data,
   columns,
@@ -313,17 +343,7 @@ export function ResponsiveDataView<TData>({
                   {headerGroup.headers.map((header) => {
                     const canSort = header.column.getCanSort();
                     const sorted = header.column.getIsSorted();
-                    const hideOnTablet = (header.column.columnDef.meta as { hideOnTablet?: boolean } | undefined)
-                      ?.hideOnTablet;
-                    // A column can also say where it STARTS: a column the
-                    // legacy table hid below `lg` must not vanish below
-                    // `xl` just because the shared view only had one
-                    // breakpoint.
-                    const hideUntil = (
-                      header.column.columnDef.meta as
-                        | { hideUntil?: 'sm' | 'md' | 'lg' | 'xl' }
-                        | undefined
-                    )?.hideUntil;
+                    const hidden = columnHiddenClass(header.column.columnDef.meta);
                     return (
                       <th
                         key={header.id}
@@ -348,8 +368,7 @@ export function ResponsiveDataView<TData>({
                         className={cn(
                           'px-3.5 py-2.5 select-none whitespace-nowrap',
                           canSort && 'hover:text-text',
-                          (hideOnTablet || hideUntil) &&
-                            `hidden ${hideUntil ?? 'xl'}:table-cell`,
+                          hidden,
                         )}
                       >
                         <div className="inline-flex items-center gap-1">
@@ -440,15 +459,15 @@ export function ResponsiveDataView<TData>({
                         </td>
                       )}
                       {row.getVisibleCells().map((cell) => {
-                        const hideOnTablet = (
-                          cell.column.columnDef.meta as { hideOnTablet?: boolean } | undefined
-                        )?.hideOnTablet;
                         return (
                           <td
                             key={cell.id}
                             className={cn(
                               'px-3.5 py-2.5 align-middle text-text tabular-nums',
-                              hideOnTablet && 'hidden xl:table-cell',
+                              // The SAME class as the header cell: a cell
+                              // shown under a hidden header shifts every
+                              // later column under the wrong heading.
+                              columnHiddenClass(cell.column.columnDef.meta),
                             )}
                           >
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
