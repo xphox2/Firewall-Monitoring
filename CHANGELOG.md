@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.459] - 2026-10-27
+
+### Fixed — The Clear control came back only after reopening the editor
+
+- After clearing a stored credential and then revealing it, the field showed
+  the credential again (the Reveal keeps it), but the **Clear** control was
+  gone until the device editor was closed and reopened. It looked only at the
+  form's own value, which the first Clear had emptied; a revealed credential
+  now counts as a stored one, so it can be cleared again straight away.
+- A browser test now walks Clear → Reveal → Clear → Save and checks that the
+  save removes the credential exactly once.
+
 ## [0.11.458] - 2026-10-27
 
 Fixes from a review of v0.11.446 – v0.11.457. Each defect fixed here has a

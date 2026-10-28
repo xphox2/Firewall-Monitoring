@@ -87,3 +87,51 @@ test('typing a new value withdraws a pending Clear, and the new value is sent', 
   expect(puts[0].api_token).toBe('a-new-token');
   expect('clear_secrets' in puts[0]).toBe(false);
 });
+
+// Clear, then Reveal, then Clear again.
+//
+// A Reveal withdraws a pending Clear (the field shows the credential, so the
+// save keeps it). The Clear control then has to come back: it read only the
+// form's value, which the first Clear had emptied, so it stayed hidden until
+// the editor was reopened.
+test('after Clear then Reveal, the credential is kept and can be cleared again', async ({ page }) => {
+  const puts: Array<Record<string, unknown>> = [];
+  await installApiMocks(page, [
+    { match: (url) => url.pathname === '/admin/api/devices', method: 'GET', body: devices() },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/1/reveal-secret',
+      method: 'POST',
+      body: { secret: 'the-stored-token' },
+    },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/1',
+      method: 'PUT',
+      onRequest: (request) => {
+        const body = request.postDataJSON();
+        puts.push(body);
+        return body;
+      },
+    },
+  ]);
+
+  await page.goto('/admin/v2/devices');
+  await openEditor(page, 'fw-a');
+  await clearApiToken(page);
+
+  // Reveal: the stored credential is shown and the pending Clear is withdrawn.
+  const field = page.locator('div', { has: page.getByText('API Token', { exact: true }) }).last();
+  await field.getByRole('button', { name: 'Reveal' }).click();
+  await page.getByPlaceholder('Enter your password').fill('admin-password');
+  await page.getByRole('button', { name: 'Decrypt & Reveal' }).click();
+  await expect(page.getByLabel('API Token')).toHaveValue('the-stored-token');
+  await expect(page.getByText('The stored credential will be removed when you save.')).toHaveCount(0);
+
+  // The Clear control is offered again, and a second Clear really clears.
+  await expect(field.getByRole('button', { name: 'Clear' })).toBeVisible();
+  await clearApiToken(page);
+  await page.getByRole('button', { name: 'Save Device' }).click();
+
+  await expect.poll(() => puts.length).toBe(1);
+  expect(puts[0].clear_secrets).toEqual(['api_token']);
+  expect('api_token' in puts[0]).toBe(false);
+});
