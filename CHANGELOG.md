@@ -1,6 +1,28 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.460] - 2026-10-27
+
+### Fixed — An emptied revealed credential turned back into a password box
+
+- Revealing a stored credential shows it as text. Emptying that field flipped
+  it back to a password box with no placeholder, so it looked as if nothing
+  was stored. An emptied field leaves the stored credential as it is; it now
+  stays a plain field and says **Unchanged**.
+- The same was true without a reveal: deleting the `********` of a stored
+  credential (the path every operator takes, since revealing is admin-only)
+  left an empty password box with no hint, and the **Clear** control
+  vanished. It now reads **Unchanged** and keeps its Clear control, because the
+  save leaves that credential in place.
+- **Test SNMP** with a deleted community mask sent an empty community and was
+  refused as "required". It now explains first that the stored community is
+  kept but a test needs its value — the same as it already did for the mask.
+
+### Fixed — The device card on a phone showed Edit twice
+
+- The phone-width device card carries the row's own actions (Inspect, Edit)
+  and also drew a second **Edit** button of its own. The extra one is gone.
+
 ## [0.11.459] - 2026-10-27
 
 ### Fixed — The Clear control came back only after reopening the editor

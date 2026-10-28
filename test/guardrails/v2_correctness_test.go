@@ -1,6 +1,7 @@
 package guardrails
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -82,8 +83,21 @@ func TestV2APendingClearBelongsToOneDevice(t *testing.T) {
 	}
 	// And a revealed credential counts as a stored one, so the Clear control
 	// comes back after Clear -> Reveal without reopening the editor.
-	if !strings.Contains(console, "const hasStored = revealed !== undefined || hasStoredCredential(stored);") {
+	hasStored := regexp.MustCompile(`const hasStored =[^;]*;`).FindString(console)
+	if !strings.Contains(hasStored, "revealed !== undefined") {
 		t.Error("the Clear control ignores a revealed credential — after Clear then Reveal it stays hidden until the editor is reopened")
+	}
+	// And a credential the device held when the editor OPENED is still held
+	// after the operator deletes its mask (an empty value leaves it in place):
+	// the Clear control stays and the field reads "Unchanged".
+	keptAsIs := regexp.MustCompile(`const keptAsIs =[^;]*;`).FindString(console)
+	if !strings.Contains(hasStored, "keptAsIs") || !strings.Contains(keptAsIs, "openedDevice") || !strings.Contains(keptAsIs, "hasStoredCredential") {
+		t.Error("an emptied field on a device that held the credential loses its Clear control — the save leaves the credential in place")
+	}
+	// ...except while a Clear is pending: that save DOES remove it, and the
+	// field must say "Removed when you save", not offer Clear again.
+	if !strings.Contains(keptAsIs, "!pendingClear") {
+		t.Error("keptAsIs ignores a pending Clear — a credential about to be removed would read as kept")
 	}
 	// Every CLOSE goes through the resetting setter, not the raw one.
 	if strings.Contains(console, "onOpenChange={setEditorOpen}") || strings.Contains(console, "setEditorOpen(false)") {
