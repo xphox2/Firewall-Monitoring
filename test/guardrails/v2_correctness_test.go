@@ -75,6 +75,11 @@ func TestV2APendingClearBelongsToOneDevice(t *testing.T) {
 			t.Errorf("%q does not reset the credential state — a Clear from the previous device would ride along", opener)
 		}
 	}
+	// A Reveal keeps the credential, so it withdraws a pending Clear for
+	// that field: the field shows the value, and the save must not remove it.
+	if !strings.Contains(console, "setPendingClearSecrets((current) => current.filter((f) => f !== revealField))") {
+		t.Error("a Reveal does not withdraw a pending Clear — the field shows the credential while the save removes it")
+	}
 	// Every CLOSE goes through the resetting setter, not the raw one.
 	if strings.Contains(console, "onOpenChange={setEditorOpen}") || strings.Contains(console, "setEditorOpen(false)") {
 		t.Error("the editor is closed through the raw setter somewhere — that path keeps a pending Clear")

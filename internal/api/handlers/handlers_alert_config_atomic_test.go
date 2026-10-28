@@ -231,6 +231,46 @@ func TestUpsertAlertConfig_BindCannotMoveTheProfile(t *testing.T) {
 			})
 		}
 	}
+
+	// The pin must not leak into the RESPONSE: an admin who changes the
+	// profile on an EXISTING override is answered with the new one. The
+	// update path writes the column, not the struct the handler returns.
+	respProfile := func(t *testing.T, body string) interface{} {
+		t.Helper()
+		var env struct {
+			Data struct {
+				EventProfileID *uint `json:"event_profile_id"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("decode the response: %v", err)
+		}
+		return derefUint(env.Data.EventProfileID)
+	}
+	t.Run("an admin's change is reported in the response (device)", func(t *testing.T) {
+		c, rec := alertConfigReq(t, "1", map[string]interface{}{"event_profile_id": quiet.ID})
+		c.Set("role", auth.RoleAdmin)
+		h.UpsertDeviceAlertConfig(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the save was refused: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := respProfile(t, rec.Body.String()); got != quiet.ID {
+			t.Errorf("the response reports profile %v, want the new %d", got, quiet.ID)
+		}
+	})
+	t.Run("an admin's change is reported in the response (site)", func(t *testing.T) {
+		raw, _ := json.Marshal(map[string]interface{}{"event_profile_id": quiet.ID})
+		c, rec := jsonReq(http.MethodPut, "/admin/api/sites/1/alert-config", string(raw))
+		c.Params = gin.Params{{Key: "id", Value: "1"}}
+		c.Set("role", auth.RoleAdmin)
+		h.UpsertSiteAlertConfig(c)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the save was refused: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := respProfile(t, rec.Body.String()); got != quiet.ID {
+			t.Errorf("the response reports profile %v, want the new %d", got, quiet.ID)
+		}
+	})
 }
 
 func derefUint(p *uint) interface{} {

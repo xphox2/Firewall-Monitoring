@@ -1124,6 +1124,9 @@ function DeviceInventoryView() {
           );
           if (res?.secret) {
             setRevealedSecrets((prev) => ({ ...prev, [revealField]: res.secret }));
+            // Revealing a credential means keeping it: the field now shows
+            // it, so a pending Clear for it must not remove it on save.
+            setPendingClearSecrets((current) => current.filter((f) => f !== revealField));
           }
           setRevealField(null);
         }}

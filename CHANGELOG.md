@@ -3,8 +3,9 @@ All notable changes to this project are documented in this file.
 
 ## [0.11.458] - 2026-10-27
 
-Fixes from a review of v0.11.446 – v0.11.457. Each one has a test that fails
-on the previous build.
+Fixes from a review of v0.11.446 – v0.11.457. Each defect fixed here has a
+test that fails on the previous build; a few further tests pin behaviour that
+was already correct but had no test.
 
 ### Fixed — The alert-override drawer could not load, save or reset
 

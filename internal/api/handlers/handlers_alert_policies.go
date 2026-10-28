@@ -712,6 +712,9 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 			httputil.InternalError(c, "Failed to save device alert config", err)
 			return
 		}
+		// The update path writes the column, not cfg, and cfg was pinned to
+		// the stored profile above - so the response would report the OLD one.
+		cfg.EventProfileID = profileID
 	} else if err := db.UpsertDeviceAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
@@ -911,6 +914,8 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 			httputil.InternalError(c, "Failed to save site alert config", err)
 			return
 		}
+		// See UpsertDeviceAlertConfig: the response must carry the new profile.
+		cfg.EventProfileID = profileID
 	} else if err := db.UpsertSiteAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
