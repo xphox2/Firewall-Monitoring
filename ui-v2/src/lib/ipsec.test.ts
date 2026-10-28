@@ -5,6 +5,7 @@ import {
   PSK_MASK,
   buildIntent,
   canonNet,
+  changeCustomCrypto,
   childLifetimeFor,
   defaultIdentity,
   disabledPathsFrom,
@@ -14,6 +15,8 @@ import {
   pruneDisabledPaths,
   profileCrypto,
   restoreCrypto,
+  switchEndDevice,
+  type CustomCrypto,
   type EndForm,
   type IntentForm,
   type Profile,
@@ -308,5 +311,74 @@ describe('buildIntent', () => {
       form({ disabledPaths: { '10.0.0.1/8|192.168.150.0/24': true } }),
     );
     expect(intent.disabled_paths).toEqual(['10.0.0.0/8|192.168.150.0/24']);
+  });
+});
+
+const EMPTY_CUSTOM: CustomCrypto = {
+  ike_version: 'ikev2',
+  ike: { enc: '', integ: '', prf: '', dh: '' },
+  esp: { enc: '', integ: '', pfs: '' },
+};
+
+describe('changeCustomCrypto', () => {
+  // The wizard once filled in only the IKE half, so ESP and the PRF stayed
+  // empty and the server blocked every Custom tunnel (encryption_unsupported).
+  it('builds a complete proposal from the controls the form offers', () => {
+    let c = EMPTY_CUSTOM;
+    c = changeCustomCrypto(c, 'enc', 'aes256');
+    c = changeCustomCrypto(c, 'integ', 'sha256');
+    c = changeCustomCrypto(c, 'prf', 'prfsha256');
+    c = changeCustomCrypto(c, 'dh', '14');
+    c = changeCustomCrypto(c, 'pfs', true);
+    expect(c.ike).toEqual({ enc: 'aes256', integ: 'sha256', prf: 'prfsha256', dh: '14' });
+    expect(c.esp).toEqual({ enc: 'aes256', integ: 'sha256', pfs: '14' });
+  });
+
+  it('drops integrity for an AEAD cipher in both phases', () => {
+    let c = changeCustomCrypto(EMPTY_CUSTOM, 'integ', 'sha256');
+    c = changeCustomCrypto(c, 'enc', 'aes256gcm16');
+    expect(c.ike.integ).toBe('');
+    expect(c.esp.integ).toBe('');
+    expect(c.esp.enc).toBe('aes256gcm16');
+  });
+
+  it('keeps PFS on the DH group as the group changes, and off when off', () => {
+    let c = changeCustomCrypto(EMPTY_CUSTOM, 'dh', '19');
+    c = changeCustomCrypto(c, 'pfs', true);
+    c = changeCustomCrypto(c, 'dh', '20');
+    expect(c.esp.pfs).toBe('20');
+    c = changeCustomCrypto(c, 'pfs', false);
+    c = changeCustomCrypto(c, 'dh', '21');
+    expect(c.esp.pfs).toBe('');
+  });
+
+  it('leaves a stored ESP alone until the cipher is touched', () => {
+    // An edited Custom tunnel whose ESP differs from its IKE keeps it.
+    const stored: CustomCrypto = {
+      ike_version: 'ikev2',
+      ike: { enc: 'aes256', integ: 'sha256', prf: 'prfsha256', dh: '14' },
+      esp: { enc: 'aes128', integ: 'sha1', pfs: '' },
+    };
+    const c = changeCustomCrypto(stored, 'prf', 'prfsha384');
+    expect(c.esp).toEqual(stored.esp);
+    expect(stored.ike.prf).toBe('prfsha256');
+  });
+});
+
+describe('switchEndDevice', () => {
+  it('clears the previous device\'s facts so the new device\'s hints refill them', () => {
+    const next = switchEndDevice(END, 2);
+    expect(next.deviceId).toBe(2);
+    expect(next.peerIp).toBe('');
+    expect(next.egressIface).toBe('');
+    expect(next.lanIfaces).toEqual([]);
+    expect(next.protectedSubnets).toEqual([]);
+    // The identity's TYPE is the operator's choice and survives; its value
+    // was derived from the old device's UUID and does not.
+    expect(next.localId).toEqual({ type: 'fqdn', value: '' });
+  });
+
+  it('is a no-op when the same device is picked again', () => {
+    expect(switchEndDevice(END, END.deviceId)).toBe(END);
   });
 });

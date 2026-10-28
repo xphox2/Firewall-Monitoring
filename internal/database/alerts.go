@@ -345,6 +345,27 @@ type AlertFilter struct {
 	// Without this the by-filter bulk actions reached alerts the list was
 	// hiding: the operator was shown N alerts and the action touched more.
 	IncludeSnoozed bool
+	// SiteID scopes to a site exactly as the LIST does (handlers_analytics.go,
+	// applyAlertFilters): device-scoped alerts via device->site, plus
+	// site-scoped alerts via alerts.site_id. "unassigned" is the null-site
+	// bucket; "" = any. The caller validates a numeric value.
+	//
+	// It was missing, so "Select all N matching" under a site filter reached
+	// every site: the classic console sent site_id, this filter dropped it.
+	SiteID string
+}
+
+// scopeToSite applies AlertFilter.SiteID with the list's own predicate. The
+// OR is parenthesised so it cannot widen the other conditions.
+func scopeToSite(q *gorm.DB, siteID string) *gorm.DB {
+	switch siteID {
+	case "":
+		return q
+	case "unassigned":
+		return q.Where("device_id IN (SELECT id FROM devices WHERE site_id IS NULL)")
+	default:
+		return q.Where("(device_id IN (SELECT id FROM devices WHERE site_id = ?) OR site_id = ?)", siteID, siteID)
+	}
 }
 
 // AcknowledgeAlertsByFilter flips acknowledged=true for all rows matching the
@@ -360,6 +381,7 @@ func (d *Database) AcknowledgeAlertsByFilter(f AlertFilter, notes string) (int64
 	if f.DeviceID > 0 {
 		q = q.Where("device_id = ?", f.DeviceID)
 	}
+	q = scopeToSite(q, f.SiteID)
 	if f.AlertType != "" {
 		q = q.Where("alert_type = ?", f.AlertType)
 	}
@@ -423,6 +445,7 @@ func (d *Database) SnoozeAlertsByFilter(f AlertFilter, until time.Time, by, reas
 	if f.DeviceID > 0 {
 		q = q.Where("device_id = ?", f.DeviceID)
 	}
+	q = scopeToSite(q, f.SiteID)
 	if f.AlertType != "" {
 		q = q.Where("alert_type = ?", f.AlertType)
 	}

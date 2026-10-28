@@ -3,10 +3,12 @@
 package database
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,6 +184,26 @@ func buildTestSchema(fatal func(...interface{}), db *gorm.DB) {
 	}
 }
 
+// schemaTemplatePrefix names the per-process schema template directories.
+const schemaTemplatePrefix = "fwmon-schema-"
+
+// sweepStaleSchemaTemplates removes the template directories EARLIER test
+// processes left behind.
+//
+// A process cannot remove its own: the template is shared by every test in
+// it, Go has no exit hook for a library, and a t.Cleanup on the first test
+// would delete it under the rest. So each process clears the ones older than
+// any test run lasts, and the leak is bounded to the runs of the last few
+// hours instead of growing with every `go test`.
+func sweepStaleSchemaTemplates() {
+	dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), schemaTemplatePrefix+"*"))
+	for _, dir := range dirs {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() && time.Since(info.ModTime()) > 6*time.Hour {
+			_ = os.RemoveAll(dir)
+		}
+	}
+}
+
 // schemaTemplate builds the schema ONCE and returns the path of a SQLite
 // file holding it.
 func schemaTemplate() (string, error) {
@@ -197,12 +219,18 @@ func schemaTemplate() (string, error) {
 			sqlDB.SetMaxOpenConns(1)
 		}
 		buildTestSchema(func(args ...interface{}) {
-			schemaErr = fmt.Errorf("%v", args...)
+			// The FIRST failure is the useful one. fmt.Errorf("%v", args...)
+			// printed every argument after the first as %!(EXTRA ...);
+			// Sprintln joins them the way t.Fatal would.
+			if schemaErr == nil {
+				schemaErr = errors.New(strings.TrimSpace(fmt.Sprintln(args...)))
+			}
 		}, db)
 		if schemaErr != nil {
 			return
 		}
-		dir, err := os.MkdirTemp("", "fwmon-schema-")
+		sweepStaleSchemaTemplates()
+		dir, err := os.MkdirTemp("", schemaTemplatePrefix)
 		if err != nil {
 			schemaErr = fmt.Errorf("create the schema template directory: %w", err)
 			return

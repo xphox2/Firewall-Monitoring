@@ -373,6 +373,30 @@ export interface EndForm {
   gateway: string;
 }
 
+/**
+ * An end after the operator picks a DIFFERENT device.
+ *
+ * The device-derived facts are refilled from the new device's hints only
+ * when they are empty, so a switch once kept the previous device's peer IP,
+ * interfaces, protected subnets and its `fwm-<uuid>` identity - a tunnel
+ * aimed at one firewall with another's addresses. They are cleared here, on
+ * the CHANGE, so the hints refill them; loading a stored tunnel never goes
+ * through this path, so an edit keeps what was saved.
+ */
+export function switchEndDevice(end: EndForm, deviceId: number): EndForm {
+  if (deviceId === end.deviceId) return end;
+  return {
+    ...end,
+    deviceId,
+    peerIp: '',
+    egressIface: '',
+    lanIfaces: [],
+    protectedSubnets: [],
+    gateway: '',
+    localId: { type: end.localId?.type ?? 'fqdn', value: '' },
+  };
+}
+
 /** What the operator has filled in for the tunnel. */
 export interface IntentForm {
   mode: string;
@@ -390,6 +414,73 @@ export interface IntentForm {
   ends: [EndForm, EndForm];
   /** The disabled-path map, keyed by the canonical "aCIDR|bCIDR". */
   disabledPaths: Record<string, boolean>;
+}
+
+/** The Custom crypto the operator fills in. */
+export type CustomCrypto = IntentForm['custom'];
+
+/** One control of the Custom crypto form. */
+export type CustomControl = 'ike_version' | 'enc' | 'integ' | 'prf' | 'dh' | 'pfs';
+
+/** GCM is AEAD: it authenticates itself and carries no separate integrity. */
+export function isAeadCipher(enc: string): boolean {
+  return /gcm/i.test(enc);
+}
+
+/**
+ * The Custom crypto after the operator changes ONE control.
+ *
+ * The wizard once filled in only the IKE half, so `esp` and `ike.prf` stayed
+ * empty, the server answered `encryption_unsupported` / `prf_unsupported`,
+ * and a Custom tunnel could never be created. The rules are V1's:
+ *
+ * - ESP follows the IKE cipher and integrity (the same proposal both phases);
+ * - an AEAD (GCM) cipher carries no separate integrity, in either phase;
+ * - PFS, when on, uses the IKE DH group, and follows it when the group changes.
+ *
+ * ESP is updated when a control CHANGES, not rebuilt on every save: an edited
+ * Custom tunnel whose stored ESP differs from its IKE keeps that ESP until the
+ * operator touches the cipher.
+ */
+export function changeCustomCrypto(
+  custom: CustomCrypto,
+  control: CustomControl,
+  value: string | boolean,
+): CustomCrypto {
+  const next: CustomCrypto = {
+    ike_version: custom.ike_version,
+    ike: { ...custom.ike },
+    esp: { ...custom.esp },
+  };
+  const v = typeof value === 'string' ? value : '';
+  switch (control) {
+    case 'ike_version':
+      next.ike_version = v;
+      break;
+    case 'enc':
+      next.ike.enc = v;
+      next.esp.enc = v;
+      // A non-AEAD cipher needs integrity: carry the IKE one into ESP.
+      next.esp.integ = next.ike.integ;
+      break;
+    case 'integ':
+      next.ike.integ = v;
+      next.esp.integ = v;
+      break;
+    case 'prf':
+      next.ike.prf = v;
+      break;
+    case 'dh':
+      next.ike.dh = v;
+      if (next.esp.pfs) next.esp.pfs = v;
+      break;
+    case 'pfs':
+      next.esp.pfs = value === true ? next.ike.dh : '';
+      break;
+  }
+  if (isAeadCipher(next.ike.enc)) next.ike.integ = '';
+  if (isAeadCipher(next.esp.enc)) next.esp.integ = '';
+  return next;
 }
 
 /**

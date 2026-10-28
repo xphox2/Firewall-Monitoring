@@ -161,12 +161,13 @@ function DeviceInventoryView() {
   const [search, setSearch] = useState('');
   const [lifecycleFilter, setLifecycleFilter] = useState<'active' | 'retired' | 'all'>('active');
 
+  // The list endpoint always returns EVERY device, retired ones included
+  // (GetAllDevices is deliberately unscoped), so the lifecycle tabs filter
+  // here. An `include_retired` parameter used to be sent; nothing on the
+  // server read it, and a caller trusting it would have been wrong.
   const { data: devicesList, isLoading } = useQuery({
-    queryKey: ['devices', lifecycleFilter],
-    queryFn: () =>
-      apiFetch<DeviceRecord[]>(
-        `/admin/api/devices${lifecycleFilter !== 'active' ? `?include_retired=true` : ''}`
-      ),
+    queryKey: ['devices'],
+    queryFn: () => apiFetch<DeviceRecord[]>('/admin/api/devices'),
     refetchInterval: 15_000,
   });
 
@@ -239,13 +240,14 @@ function DeviceInventoryView() {
 
   const confirmClearSecret = () => {
     if (!clearSecretTarget) return;
-    setPendingClearSecrets((current) =>
-      current.includes(clearSecretTarget) ? current : [...current, clearSecretTarget],
-    );
-    // The revealed value is gone with the stored one.
+    const field = clearSecretTarget;
+    setPendingClearSecrets((current) => (current.includes(field) ? current : [...current, field]));
+    // The field shows what the save will do: no credential. The revealed
+    // value is gone with the stored one.
+    setEditingDevice((current) => ({ ...current, [field]: '' }));
     setRevealedSecrets((current) => {
       const next = { ...current };
-      delete next[clearSecretTarget];
+      delete next[field];
       return next;
     });
     setClearSecretTarget(null);
@@ -255,7 +257,42 @@ function DeviceInventoryView() {
       variant: 'info',
     });
   };
+
+  /**
+   * The edit handler for a credential field.
+   *
+   * - A REVEALED secret is edited in place. The input shows the revealed
+   *   value and the save sends it, so an edit that only reached the form
+   *   was invisible and then overwritten by the original on save.
+   * - Typing a new value WITHDRAWS a pending Clear for that field: the
+   *   operator now wants this value, and the save must not delete it.
+   */
+  const editSecret = (field: string) => (value: string) => {
+    setEditingDevice((current) => ({ ...current, [field]: value }));
+    setRevealedSecrets((current) => (field in current ? { ...current, [field]: value } : current));
+    setPendingClearSecrets((current) => current.filter((f) => f !== field));
+  };
+
+  /**
+   * Forget every per-device credential intent.
+   *
+   * A pending Clear belongs to ONE device. It was once kept across the
+   * editor's sessions, so a Clear asked for on device A - even one followed
+   * by Cancel - was sent with the next save of device B and wiped B's
+   * credential. Every open, every successful save and every close starts
+   * clean.
+   */
+  const resetSecretState = () => {
+    setRevealedSecrets({});
+    setPendingClearSecrets([]);
+    setClearSecretTarget(null);
+  };
   const [testResult, setTestResult] = useState<{ success?: boolean; message?: string } | null>(null);
+
+  const setEditorOpenState = (open: boolean) => {
+    if (!open) resetSecretState();
+    setEditorOpen(open);
+  };
 
   const openCreateDrawer = () => {
     setEditingDevice({
@@ -269,7 +306,7 @@ function DeviceInventoryView() {
       ssh_port: 22,
       enabled: true,
     });
-    setRevealedSecrets({});
+    resetSecretState();
     setTestResult(null);
     setEditorTab('general');
     setEditorOpen(true);
@@ -277,7 +314,7 @@ function DeviceInventoryView() {
 
   const openEditDrawer = (dev: DeviceRecord) => {
     setEditingDevice({ ...dev });
-    setRevealedSecrets({});
+    resetSecretState();
     setTestResult(null);
     setEditorTab('general');
     setEditorOpen(true);
@@ -344,7 +381,7 @@ function DeviceInventoryView() {
         title: editingDevice.id ? 'Device updated' : 'Device created',
         variant: 'success',
       });
-      setEditorOpen(false);
+      setEditorOpenState(false);
       queryClient.invalidateQueries({ queryKey: ['devices'] });
     },
     onError: (err: Error) => {
@@ -590,7 +627,7 @@ function DeviceInventoryView() {
       {/* Tabbed Slide-Over Drawer (replaces the 1,599px #device-modal) */}
       <SlideOverDrawer
         open={editorOpen}
-        onOpenChange={setEditorOpen}
+        onOpenChange={setEditorOpenState}
         title={editingDevice.id ? `Edit Device: ${editingDevice.name}` : 'Add Firewall / Device'}
         subtitle="Tabbed device configuration with encrypted credential management."
         size="xl"
@@ -611,7 +648,7 @@ function DeviceInventoryView() {
             <div className="flex items-center gap-2">
               <Button  variant="secondary"
                 type="button"
-                onClick={() => setEditorOpen(false)}
+                onClick={() => setEditorOpenState(false)}
                 
               >
                 Cancel
@@ -806,36 +843,18 @@ function DeviceInventoryView() {
             </div>
 
             {editingDevice.snmp_version !== '3' && editingDevice.snmp_version !== 'v3' ? (
-              <div>
-                <Field label="SNMP v2c Community String">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type={revealedSecrets.snmp_community ? 'text' : 'password'}
-                      value={revealedSecrets.snmp_community ?? editingDevice.snmp_community ?? ''}
-                      onChange={(e) =>
-                        setEditingDevice((p) => ({ ...p, snmp_community: e.target.value }))
-                      }
-                      placeholder="Leave ******** to keep existing community"
-                      className="flex-1 rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
-                    />
-                    {editingDevice.id && (
-                      <button
-                        type="button"
-                        onClick={() => setRevealField('snmp_community')}
-                        disabled={!isAdmin}
-                        title={
-                          isAdmin
-                            ? 'Reveal the stored value (requires admin password verification)'
-                            : 'Admin only — revealing a stored credential is an admin action'
-                        }
-                        className="flex items-center gap-1 rounded border border-border bg-bg-panel px-2.5 py-2 text-xs text-text-dim hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Eye className="h-3.5 w-3.5" /> Reveal
-                      </button>
-                    )}
-                  </div>
-                </Field>
-              </div>
+              <DeviceSecretField
+                label="SNMP v2c Community String"
+                field="snmp_community"
+                editingDevice={editingDevice}
+                revealedSecrets={revealedSecrets}
+                pendingClear={pendingClearSecrets.includes('snmp_community')}
+                onChange={editSecret('snmp_community')}
+                onReveal={setRevealField}
+                onClear={requestClearSecret}
+                canClear={isAdmin}
+                canReveal={isAdmin}
+              />
             ) : (
               <div className="space-y-3">
                 <div>
@@ -856,9 +875,8 @@ function DeviceInventoryView() {
                     field="snmpv3_auth_pass"
                     editingDevice={editingDevice}
                     revealedSecrets={revealedSecrets}
-                    onChange={(v) =>
-                      setEditingDevice((p) => ({ ...p, snmpv3_auth_pass: v }))
-                    }
+                    pendingClear={pendingClearSecrets.includes('snmpv3_auth_pass')}
+                    onChange={editSecret('snmpv3_auth_pass')}
                     onReveal={setRevealField}
                     onClear={requestClearSecret}
                     canClear={isAdmin}
@@ -870,9 +888,8 @@ function DeviceInventoryView() {
                     field="snmpv3_priv_pass"
                     editingDevice={editingDevice}
                     revealedSecrets={revealedSecrets}
-                    onChange={(v) =>
-                      setEditingDevice((p) => ({ ...p, snmpv3_priv_pass: v }))
-                    }
+                    pendingClear={pendingClearSecrets.includes('snmpv3_priv_pass')}
+                    onChange={editSecret('snmpv3_priv_pass')}
                     onReveal={setRevealField}
                     onClear={requestClearSecret}
                     canClear={isAdmin}
@@ -958,7 +975,8 @@ function DeviceInventoryView() {
                 field="ssh_password"
                 editingDevice={editingDevice}
                 revealedSecrets={revealedSecrets}
-                onChange={(v) => setEditingDevice((p) => ({ ...p, ssh_password: v }))}
+                pendingClear={pendingClearSecrets.includes('ssh_password')}
+                onChange={editSecret('ssh_password')}
                 onReveal={setRevealField}
                 onClear={requestClearSecret}
                 canClear={isAdmin}
@@ -1009,7 +1027,8 @@ function DeviceInventoryView() {
                   field="api_token"
                   editingDevice={editingDevice}
                   revealedSecrets={revealedSecrets}
-                  onChange={(v) => setEditingDevice((p) => ({ ...p, api_token: v }))}
+                  pendingClear={pendingClearSecrets.includes('api_token')}
+                  onChange={editSecret('api_token')}
                   onReveal={setRevealField}
                   onClear={requestClearSecret}
                   canClear={isAdmin}
@@ -1105,6 +1124,9 @@ function DeviceInventoryView() {
           );
           if (res?.secret) {
             setRevealedSecrets((prev) => ({ ...prev, [revealField]: res.secret }));
+            // Revealing a credential means keeping it: the field now shows
+            // it, so a pending Clear for it must not remove it on save.
+            setPendingClearSecrets((current) => current.filter((f) => f !== revealField));
           }
           setRevealField(null);
         }}
@@ -1291,6 +1313,7 @@ function DeviceSecretField({
   canClear,
   hint,
   placeholder,
+  pendingClear = false,
 }: {
   label: string;
   field: string;
@@ -1306,6 +1329,8 @@ function DeviceSecretField({
   canClear: boolean;
   hint?: string;
   placeholder?: string;
+  /** A Clear was confirmed: the save will remove the stored credential. */
+  pendingClear?: boolean;
 }) {
   const revealed = revealedSecrets[field];
   const stored = (editingDevice as Record<string, unknown>)[field];
@@ -1366,11 +1391,16 @@ function DeviceSecretField({
           type={revealed ? 'text' : 'password'}
           value={revealed ?? (typeof stored === 'string' ? stored : '')}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder ?? (masked ? 'Unchanged' : '')}
+          placeholder={pendingClear ? 'Removed when you save' : placeholder ?? (masked ? 'Unchanged' : '')}
           autoComplete="new-password"
           className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
         />
       </Field>
+      {pendingClear ? (
+        <p className="mt-1 text-[10px] text-sig-warn-text">
+          The stored credential will be removed when you save. Type a value to keep one instead.
+        </p>
+      ) : null}
       {hint ? <p className="mt-1 text-[10px] text-text-faint">{hint}</p> : null}
     </div>
   );
@@ -2384,7 +2414,12 @@ function DeviceDetailView({ deviceId }: { deviceId: number }) {
                     <button
                       type="button"
                       onClick={() => setPurgeDialogOpen(true)}
-                      className="flex items-center gap-1.5 rounded-md bg-sig-crit px-3 py-1.5 text-xs font-semibold text-white"
+                      // The purge routes are admin-only. Offered to an
+                      // operator, the dialog collected a name, a password and
+                      // a code for a request that could only answer 403.
+                      disabled={!isAdmin}
+                      title={isAdmin ? undefined : 'Admin only — a permanent purge is an admin action'}
+                      className="flex items-center gap-1.5 rounded-md bg-sig-crit px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Trash2 className="h-3.5 w-3.5" /> Permanently Purge Device Data
                     </button>

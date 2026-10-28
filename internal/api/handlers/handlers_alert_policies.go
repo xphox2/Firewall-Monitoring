@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -671,11 +672,18 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	storedProfile := copyProfileID(cfg.EventProfileID)
 	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	cfg.DeviceID = id // prevent client from rewriting the FK
+	// The bind must never move the event profile. encoding/json matches keys
+	// CASE-INSENSITIVELY, so {"Event_Profile_ID": 2} lands on EventProfileID
+	// while eventProfileFromBody - which looks for the exact key - reports
+	// "not present", and an operator would assign an admin-only profile. The
+	// profile changes ONLY through eventProfileFromBody below.
+	cfg.EventProfileID = storedProfile
 
 	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
@@ -704,6 +712,9 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 			httputil.InternalError(c, "Failed to save device alert config", err)
 			return
 		}
+		// The update path writes the column, not cfg, and cfg was pinned to
+		// the stored profile above - so the response would report the OLD one.
+		cfg.EventProfileID = profileID
 	} else if err := db.UpsertDeviceAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save device alert config", err)
 		return
@@ -716,9 +727,9 @@ func (h *Handler) UpsertDeviceAlertConfig(c *gin.Context) {
 // readJSONBody reads the request body as a generic map, so a handler can
 // look for a field that is NOT part of the struct it binds.
 //
-// The body is left in place for the later bind: c.ShouldBindJSON reads it
-// again, and gin's body is buffered, so the second read sees the same
-// bytes.
+// The body is put BACK for the later bind: gin does not buffer
+// c.Request.Body, so c.ShouldBindJSON would otherwise read an empty stream.
+// The restore below is what makes the second read work.
 func readJSONBody(c *gin.Context) (map[string]interface{}, bool) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -775,8 +786,10 @@ func (h *Handler) eventProfileFromBody(c *gin.Context, db database.Store, raw ma
 		return nil, true, true
 	}
 	profileID, isNum := value.(float64)
-	if !isNum {
-		c.JSON(http.StatusBadRequest, response.Error("event_profile_id must be a number or null"))
+	// A whole, positive id only: uint(3.9) would truncate to 3 and assign a
+	// profile nobody named, and a negative float's conversion is undefined.
+	if !isNum || profileID < 1 || profileID != math.Trunc(profileID) || profileID > math.MaxUint32 {
+		c.JSON(http.StatusBadRequest, response.Error("event_profile_id must be a whole number or null"))
 		return nil, false, false
 	}
 	id := uint(profileID)
@@ -876,11 +889,14 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 	if !ok {
 		return
 	}
+	storedProfile := copyProfileID(cfg.EventProfileID)
 	if err := c.ShouldBindJSON(cfg); err != nil {
 		c.JSON(http.StatusBadRequest, response.Error("Invalid request"))
 		return
 	}
 	cfg.SiteID = id // prevent client from rewriting the FK
+	// The bind must never move the event profile - see UpsertDeviceAlertConfig.
+	cfg.EventProfileID = storedProfile
 
 	if msg := validateAlertConfigThresholds(cfg.CPUThreshold, cfg.MemoryThreshold, cfg.DiskThreshold, cfg.SessionThreshold, cfg.CooldownMinutes); msg != "" {
 		c.JSON(http.StatusBadRequest, response.Error(msg))
@@ -898,6 +914,8 @@ func (h *Handler) UpsertSiteAlertConfig(c *gin.Context) {
 			httputil.InternalError(c, "Failed to save site alert config", err)
 			return
 		}
+		// See UpsertDeviceAlertConfig: the response must carry the new profile.
+		cfg.EventProfileID = profileID
 	} else if err := db.UpsertSiteAlertConfig(cfg); err != nil {
 		httputil.InternalError(c, "Failed to save site alert config", err)
 		return
@@ -924,4 +942,18 @@ func (h *Handler) DeleteSiteAlertConfig(c *gin.Context) {
 	h.refreshAlertConfigCache(db)
 
 	c.JSON(http.StatusOK, response.Message("Site alert config deleted"))
+}
+
+// copyProfileID copies the stored event-profile id by VALUE.
+//
+// Copying the pointer is not enough: when the field is non-nil, encoding/json
+// decodes INTO the existing pointee, so the bind would overwrite the "saved"
+// value through the shared pointer and the restore would restore the
+// attacker's id.
+func copyProfileID(p *uint) *uint {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }

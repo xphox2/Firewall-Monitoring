@@ -22,7 +22,9 @@ import (
 // clearing is an EXPLICIT opt-in, and both halves have to exist: the server
 // has to accept it, and the console has to offer it.
 func TestV2ASecretCanBeCleared(t *testing.T) {
-	server := readRepoFile(t, "internal/api/handlers/handlers_devices.go")
+	// Comments stripped: a comment that names clear_secrets must not satisfy
+	// a check that the code sends it.
+	server := stripComments(readRepoFile(t, "internal/api/handlers/handlers_devices.go"))
 	if !strings.Contains(server, "clear_secrets") {
 		t.Error("the server does not accept a clear_secrets opt-in — a stored credential can never be removed, because an empty value means 'leave unchanged'")
 	}
@@ -32,12 +34,55 @@ func TestV2ASecretCanBeCleared(t *testing.T) {
 		t.Error("the server has no allow-list of clearable secrets — the opt-in could name an arbitrary column")
 	}
 
-	console := readV2(t, "pages/DevicesWorkspace.tsx")
-	if !strings.Contains(console, "clear_secrets") {
+	console := stripComments(readV2(t, "pages/DevicesWorkspace.tsx"))
+	if !strings.Contains(console, "body.clear_secrets = pendingClearSecrets") {
 		t.Error("the console never sends clear_secrets — the server can clear a credential, but nothing asks it to")
 	}
-	if !strings.Contains(console, "onClear") {
-		t.Error("the console's secret fields have no Clear control — the capability exists only on the server")
+	// EVERY clearable credential is a DeviceSecretField, which is what
+	// carries the Clear control. snmp_community was once a hand-rolled input
+	// with no Clear and its Reveal button inside the <label>.
+	for _, field := range []string{"snmp_community", "snmpv3_auth_pass", "snmpv3_priv_pass", "ssh_password", "api_token"} {
+		if !strings.Contains(console, `field="`+field+`"`) {
+			t.Errorf("%s is not a DeviceSecretField — it has no Clear control", field)
+		}
+		if !strings.Contains(console, "onChange={editSecret('"+field+"')}") {
+			t.Errorf("%s is not edited through editSecret — a revealed value freezes and a pending Clear survives a new value", field)
+		}
+	}
+}
+
+// TestV2APendingClearBelongsToOneDevice pins that a confirmed Clear is
+// forgotten whenever the editor changes hands.
+//
+// It was once kept across the editor's sessions: a Clear asked for on device
+// A - even one followed by Cancel - was sent with the next save of device B,
+// and the server wiped B's credential.
+func TestV2APendingClearBelongsToOneDevice(t *testing.T) {
+	console := stripComments(readV2(t, "pages/DevicesWorkspace.tsx"))
+	if !strings.Contains(console, "setPendingClearSecrets([])") {
+		t.Fatal("nothing ever empties the pending clears")
+	}
+	for _, opener := range []string{"const openCreateDrawer = () => {", "const openEditDrawer = (dev: DeviceRecord) => {"} {
+		i := strings.Index(console, opener)
+		if i < 0 {
+			t.Fatalf("%q is gone — re-point this guardrail", opener)
+		}
+		body := console[i:]
+		if end := strings.Index(body, "\n  };"); end > 0 {
+			body = body[:end]
+		}
+		if !strings.Contains(body, "resetSecretState()") {
+			t.Errorf("%q does not reset the credential state — a Clear from the previous device would ride along", opener)
+		}
+	}
+	// A Reveal keeps the credential, so it withdraws a pending Clear for
+	// that field: the field shows the value, and the save must not remove it.
+	if !strings.Contains(console, "setPendingClearSecrets((current) => current.filter((f) => f !== revealField))") {
+		t.Error("a Reveal does not withdraw a pending Clear — the field shows the credential while the save removes it")
+	}
+	// Every CLOSE goes through the resetting setter, not the raw one.
+	if strings.Contains(console, "onOpenChange={setEditorOpen}") || strings.Contains(console, "setEditorOpen(false)") {
+		t.Error("the editor is closed through the raw setter somewhere — that path keeps a pending Clear")
 	}
 }
 
@@ -144,12 +189,24 @@ func TestV2TheMapFallbackFollowsTheTheme(t *testing.T) {
 // 1024-1280px instead - a silent loss of a column in the middle of the
 // range of widths.
 func TestV2TheDataViewCanHideAColumnUntilABreakpoint(t *testing.T) {
-	view := readV2(t, "components/ui/responsive-data-view.tsx")
+	view := stripComments(readV2(t, "components/ui/responsive-data-view.tsx"))
 	if !strings.Contains(view, "hideUntil") {
 		t.Error("the shared data view has no hideUntil option - a column the legacy table hid below `lg` would vanish at 1024-1280px instead")
 	}
-	// And the option has to drive the CLASS, not just be read.
-	if !strings.Contains(view, "hideUntil ?? 'xl'") {
-		t.Error("the shared data view reads hideUntil but does not use it for the column's class")
+	// The breakpoint classes must be LITERAL. Tailwind only generates a class
+	// it finds written out, so a runtime-built `${bp}:table-cell` produced a
+	// bare `hidden`: the header vanished at every width.
+	for _, bp := range []string{"sm", "md", "lg", "xl"} {
+		if !strings.Contains(view, "'hidden "+bp+":table-cell'") {
+			t.Errorf("the literal class 'hidden %s:table-cell' is missing — Tailwind will not generate it", bp)
+		}
+	}
+	if strings.Contains(view, ":table-cell`") {
+		t.Error("a :table-cell class is built in a template literal — Tailwind cannot see it")
+	}
+	// The header and the body share ONE helper, so a cell is never shown
+	// under a hidden header.
+	if n := strings.Count(view, "columnHiddenClass(header.column.columnDef.meta)") + strings.Count(view, "columnHiddenClass(cell.column.columnDef.meta)"); n != 2 {
+		t.Errorf("the header and the body cells do not both use columnHiddenClass (%d of 2) — a column can be hidden in one and shown in the other", n)
 	}
 }

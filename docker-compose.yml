@@ -72,8 +72,10 @@ services:
     # A deployment with a large database raises this in its .env - the same
     # way it overrides the image - so the limit is part of the deployment's
     # configuration and not of the tracked file. The swap limit travels with
-    # it, and it must be raised too: Docker clamps the swap to the memory
-    # limit, so a raised limit with the default swap silently means NO swap.
+    # it, and it must be raised too: memswap_limit is memory PLUS swap, and
+    # Docker REFUSES to create a container whose memswap_limit is below its
+    # mem_limit - a memory limit above 4g with the default swap limit does not
+    # start at all. Set it to at least the memory limit (equal = no swap).
     mem_limit: ${FIREWALL_MON_MEM_LIMIT:-2g}
     memswap_limit: ${FIREWALL_MON_MEMSWAP_LIMIT:-4g}
     cpus: ${FIREWALL_MON_CPUS:-2.0}

@@ -537,6 +537,15 @@ func applySecretClears(c *gin.Context, updates map[string]interface{}, filteredU
 			c.JSON(http.StatusBadRequest, response.Error("clear_secrets may only name a device credential: "+strings.Join(sortedSecretNames(), ", ")))
 			return nil, fmt.Errorf("clear_secrets names an unknown field")
 		}
+		// A body that sets a NEW value for the field and also clears it asks
+		// for two things at once. The clear used to win silently; the honest
+		// answer is a 400. (The mask-or-empty rules above have already
+		// removed a mask or an empty value, so a non-empty entry here is a
+		// real new value; "" is an earlier entry of this same list.)
+		if v, has := filteredUpdates[name]; has && v != "" {
+			c.JSON(http.StatusBadRequest, response.Error("cannot both set and clear "+name+" in one request"))
+			return nil, fmt.Errorf("clear_secrets names a field the body also sets")
+		}
 		// The clear is applied AFTER the mask-or-empty rules, so it is not
 		// deleted by them.
 		filteredUpdates[name] = ""

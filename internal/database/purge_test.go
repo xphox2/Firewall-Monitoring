@@ -565,6 +565,11 @@ func TestEstimateDevicePurge_CappedCounts(t *testing.T) {
 	if est.Total != 2+1+2 {
 		t.Errorf("total = %d, want 5", est.Total)
 	}
+	// One capped table makes the TOTAL a lower bound, and the estimate has to
+	// say so: without the flag the dialog rendered a capped count as exact.
+	if !est.Capped {
+		t.Error("est.Capped = false although syslog_messages hit the cap - the total would be presented as exact")
+	}
 	if len(est.Tunnels) != 2 {
 		t.Fatalf("tunnels = %+v, want the two referencing the device", est.Tunnels)
 	}
@@ -796,6 +801,9 @@ func TestEstimateDevicePurge_TableFailureIsNonFatal(t *testing.T) {
 	}
 	if est.Total != 3 {
 		t.Errorf("total = %d, want 3", est.Total)
+	}
+	if est.Capped {
+		t.Error("est.Capped = true with no table at the cap - an exact total would read as a lower bound")
 	}
 	for _, row := range est.Tables {
 		if row.Table != "ha_status" && row.Error != "" {

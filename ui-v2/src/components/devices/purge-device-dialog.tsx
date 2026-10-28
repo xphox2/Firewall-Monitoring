@@ -121,8 +121,9 @@ export function PurgeDeviceDialog({
       description="This irreversibly deletes this device and all of its historical telemetry. It cannot be undone."
       confirmLabel="Permanently Purge"
       totpEnabled={totpEnabled}
-      // The name has to match before the purge can be armed.
-      confirmDisabled={!nameMatches}
+      // The name has to match before the purge can be armed, and a purge
+      // the server would refuse right now is not armed either.
+      confirmDisabled={!nameMatches || (estimate?.blockers ?? []).length > 0}
       onConfirm={async ({ password, totp_code }) => {
         setStarting(true);
         try {
@@ -186,7 +187,7 @@ export function PurgeDeviceDialog({
                 role="alert"
                 className="rounded border border-sig-crit/40 bg-sig-crit/10 px-2.5 py-1.5 text-sig-crit-text"
               >
-                <div className="font-semibold">The purge will be refused</div>
+                <div className="font-semibold">The purge would be refused right now</div>
                 <ul className="mt-1 list-disc pl-4">
                   {estimate.blockers!.map((b, i) => (
                     <li key={i}>{b}</li>

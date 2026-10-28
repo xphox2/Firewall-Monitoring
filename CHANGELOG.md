@@ -1,6 +1,98 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.458] - 2026-10-27
+
+Fixes from a review of v0.11.446 – v0.11.457. Each defect fixed here has a
+test that fails on the previous build; a few further tests pin behaviour that
+was already correct but had no test.
+
+### Fixed — The alert-override drawer could not load, save or reset
+
+- The drawer built its route as `/admin/api` + a path that already began with
+  `/admin/api`, so every request went to `/admin/api/admin/api/.../alert-config`
+  and failed — for devices, sites and collectors alike, since v0.11.449. The
+  route now comes from one tested helper.
+- The browser suite could not see it: its mock answered *any* unknown admin
+  path. A doubled prefix is now a 404 in the mock, and a new spec drives the
+  drawer itself and requires the exact route.
+- A blanked threshold is now handed back to the policy (sent as 0, which the
+  alert engine reads as "inherit"), a stored 0 is shown blank, and a blank
+  storm-digest threshold is sent as `null` (inherit) — the same as the classic
+  console. Save waits for the override to load, so an empty form can never be
+  written over a stored one.
+
+### Fixed — A credential Clear could reach a different device
+
+- A Clear confirmed on one device — even one followed by Cancel — was kept,
+  and sent with the **next save of any device**, which removed that device's
+  credential. The pending clears now belong to one editing session: every
+  open, every successful save and every close starts clean.
+- Typing a new value into a cleared field withdraws the Clear, and the new
+  value is saved.
+- A revealed credential can be edited again: the field once kept showing the
+  revealed value and the save sent the original back.
+- The SNMP v2c community gets the same field as the other four credentials: a
+  Clear control, and its Reveal button outside the label.
+- The server answers `400` when one request both sets and clears the same
+  credential, instead of letting the clear win silently.
+
+### Security — An operator could assign an admin-only event profile
+
+- The alert-config route is operator-level, and assigning an event profile is
+  admin-only. The admin check looked for the exact key `event_profile_id`,
+  but the body is bound case-insensitively, so `Event_Profile_ID` slipped past
+  the check and the profile was saved. The stored profile is now pinned across
+  the bind and changes only through the admin-checked path, for devices and
+  sites. A fractional or negative profile id is refused rather than truncated.
+
+### Fixed — "Select all matching" could act on every site, or on everything
+
+- The acknowledge- and snooze-by-filter endpoints ignored `site_id`, so the
+  classic console's "Select all N matching" under a site filter acknowledged
+  alerts in **every** site. They now scope by site exactly as the alert list
+  does (including the unassigned bucket), and the V2 console offers the
+  cross-page action under a site filter too.
+- A filter value the endpoints cannot apply (an unparseable device or site) is
+  now refused with `400` instead of being dropped — dropping it widened the
+  action.
+- In the V2 console, the filter bar's **Clear** — and changing the row
+  selection by hand — now leaves the "all matching" mode. Before, one ticked
+  row after clearing the filters read "Acknowledge all N" and acted on every
+  open alert.
+
+### Fixed — The IPSec wizard
+
+- A **Custom** crypto profile could never be saved: only the IKE half was
+  filled in, so the server refused it. The form now offers the PRF and perfect
+  forward secrecy, and the cipher and integrity apply to both phases (no
+  integrity for a GCM cipher), as the classic console did.
+- Save now requires a preview of the design **as it is now**. Editing after a
+  clean preview used to keep Save enabled on the strength of the old one; the
+  Verify step now says when the design changed and offers the preview again.
+- Picking a different device for an end clears the previous device's peer
+  address, interfaces, protected subnets and identity, so the new device's
+  values fill in.
+
+### Fixed — Smaller defects
+
+- Storage: four columns that should appear from a breakpoint were missing
+  their header at **every** width while their cells still rendered, so the
+  rows sat under the wrong headings. The breakpoint class was built at run
+  time, which Tailwind cannot see; header and cells now share one literal
+  class.
+- The purge button is disabled for non-admins (the purge is admin-only), and
+  the dialog cannot be submitted while the estimate lists a blocker.
+- The device list no longer sends an `include_retired` parameter that the
+  server never read.
+- The compose file and the example environment file said Docker silently
+  drops the swap when only the memory limit is raised. It does not start the
+  container at all; the comments now say so.
+- Tests: the alert override now has a test that fails the profile write
+  inside the transaction and proves nothing is kept; the purge estimate's
+  lower-bound flag and its tunnel blocker are tested; three guardrails that
+  pinned the old design (or could be satisfied by a comment) were corrected.
+
 ## [0.11.457] - 2026-10-27
 
 ### Fixed — The mobile card was a control inside a control

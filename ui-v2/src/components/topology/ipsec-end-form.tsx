@@ -1,6 +1,13 @@
 import { useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { ID_TYPES, defaultIdentity, identityError, type EndForm, type IpsecHints } from '@/lib/ipsec';
+import {
+  ID_TYPES,
+  defaultIdentity,
+  identityError,
+  switchEndDevice,
+  type EndForm,
+  type IpsecHints,
+} from '@/lib/ipsec';
 import { Input, Select, Textarea } from '@/components/ui/input';
 
 export interface WizardDevice {
@@ -95,7 +102,7 @@ export function IpsecEndForm({
         <span className="mb-1 block text-[11px] font-medium text-text-dim">Device</span>
         <Select  className="bg-bg-card px-2.5 py-1.5"
           value={value.deviceId || ''}
-          onChange={(e) => set('deviceId', Number(e.target.value) || 0)}
+          onChange={(e) => onChange(switchEndDevice(value, Number(e.target.value) || 0))}
           aria-label={`End ${label} device`}
           
         >

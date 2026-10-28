@@ -8,12 +8,15 @@ import { useToast } from '@/components/ui/toast';
 import {
   PSK_MASK,
   buildIntent,
+  changeCustomCrypto,
   findingScope,
+  isAeadCipher,
   identityError,
   pathKey,
   pruneDisabledPaths,
   restoreCrypto,
   type CapabilitiesResponse,
+  type CustomControl,
   type EndForm,
   type Finding,
   type IntentForm,
@@ -82,6 +85,10 @@ export function IpsecWizard({
   const [caps, setCaps] = useState<CapabilitiesResponse | null>(null);
   const [hints, setHints] = useState<Record<number, IpsecHints>>({});
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
+  // The exact intent the preview was rendered for. Save is offered only while
+  // the form still produces THIS intent: the tabs are free, and an edit made
+  // after a clean preview was once saved on the strength of the old one.
+  const [previewedIntent, setPreviewedIntent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -94,6 +101,7 @@ export function IpsecWizard({
     if (!open) return;
     setError(null);
     setPreview(null);
+    setPreviewedIntent(null);
     setPhase('design');
     // The whole form state is reset, not just the phase: the previous
     // session's profile, capabilities and hints would otherwise leak into
@@ -317,11 +325,13 @@ export function IpsecWizard({
     setPreviewing(true);
     setError(null);
     try {
+      const body = buildIntent(form);
       const res = await apiFetch<PreviewResponse>('/admin/api/ipsec/preview', {
         method: 'POST',
-        body: buildIntent(form),
+        body,
       });
       setPreview(res);
+      setPreviewedIntent(JSON.stringify(body));
       setPhase('verify');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The preview failed.');
@@ -331,6 +341,36 @@ export function IpsecWizard({
   };
 
   const blocking = (preview?.validation ?? []).filter((f) => f.severity === 'block');
+  const currentIntent = useMemo(() => JSON.stringify(buildIntent(form)), [form]);
+  const previewIsCurrent = preview !== null && previewedIntent === currentIntent;
+
+  // --- the Custom crypto --------------------------------------------------------
+  const changeCustom = (control: CustomControl, value: string | boolean) =>
+    setForm((p) => ({ ...p, custom: changeCustomCrypto(p.custom, control, value) }));
+
+  const customSelect = (
+    label: string,
+    control: Exclude<CustomControl, 'pfs'>,
+    value: string,
+    options: string[],
+    placeholder: string | null,
+  ) => (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-medium text-text-dim">{label}</span>
+      <Select
+        className="bg-bg-card px-2.5 py-1.5"
+        value={value}
+        onChange={(e) => changeCustom(control, e.target.value)}
+      >
+        {placeholder !== null ? <option value="">{placeholder}</option> : null}
+        {options.map((v) => (
+          <option key={v} value={v}>
+            {v}
+          </option>
+        ))}
+      </Select>
+    </label>
+  );
 
   // --- save ---------------------------------------------------------------------
   const save = async () => {
@@ -408,7 +448,7 @@ export function IpsecWizard({
               Next: Paths
             </button>
           ) : null}
-          {phase !== 'verify' ? (
+          {phase !== 'verify' || !previewIsCurrent ? (
             <button
               type="button"
               onClick={runPreview}
@@ -422,11 +462,11 @@ export function IpsecWizard({
             <Button
               type="button"
               onClick={save}
-              // A preview is REQUIRED, not optional: without one there are
-              // no findings, so nothing would stand between an invalid
-              // intent and the database.
-              disabled={saving || !preview || blocking.length > 0}
-              
+              // A CURRENT preview is required: without one there are no
+              // findings, so nothing would stand between an invalid intent
+              // and the database - and a preview of an earlier design says
+              // nothing about this one.
+              disabled={saving || !previewIsCurrent || blocking.length > 0}
             >
               {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create tunnel'}
             </Button>
@@ -521,95 +561,28 @@ export function IpsecWizard({
             </div>
 
             {form.profile === 'custom' ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-text-dim">
-                    IKE version
-                  </span>
-                  <Select  className="bg-bg-card px-2.5 py-1.5"
-                    value={form.custom.ike_version}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        custom: { ...p.custom, ike_version: e.target.value },
-                      }))
-                    }
-                    aria-label="IKE version"
-                    
-                  >
-                    {(caps?.allowed?.ike_versions ?? ['ikev2']).map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-text-dim">
-                    IKE encryption
-                  </span>
-                  <Select  className="bg-bg-card px-2.5 py-1.5"
-                    value={form.custom.ike.enc}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        custom: { ...p.custom, ike: { ...p.custom.ike, enc: e.target.value } },
-                      }))
-                    }
-                    aria-label="IKE encryption"
-                    
-                  >
-                    <option value="">Select…</option>
-                    {(caps?.allowed?.encryption ?? []).map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-text-dim">
-                    IKE integrity
-                  </span>
-                  <Select  className="bg-bg-card px-2.5 py-1.5"
-                    value={form.custom.ike.integ}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        custom: { ...p.custom, ike: { ...p.custom.ike, integ: e.target.value } },
-                      }))
-                    }
-                    aria-label="IKE integrity"
-                    
-                  >
-                    <option value="">None (AEAD)</option>
-                    {(caps?.allowed?.integrity ?? []).map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-text-dim">IKE DH</span>
-                  <Select  className="bg-bg-card px-2.5 py-1.5"
-                    value={form.custom.ike.dh}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        custom: { ...p.custom, ike: { ...p.custom.ike, dh: e.target.value } },
-                      }))
-                    }
-                    aria-label="IKE DH group"
-                    
-                  >
-                    <option value="">Select…</option>
-                    {(caps?.allowed?.dh_groups ?? []).map((v) => (
-                      <option key={v} value={v}>
-                        {v}
-                      </option>
-                    ))}
-                  </Select>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {customSelect('IKE version', 'ike_version', form.custom.ike_version, caps?.allowed?.ike_versions ?? ['ikev2'], null)}
+                {customSelect('Encryption (IKE + ESP)', 'enc', form.custom.ike.enc, caps?.allowed?.encryption ?? [], 'Select…')}
+                {customSelect(
+                  'Integrity (IKE + ESP)',
+                  'integ',
+                  form.custom.ike.integ,
+                  isAeadCipher(form.custom.ike.enc) ? [] : caps?.allowed?.integrity ?? [],
+                  isAeadCipher(form.custom.ike.enc) ? 'None (AEAD cipher)' : 'Select…',
+                )}
+                {customSelect('PRF', 'prf', form.custom.ike.prf, caps?.allowed?.prf ?? [], 'Select…')}
+                {customSelect('DH group', 'dh', form.custom.ike.dh, caps?.allowed?.dh_groups ?? [], 'Select…')}
+                <label className="flex items-center gap-2 self-end pb-1.5 text-[11px] font-medium text-text-dim">
+                  <input
+                    type="checkbox"
+                    checked={form.custom.esp.pfs !== ''}
+                    // PFS reuses the DH group, so it needs one first - and a
+                    // vendor pair that cannot do PFS does not offer it.
+                    disabled={!form.custom.ike.dh || caps?.allowed?.pfs === false}
+                    onChange={(e) => changeCustom('pfs', e.target.checked)}
+                  />
+                  Perfect forward secrecy (ESP uses the DH group)
                 </label>
               </div>
             ) : null}
@@ -699,6 +672,12 @@ export function IpsecWizard({
 
       {phase === 'verify' && (
         <div className="space-y-4">
+          {preview && !previewIsCurrent ? (
+            <p role="status" className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-xs text-sig-warn-text">
+              The design changed after this preview. Preview it again before saving — the
+              findings below describe the earlier design.
+            </p>
+          ) : null}
           {!preview ? (
             <p className="rounded-lg border border-border bg-bg-panel px-3 py-2 text-xs text-text-dim">
               No preview yet — run one to see what each side will receive and what

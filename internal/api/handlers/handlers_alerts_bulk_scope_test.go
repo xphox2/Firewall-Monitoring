@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
 	"firewall-mon/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
 
 // The by-filter bulk endpoints must reach EXACTLY the set the list shows.
@@ -142,3 +145,98 @@ func TestBulkSnoozeByFilter_ExcludesSnoozedByDefault(t *testing.T) {
 		t.Errorf("the plain row was not snoozed; it is visible in the list, so the action must reach it")
 	}
 }
+
+// The by-filter bulk endpoints scope by SITE exactly as the list does.
+//
+// site_id was missing from the bulk filter, so the classic console's "Select
+// all N matching" under a site filter - which sends site_id and
+// acknowledged=false - acknowledged every unacknowledged alert in EVERY site.
+func TestBulkByFilter_ScopesToTheSite(t *testing.T) {
+	h, db := setupTestHandler(t)
+	siteA := &models.Site{Name: "site-a"}
+	siteB := &models.Site{Name: "site-b"}
+	for _, s := range []*models.Site{siteA, siteB} {
+		if err := db.Gorm().Create(s).Error; err != nil {
+			t.Fatalf("create site: %v", err)
+		}
+	}
+	devA := &models.Device{Name: "fw-a", IPAddress: "192.0.2.10", SiteID: &siteA.ID}
+	devB := &models.Device{Name: "fw-b", IPAddress: "192.0.2.11", SiteID: &siteB.ID}
+	devNone := &models.Device{Name: "fw-none", IPAddress: "192.0.2.12"}
+	for _, d := range []*models.Device{devA, devB, devNone} {
+		if err := db.Gorm().Create(d).Error; err != nil {
+			t.Fatalf("create device: %v", err)
+		}
+	}
+	seed := func(msg string, deviceID uint, siteID *uint) {
+		a := models.Alert{DeviceID: deviceID, SiteID: siteID, AlertType: models.AlertType("CPU_HIGH"),
+			Severity: models.Severity("warning"), Message: msg, Timestamp: time.Now()}
+		if err := db.Gorm().Create(&a).Error; err != nil {
+			t.Fatalf("seed %s: %v", msg, err)
+		}
+	}
+	seed("a-device", devA.ID, nil)
+	seed("a-sitewide", 0, &siteA.ID) // site-scoped, no single device
+	seed("b-device", devB.ID, nil)
+	seed("unassigned-device", devNone.ID, nil)
+
+	acked := func() map[string]bool {
+		var rows []models.Alert
+		db.Gorm().Find(&rows)
+		out := map[string]bool{}
+		for _, r := range rows {
+			out[r.Message] = r.Acknowledged
+		}
+		return out
+	}
+
+	w := doAdminQueryRequest(t, h.BulkAcknowledgeAlertsByFilter,
+		"POST", "/api/alerts/bulk-acknowledge-filter", "site_id="+uintStr(siteA.ID)+"&acknowledged=false",
+		map[string]interface{}{"notes": "site scope"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d (body=%s)", w.Code, w.Body.String())
+	}
+	got := acked()
+	for msg, want := range map[string]bool{"a-device": true, "a-sitewide": true, "b-device": false, "unassigned-device": false} {
+		if got[msg] != want {
+			t.Errorf("after acking site A: %q acknowledged=%v, want %v", msg, got[msg], want)
+		}
+	}
+
+	// "unassigned" is the null-site bucket, as in the list.
+	w = doAdminQueryRequest(t, h.BulkSnoozeAlertsByFilter,
+		"POST", "/api/alerts/bulk-snooze-filter", "site_id=unassigned&acknowledged=false",
+		map[string]interface{}{"hours": 2})
+	if w.Code != http.StatusOK {
+		t.Fatalf("snooze status = %d (body=%s)", w.Code, w.Body.String())
+	}
+	var snoozed []string
+	db.Gorm().Model(&models.Alert{}).Where("snoozed_until IS NOT NULL").Pluck("message", &snoozed)
+	if len(snoozed) != 1 || snoozed[0] != "unassigned-device" {
+		t.Errorf("site_id=unassigned snoozed %v, want only [unassigned-device]", snoozed)
+	}
+}
+
+// A filter value the list would refuse is refused, never dropped: dropping
+// it WIDENS the action to everything the remaining filters match.
+func TestBulkByFilter_RefusesAFilterItCannotApply(t *testing.T) {
+	h, _ := setupTestHandler(t)
+	for _, q := range []string{
+		"site_id=abc&acknowledged=false",
+		"site_id=0&acknowledged=false",
+		"device_id=abc&acknowledged=false",
+		"device_id=0&acknowledged=false",
+	} {
+		for name, fn := range map[string]func(*gin.Context){
+			"ack":    h.BulkAcknowledgeAlertsByFilter,
+			"snooze": h.BulkSnoozeAlertsByFilter,
+		} {
+			w := doAdminQueryRequest(t, fn, "POST", "/api/alerts/x", q, map[string]interface{}{})
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("%s with %q answered %d, want 400", name, q, w.Code)
+			}
+		}
+	}
+}
+
+func uintStr(v uint) string { return strconv.FormatUint(uint64(v), 10) }

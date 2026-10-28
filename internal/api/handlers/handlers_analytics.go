@@ -1332,13 +1332,60 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 	}
 	until := time.Now().Add(time.Duration(hours) * time.Hour)
 
+	filter, ok := bulkAlertFilter(c)
+	if !ok {
+		return
+	}
+
+	user, _ := c.Get("username")
+	username, _ := user.(string)
+
+	affected, err := db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
+	if err != nil {
+		httputil.InternalError(c, "Failed to snooze alerts", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response.Success(gin.H{
+		"snoozed":       affected,
+		"snoozed_until": until,
+		"hours":         hours,
+	}))
+}
+
+// bulkAlertFilter reads the by-filter bulk actions' scope from the query
+// string, with the SAME parameters and the same meaning as the list
+// (applyAlertFilters): device_id, site_id, alert_type, severity,
+// acknowledged, include_snoozed.
+//
+// A value the list would refuse is REFUSED here, not dropped. Dropping a
+// filter WIDENS the action: site_id was once ignored entirely, so "Select all
+// N matching" under a site filter acknowledged alerts in every site, and an
+// unparseable device_id was skipped the same way.
+//
+// At least one filter is required, so a bare request can never act on every
+// alert in the database. It writes the 400 itself and returns ok=false.
+func bulkAlertFilter(c *gin.Context) (database.AlertFilter, bool) {
 	filter := database.AlertFilter{}
 	hasAnyFilter := false
 	if v := c.Query("device_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 32); err == nil && id > 0 {
-			filter.DeviceID = uint(id)
-			hasAnyFilter = true
+		id, err := strconv.ParseUint(v, 10, 32)
+		if err != nil || id == 0 {
+			c.JSON(http.StatusBadRequest, response.Error("Invalid device_id"))
+			return filter, false
 		}
+		filter.DeviceID = uint(id)
+		hasAnyFilter = true
+	}
+	if v := c.Query("site_id"); v != "" {
+		if v != "unassigned" {
+			if id, err := strconv.ParseUint(v, 10, 32); err != nil || id == 0 {
+				c.JSON(http.StatusBadRequest, response.Error("Invalid site_id"))
+				return filter, false
+			}
+		}
+		filter.SiteID = v
+		hasAnyFilter = true
 	}
 	if v := c.Query("alert_type"); v != "" {
 		filter.AlertType = v
@@ -1358,24 +1405,10 @@ func (h *Handler) BulkSnoozeAlertsByFilter(c *gin.Context) {
 	// action touches the snoozed ones as well.
 	filter.IncludeSnoozed = c.Query("include_snoozed") == "true"
 	if !hasAnyFilter {
-		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
-		return
+		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, site_id, alert_type, severity, acknowledged)"))
+		return filter, false
 	}
-
-	user, _ := c.Get("username")
-	username, _ := user.(string)
-
-	affected, err := db.SnoozeAlertsByFilter(filter, until, username, body.Reason)
-	if err != nil {
-		httputil.InternalError(c, "Failed to snooze alerts", err)
-		return
-	}
-
-	c.JSON(http.StatusOK, response.Success(gin.H{
-		"snoozed":       affected,
-		"snoozed_until": until,
-		"hours":         hours,
-	}))
+	return filter, true
 }
 
 // maxBulkAckIDs caps how many alerts can be acked in a single bulk request.
@@ -1421,8 +1454,8 @@ func (h *Handler) BulkAcknowledgeAlerts(c *gin.Context) {
 }
 
 // BulkAcknowledgeAlertsByFilter acks every alert matching the filter (same
-// query parameters as GET /api/alerts: device_id, alert_type, severity,
-// acknowledged). Body carries the optional notes. Used by the admin UI's
+// query parameters as GET /api/alerts: device_id, site_id, alert_type,
+// severity, acknowledged, include_snoozed - see bulkAlertFilter). Body carries the optional notes. Used by the admin UI's
 // "Select all N matching" flow when the result set exceeds maxBulkAckIDs and
 // can't be shipped as an ID list.
 //
@@ -1439,34 +1472,8 @@ func (h *Handler) BulkAcknowledgeAlertsByFilter(c *gin.Context) {
 	}
 	c.ShouldBindJSON(&body) // body is optional
 
-	filter := database.AlertFilter{}
-	hasAnyFilter := false
-	if v := c.Query("device_id"); v != "" {
-		if id, err := strconv.ParseUint(v, 10, 32); err == nil && id > 0 {
-			filter.DeviceID = uint(id)
-			hasAnyFilter = true
-		}
-	}
-	if v := c.Query("alert_type"); v != "" {
-		filter.AlertType = v
-		hasAnyFilter = true
-	}
-	if v := c.Query("severity"); v != "" {
-		filter.Severity = v
-		hasAnyFilter = true
-	}
-	if v := c.Query("acknowledged"); v != "" {
-		ack := v == "true"
-		filter.Acknowledged = &ack
-		hasAnyFilter = true
-	}
-	// The list hides snoozed alerts unless include_snoozed=true, so the bulk
-	// scope has to follow it: otherwise the operator is shown N alerts and the
-	// action touches the snoozed ones as well.
-	filter.IncludeSnoozed = c.Query("include_snoozed") == "true"
-
-	if !hasAnyFilter {
-		c.JSON(http.StatusBadRequest, response.Error("at least one filter is required (device_id, alert_type, severity, acknowledged)"))
+	filter, ok := bulkAlertFilter(c)
+	if !ok {
 		return
 	}
 
