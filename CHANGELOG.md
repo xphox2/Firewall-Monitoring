@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file.
   left an empty password box with no hint, and the **Clear** control
   vanished. It now reads **Unchanged** and keeps its Clear control, because the
   save leaves that credential in place.
+- **Test SNMP** with a deleted community mask sent an empty community and was
+  refused as "required". It now explains first that the stored community is
+  kept but a test needs its value — the same as it already did for the mask.
 
 ### Fixed — The device card on a phone showed Edit twice
 

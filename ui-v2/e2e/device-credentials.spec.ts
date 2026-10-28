@@ -232,3 +232,31 @@ test('deleting a stored mask reads Unchanged, keeps Clear, and saves no clear', 
   await expect.poll(() => puts.length).toBe(1);
   expect('clear_secrets' in puts[0]).toBe(false);
 });
+
+// A deleted SNMP community mask is kept on save, but Test SNMP needs the value
+// itself: it sent '' and the server refused it as "required". The console now
+// says so before sending, like it already did for the mask.
+test('Test SNMP with a deleted community mask explains instead of failing', async ({ page }) => {
+  let tests = 0;
+  await installApiMocks(page, [
+    { match: (url) => url.pathname === '/admin/api/devices', method: 'GET', body: devices() },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/test',
+      method: 'POST',
+      onRequest: () => {
+        tests += 1;
+        return { success: false, message: 'SNMP community string is required for v1/v2c' };
+      },
+    },
+  ]);
+
+  await page.goto('/admin/v2/devices');
+  await openEditor(page, 'fw-a');
+  await page.getByRole('tab', { name: 'SNMP Polling' }).click();
+  await page.getByLabel('SNMP v2c Community String').fill('');
+  await page.getByRole('button', { name: 'Test SNMP' }).click();
+  await page.getByRole('tab', { name: 'Test Connection' }).click();
+
+  await expect(page.getByText(/The stored SNMP community is kept, but a test needs its value/)).toBeVisible();
+  expect(tests).toBe(0);
+});

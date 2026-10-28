@@ -90,8 +90,14 @@ func TestV2APendingClearBelongsToOneDevice(t *testing.T) {
 	// And a credential the device held when the editor OPENED is still held
 	// after the operator deletes its mask (an empty value leaves it in place):
 	// the Clear control stays and the field reads "Unchanged".
-	if !strings.Contains(hasStored, "keptAsIs") || !strings.Contains(console, "hasStoredCredential((openedDevice as Record<string, unknown>)[field])") {
+	keptAsIs := regexp.MustCompile(`const keptAsIs =[^;]*;`).FindString(console)
+	if !strings.Contains(hasStored, "keptAsIs") || !strings.Contains(keptAsIs, "openedDevice") || !strings.Contains(keptAsIs, "hasStoredCredential") {
 		t.Error("an emptied field on a device that held the credential loses its Clear control — the save leaves the credential in place")
+	}
+	// ...except while a Clear is pending: that save DOES remove it, and the
+	// field must say "Removed when you save", not offer Clear again.
+	if !strings.Contains(keptAsIs, "!pendingClear") {
+		t.Error("keptAsIs ignores a pending Clear — a credential about to be removed would read as kept")
 	}
 	// Every CLOSE goes through the resetting setter, not the raw one.
 	if strings.Contains(console, "onOpenChange={setEditorOpen}") || strings.Contains(console, "setEditorOpen(false)") {

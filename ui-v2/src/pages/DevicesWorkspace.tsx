@@ -404,6 +404,13 @@ function DeviceInventoryView() {
       if (body.snmp_community === '********') {
         throw new Error('Reveal the stored SNMP community first — testing with the mask always fails.');
       }
+      // A DELETED mask is the same case: the save keeps the stored community
+      // (an empty value leaves it in place), but a test needs the value
+      // itself, and an empty one is refused as "required".
+      const v3 = editingDevice.snmp_version === '3' || editingDevice.snmp_version === 'v3';
+      if (!v3 && body.snmp_community === '' && hasStoredCredential(openedDevice.snmp_community)) {
+        throw new Error('The stored SNMP community is kept, but a test needs its value — reveal it or type it first.');
+      }
       return apiFetch<{ success: boolean; message: string }>('/admin/api/devices/test', {
         method: 'POST',
         body,
