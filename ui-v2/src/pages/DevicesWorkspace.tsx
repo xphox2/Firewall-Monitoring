@@ -1341,7 +1341,12 @@ function DeviceSecretField({
   // Reading the mask as "empty" is what made the Clear control
   // unreachable for the case it exists for: a credential the device ALREADY
   // holds. It only appeared after the operator typed a new value.
-  const hasStored = hasStoredCredential(stored);
+  //
+  // A REVEALED value is a stored credential too. After Clear then Reveal,
+  // the form's own value is '' (the Clear emptied it) while the field shows
+  // the revealed credential - and the Clear control vanished until the
+  // editor was reopened.
+  const hasStored = revealed !== undefined || hasStoredCredential(stored);
   return (
     <div>
       <Field

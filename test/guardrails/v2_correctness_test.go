@@ -80,6 +80,11 @@ func TestV2APendingClearBelongsToOneDevice(t *testing.T) {
 	if !strings.Contains(console, "setPendingClearSecrets((current) => current.filter((f) => f !== revealField))") {
 		t.Error("a Reveal does not withdraw a pending Clear — the field shows the credential while the save removes it")
 	}
+	// And a revealed credential counts as a stored one, so the Clear control
+	// comes back after Clear -> Reveal without reopening the editor.
+	if !strings.Contains(console, "const hasStored = revealed !== undefined || hasStoredCredential(stored);") {
+		t.Error("the Clear control ignores a revealed credential — after Clear then Reveal it stays hidden until the editor is reopened")
+	}
 	// Every CLOSE goes through the resetting setter, not the raw one.
 	if strings.Contains(console, "onOpenChange={setEditorOpen}") || strings.Contains(console, "setEditorOpen(false)") {
 		t.Error("the editor is closed through the raw setter somewhere — that path keeps a pending Clear")
