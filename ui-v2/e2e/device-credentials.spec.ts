@@ -135,3 +135,58 @@ test('after Clear then Reveal, the credential is kept and can be cleared again',
   expect(puts[0].clear_secrets).toEqual(['api_token']);
   expect('api_token' in puts[0]).toBe(false);
 });
+
+// A revealed credential that the operator empties is still a revealed field.
+//
+// It flipped back to a password box with no placeholder (the input tested the
+// revealed value for truthiness). An empty field leaves the stored credential
+// as it is, so it reads "Unchanged" - and the save sends no clear.
+test('emptying a revealed credential keeps the field visible and says Unchanged', async ({ page }) => {
+  const puts: Array<Record<string, unknown>> = [];
+  await installApiMocks(page, [
+    { match: (url) => url.pathname === '/admin/api/devices', method: 'GET', body: devices() },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/1/reveal-secret',
+      method: 'POST',
+      body: { secret: 'the-stored-token' },
+    },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/1',
+      method: 'PUT',
+      onRequest: (request) => {
+        const body = request.postDataJSON();
+        puts.push(body);
+        return body;
+      },
+    },
+  ]);
+
+  await page.goto('/admin/v2/devices');
+  await openEditor(page, 'fw-a');
+  await page.getByRole('tab', { name: 'SSH & API Keys' }).click();
+  const field = page.locator('div', { has: page.getByText('API Token', { exact: true }) }).last();
+  await field.getByRole('button', { name: 'Reveal' }).click();
+  await page.getByPlaceholder('Enter your password').fill('admin-password');
+  await page.getByRole('button', { name: 'Decrypt & Reveal' }).click();
+
+  const input = page.getByLabel('API Token');
+  await expect(input).toHaveValue('the-stored-token');
+  await input.fill('');
+  await expect(input).toHaveAttribute('type', 'text');
+  await expect(input).toHaveAttribute('placeholder', 'Unchanged');
+
+  await page.getByRole('button', { name: 'Save Device' }).click();
+  await expect.poll(() => puts.length).toBe(1);
+  expect('clear_secrets' in puts[0]).toBe(false);
+});
+
+// The phone-width card carries the row's actions column (Inspect, Edit
+// device). It also rendered its own Edit button: two controls for one action.
+test('a device card offers one Edit control', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) >= 768, 'the card is the phone-width view');
+  await installApiMocks(page, [
+    { match: (url) => url.pathname === '/admin/api/devices', method: 'GET', body: devices() },
+  ]);
+  await page.goto('/admin/v2/devices');
+  await expect(dataRow(page, 'fw-a').getByRole('button', { name: /^Edit/ })).toHaveCount(1);
+});

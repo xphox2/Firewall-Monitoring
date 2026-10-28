@@ -605,20 +605,15 @@ function DeviceInventoryView() {
               <span className="font-mono text-xs text-text-dim">{dev.ip_address}</span>
             </div>
             <div className="flex items-center justify-between text-xs text-text-dim">
+              {/*
+                No Edit button here: the card already carries the row's
+                actions column (Inspect, Edit device), so a second Edit made
+                two controls for one action on every phone-width card.
+              */}
               <span>
                 {dev.vendor || 'generic'}
                 {dev.retired_at ? ' • retired' : dev.status ? ` • ${dev.status}` : ''}
               </span>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openEditDrawer(dev);
-                }}
-                className="rounded border border-border bg-bg-panel px-2 py-1 text-[11px] text-text"
-              >
-                Edit
-              </button>
             </div>
           </div>
         )}
@@ -1393,10 +1388,19 @@ function DeviceSecretField({
         }
       >
         <input
-          type={revealed ? 'text' : 'password'}
+          // Revealed means "a value came back from the reveal", even one the
+          // operator has since emptied: testing it for truthiness flipped an
+          // emptied revealed field back to a password box with no placeholder.
+          type={revealed !== undefined ? 'text' : 'password'}
           value={revealed ?? (typeof stored === 'string' ? stored : '')}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={pendingClear ? 'Removed when you save' : placeholder ?? (masked ? 'Unchanged' : '')}
+          // An empty field leaves the stored credential as it is, so an
+          // emptied revealed field says so, like a masked one.
+          placeholder={
+            pendingClear
+              ? 'Removed when you save'
+              : placeholder ?? (masked || revealed === '' ? 'Unchanged' : '')
+          }
           autoComplete="new-password"
           className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"
         />

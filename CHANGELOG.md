@@ -1,6 +1,20 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.460] - 2026-10-28
+
+### Fixed — An emptied revealed credential turned back into a password box
+
+- Revealing a stored credential shows it as text. Emptying that field flipped
+  it back to a password box with no placeholder, so it looked as if nothing
+  was stored. An emptied field leaves the stored credential as it is; it now
+  stays a plain field and says **Unchanged**.
+
+### Fixed — The device card on a phone showed Edit twice
+
+- The phone-width device card carries the row's own actions (Inspect, Edit)
+  and also drew a second **Edit** button of its own. The extra one is gone.
+
 ## [0.11.459] - 2026-10-27
 
 ### Fixed — The Clear control came back only after reopening the editor
