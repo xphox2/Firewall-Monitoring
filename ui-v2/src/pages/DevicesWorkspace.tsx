@@ -234,6 +234,10 @@ function DeviceInventoryView() {
   // the credential. So removing one is an EXPLICIT request, carried in its
   // own field so it can never be confused with a value.
   const [clearSecretTarget, setClearSecretTarget] = useState<string | null>(null);
+  // The device as the editor OPENED it. Once the operator deletes a mask the
+  // form can no longer tell "held a credential" from "never had one", and an
+  // empty value still leaves a held credential in place on save.
+  const [openedDevice, setOpenedDevice] = useState<Partial<DeviceRecord>>({});
   const [pendingClearSecrets, setPendingClearSecrets] = useState<string[]>([]);
 
   const requestClearSecret = (field: string) => setClearSecretTarget(field);
@@ -306,6 +310,7 @@ function DeviceInventoryView() {
       ssh_port: 22,
       enabled: true,
     });
+    setOpenedDevice({});
     resetSecretState();
     setTestResult(null);
     setEditorTab('general');
@@ -314,6 +319,7 @@ function DeviceInventoryView() {
 
   const openEditDrawer = (dev: DeviceRecord) => {
     setEditingDevice({ ...dev });
+    setOpenedDevice({ ...dev });
     resetSecretState();
     setTestResult(null);
     setEditorTab('general');
@@ -604,7 +610,7 @@ function DeviceInventoryView() {
               </div>
               <span className="font-mono text-xs text-text-dim">{dev.ip_address}</span>
             </div>
-            <div className="flex items-center justify-between text-xs text-text-dim">
+            <div className="text-xs text-text-dim">
               {/*
                 No Edit button here: the card already carries the row's
                 actions column (Inspect, Edit device), so a second Edit made
@@ -842,6 +848,7 @@ function DeviceInventoryView() {
                 label="SNMP v2c Community String"
                 field="snmp_community"
                 editingDevice={editingDevice}
+                openedDevice={openedDevice}
                 revealedSecrets={revealedSecrets}
                 pendingClear={pendingClearSecrets.includes('snmp_community')}
                 onChange={editSecret('snmp_community')}
@@ -869,6 +876,7 @@ function DeviceInventoryView() {
                     label="Auth Password"
                     field="snmpv3_auth_pass"
                     editingDevice={editingDevice}
+                    openedDevice={openedDevice}
                     revealedSecrets={revealedSecrets}
                     pendingClear={pendingClearSecrets.includes('snmpv3_auth_pass')}
                     onChange={editSecret('snmpv3_auth_pass')}
@@ -882,6 +890,7 @@ function DeviceInventoryView() {
                     label="Priv Password"
                     field="snmpv3_priv_pass"
                     editingDevice={editingDevice}
+                    openedDevice={openedDevice}
                     revealedSecrets={revealedSecrets}
                     pendingClear={pendingClearSecrets.includes('snmpv3_priv_pass')}
                     onChange={editSecret('snmpv3_priv_pass')}
@@ -969,6 +978,7 @@ function DeviceInventoryView() {
                 label="SSH Password"
                 field="ssh_password"
                 editingDevice={editingDevice}
+                openedDevice={openedDevice}
                 revealedSecrets={revealedSecrets}
                 pendingClear={pendingClearSecrets.includes('ssh_password')}
                 onChange={editSecret('ssh_password')}
@@ -1021,6 +1031,7 @@ function DeviceInventoryView() {
                   label="API Token"
                   field="api_token"
                   editingDevice={editingDevice}
+                  openedDevice={openedDevice}
                   revealedSecrets={revealedSecrets}
                   pendingClear={pendingClearSecrets.includes('api_token')}
                   onChange={editSecret('api_token')}
@@ -1300,6 +1311,7 @@ function DeviceSecretField({
   label,
   field,
   editingDevice,
+  openedDevice,
   revealedSecrets,
   onChange,
   onReveal,
@@ -1313,6 +1325,8 @@ function DeviceSecretField({
   label: string;
   field: string;
   editingDevice: Partial<DeviceRecord>;
+  /** The device as the editor opened it - did it HOLD this credential? */
+  openedDevice: Partial<DeviceRecord>;
   revealedSecrets: Record<string, string>;
   onChange: (value: string) => void;
   onReveal: (field: string) => void;
@@ -1329,7 +1343,17 @@ function DeviceSecretField({
 }) {
   const revealed = revealedSecrets[field];
   const stored = (editingDevice as Record<string, unknown>)[field];
-  const masked = isMaskedSecret(stored, Boolean(revealed));
+  const masked = isMaskedSecret(stored, revealed !== undefined);
+  // A field the operator EMPTIED on a device that held this credential still
+  // holds it: an empty value means "leave unchanged" on save. So it reads
+  // "Unchanged" and keeps its Clear control - the path every operator who
+  // cannot Reveal takes when they delete the mask. A pending Clear is the
+  // exception: that save does remove it.
+  const keptAsIs =
+    !pendingClear &&
+    stored === '' &&
+    revealed === undefined &&
+    hasStoredCredential((openedDevice as Record<string, unknown>)[field]);
   // The server masks every credential it HOLDS and leaves an empty string
   // for a field it does not, so a non-empty value means there is one.
   //
@@ -1341,7 +1365,7 @@ function DeviceSecretField({
   // the form's own value is '' (the Clear emptied it) while the field shows
   // the revealed credential - and the Clear control vanished until the
   // editor was reopened.
-  const hasStored = revealed !== undefined || hasStoredCredential(stored);
+  const hasStored = revealed !== undefined || hasStoredCredential(stored) || keptAsIs;
   return (
     <div>
       <Field
@@ -1399,7 +1423,7 @@ function DeviceSecretField({
           placeholder={
             pendingClear
               ? 'Removed when you save'
-              : placeholder ?? (masked || revealed === '' ? 'Unchanged' : '')
+              : placeholder ?? (masked || revealed === '' || keptAsIs ? 'Unchanged' : '')
           }
           autoComplete="new-password"
           className="w-full rounded-md border border-border bg-bg-panel px-3 py-2 text-xs font-mono text-text"

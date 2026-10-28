@@ -190,3 +190,45 @@ test('a device card offers one Edit control', async ({ page }) => {
   await page.goto('/admin/v2/devices');
   await expect(dataRow(page, 'fw-a').getByRole('button', { name: /^Edit/ })).toHaveCount(1);
 });
+
+// Deleting the mask of a stored credential WITHOUT revealing it - the path
+// every operator takes, since Reveal is admin-only. The save sends '' and the
+// server leaves the credential in place, so the field must say so and keep
+// its Clear control (it showed an empty password box, and Clear vanished).
+test('deleting a stored mask reads Unchanged, keeps Clear, and saves no clear', async ({ page }) => {
+  const puts: Array<Record<string, unknown>> = [];
+  await installApiMocks(page, [
+    { match: (url) => url.pathname === '/admin/api/devices', method: 'GET', body: devices() },
+    {
+      match: (url) => url.pathname === '/admin/api/devices/1',
+      method: 'PUT',
+      onRequest: (request) => {
+        const body = request.postDataJSON();
+        puts.push(body);
+        return body;
+      },
+    },
+  ]);
+
+  await page.goto('/admin/v2/devices');
+  await openEditor(page, 'fw-a');
+  await page.getByRole('tab', { name: 'SSH & API Keys' }).click();
+  const input = page.getByLabel('API Token');
+  const field = page.locator('div', { has: page.getByText('API Token', { exact: true }) }).last();
+
+  await input.fill('');
+  await expect(input).toHaveAttribute('placeholder', 'Unchanged');
+  await expect(field.getByRole('button', { name: 'Clear' })).toBeVisible();
+
+  // Clear, then type, then delete: the typed value withdrew the Clear, so the
+  // emptied field is "Unchanged" again rather than "Removed when you save".
+  await clearApiToken(page);
+  await expect(input).toHaveAttribute('placeholder', 'Removed when you save');
+  await input.fill('x');
+  await input.fill('');
+  await expect(input).toHaveAttribute('placeholder', 'Unchanged');
+
+  await page.getByRole('button', { name: 'Save Device' }).click();
+  await expect.poll(() => puts.length).toBe(1);
+  expect('clear_secrets' in puts[0]).toBe(false);
+});

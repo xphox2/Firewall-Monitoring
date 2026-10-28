@@ -1,7 +1,7 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
-## [0.11.460] - 2026-10-28
+## [0.11.460] - 2026-10-27
 
 ### Fixed — An emptied revealed credential turned back into a password box
 
@@ -9,6 +9,11 @@ All notable changes to this project are documented in this file.
   it back to a password box with no placeholder, so it looked as if nothing
   was stored. An emptied field leaves the stored credential as it is; it now
   stays a plain field and says **Unchanged**.
+- The same was true without a reveal: deleting the `********` of a stored
+  credential (the path every operator takes, since revealing is admin-only)
+  left an empty password box with no hint, and the **Clear** control
+  vanished. It now reads **Unchanged** and keeps its Clear control, because the
+  save leaves that credential in place.
 
 ### Fixed — The device card on a phone showed Edit twice
 
