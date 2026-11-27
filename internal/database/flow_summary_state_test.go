@@ -87,7 +87,8 @@ func TestFlowSummary_ProgressReadFailureDoesNothing(t *testing.T) {
 
 // TestFlowSummary_UnparseableWatermarkIsAnError: garbage in the watermark is
 // not zero. A blank fill marker IS zero — the summariser stores "" itself when
-// it restarts a backfill — and the next pass must simply rebuild.
+// it restarts a backfill — and so is an unparseable one: both only make the
+// tier rebuild, where failing would stall it until someone edited the setting.
 func TestFlowSummary_UnparseableWatermarkIsAnError(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	useSummaryClock(t)
@@ -115,9 +116,14 @@ func TestFlowSummary_UnparseableWatermarkIsAnError(t *testing.T) {
 	if err := d.UpsertSetting(&models.SystemSetting{Key: flowSummaryWatermarkKeyPrefix + "1h", Value: "12", Category: "system", Type: "number"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := d.summaryProgress("1h"); !errors.Is(err, errSummarySettings) {
-		t.Fatalf("fill marker \"yesterday\": err = %v, want a settings error", err)
+	if _, filled, err := d.summaryProgress("1h"); err != nil || !filled.IsZero() {
+		t.Fatalf("fill marker \"yesterday\": filled=%v err=%v, want never-filled and no error", filled, err)
 	}
+	d.RunFlowSummaryCycle()
+	if st := summaryState(t, d).Tiers["1h"]; st.LastErrorClass != "" || !st.CaughtUp {
+		t.Fatalf("an unparseable fill marker stalled the tier instead of rebuilding it: %+v", st)
+	}
+	assertBucketsAgree(t, d, base, 4, "after an unparseable fill marker")
 }
 
 // TestFlowSummary_UnreadableStampFailsTheScan: a source row whose timestamp
@@ -368,6 +374,9 @@ func TestFlowSummaryHealth_Evaluation(t *testing.T) {
 		if v := h.Tiers["1h"].Verdict; v != FlowSummaryOK {
 			t.Fatalf("threshold %d, healthy: verdict = %q, want ok", minutes, v)
 		}
+		if h.LongWindowsLive {
+			t.Fatal("a built summary is reported as read live")
+		}
 	}
 
 	// Fail the hourly tier for two hours.
@@ -406,6 +415,17 @@ func TestFlowSummaryHealth_Evaluation(t *testing.T) {
 	flowSummarySettingsHook = nil
 
 	stalled := d.EvaluateFlowSummaryHealth(ctx, *now, 60, start)
+	// The hourly tier fails its dirty scan but its history is built, so the
+	// summary is still what long windows are served from...
+	if stalled.LongWindowsLive {
+		t.Fatal("a stalled but built summary is reported as read live")
+	}
+	// ...until ANY tier's fill marker falls behind: the read path is
+	// all-or-nothing, whichever tier the alert is about.
+	d.clearSummaryFillMarker("1h")
+	if !d.EvaluateFlowSummaryHealth(ctx, *now, 60, start).LongWindowsLive {
+		t.Fatal("with a tier's history incomplete, long windows are not reported as read live")
+	}
 	if err := d.SaveFlowSummaryHealth(ctx, stalled); err != nil {
 		t.Fatal(err)
 	}

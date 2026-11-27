@@ -116,11 +116,18 @@
     // Flow summary status line: shown when the pre-aggregate behind the long
     // windows is stalled, failing or rebuilding — the reason a 7-day window
     // can be slow or partial, which the page could not say before. Hidden
-    // when it is healthy. Once per page visit, like the line above.
+    // when it is healthy. Loaded with the page and again, at most every five
+    // minutes, whenever the statistics reload: a tab left open must still
+    // learn that the summary stalled or the poller stopped reporting.
+    var summaryStatusAt = 0;
+    function refreshSummaryStatus() {
+        if (Date.now() - summaryStatusAt >= 300000) loadSummaryStatus();
+    }
     function loadSummaryStatus() {
         var el = document.getElementById('flows-summary-status');
         var AC = window.AdminCommon;
         if (!el || !AC || !AC.apiFetch) return;
+        summaryStatusAt = Date.now();
         AC.apiFetch('/admin/api/flows/summary/status').then(function(result) {
             var text = AC.flowSummaryStatusText(result && result.data);
             el.textContent = text;
@@ -637,6 +644,7 @@
         var AC = window.AdminCommon;
         if (!AC || !AC.apiFetch) return;
         stopStatsLoad();
+        refreshSummaryStatus();
         var gen = ++statsGen;
         var url = statsURL();
         hideLoadError();

@@ -35,10 +35,16 @@ var (
 	flowSummaryAlertClock   = time.Now
 )
 
-// flowSummaryTierNames are the summary's tiers and how an alert names them.
-var flowSummaryTierNames = []struct{ interval, name string }{
-	{"1h", "hourly"},
-	{"1d", "daily"},
+// flowSummaryTierName is how an alert names a tier. The tiers themselves come
+// from the database package, so a tier added there is alerted on here.
+func flowSummaryTierName(interval string) string {
+	switch interval {
+	case "1h":
+		return "hourly"
+	case "1d":
+		return "daily"
+	}
+	return interval
 }
 
 // checkFlowSummaryHealth evaluates, stores and alerts.
@@ -65,7 +71,7 @@ func (p *Poller) checkFlowSummaryHealth() {
 	if readErr != nil {
 		return
 	}
-	p.alertManager.CheckServerConditions(flowSummaryConditions(h, minutes))
+	p.alertManager.CheckServerConditions(flowSummaryConditions(h, minutes, flowSummaryProcessStart))
 }
 
 // flowSummaryStallMinutes reads the threshold; absent means the default.
@@ -91,41 +97,45 @@ func flowSummaryStallMinutes(ctx context.Context, db *database.Database) (int, e
 // neither fired nor resolved: "unknown" (the record is unreadable, or no cycle
 // has run since this process started) and "failing" (the last pass failed, but
 // not for long enough yet) both leave an open alert open.
-func flowSummaryConditions(h database.FlowSummaryHealth, minutes int) []alerts.ServerCondition {
+func flowSummaryConditions(h database.FlowSummaryHealth, minutes int, processStart time.Time) []alerts.ServerCondition {
 	var out []alerts.ServerCondition
-	for _, t := range flowSummaryTierNames {
-		th, ok := h.Tiers[t.interval]
+	for _, interval := range database.FlowSummaryTierIntervals() {
+		th, ok := h.Tiers[interval]
 		if !ok {
 			continue
 		}
+		name := flowSummaryTierName(interval)
 		c := alerts.ServerCondition{
 			Type:     models.AlertTypeFlowSummaryStalled,
-			Key:      "flow_summary_stalled_" + t.interval,
-			Metric:   "flow_summary_" + t.interval,
-			Fields:   map[string]string{"tier": t.interval},
-			Recovery: fmt.Sprintf("The %s flow summary is updating again.", t.name),
+			Key:      "flow_summary_stalled_" + interval,
+			Metric:   "flow_summary_" + interval,
+			Fields:   map[string]string{"tier": interval},
+			Recovery: fmt.Sprintf("The %s flow summary is updating again.", name),
 		}
 		switch {
 		case minutes <= 0:
 			// Alerting is off: resolve whatever is open, without claiming
 			// the tier recovered.
-			c.Recovery = fmt.Sprintf("Alerting on the %s flow summary is switched off (threshold 0).", t.name)
+			c.Recovery = fmt.Sprintf("Alerting on the %s flow summary is switched off (threshold 0).", name)
 		case th.Verdict == database.FlowSummaryStalled:
 			c.Breached = true
-			since := "since the poller started"
-			if !th.LastOKAt.IsZero() {
+			// "No success since" is counted from this poller's start at the
+			// earliest (the verdict's rule), so the message must not quote an
+			// older time as if the alert had been waiting since then.
+			since := "since the poller started at " + processStart.UTC().Format("2006-01-02 15:04 UTC")
+			if th.LastOKAt.After(processStart) {
 				since = "since " + th.LastOKAt.UTC().Format("2006-01-02 15:04 UTC")
+			} else if !th.LastOKAt.IsZero() {
+				since += " (last success " + th.LastOKAt.UTC().Format("2006-01-02 15:04 UTC") + ")"
 			}
-			// What a reader of the Flows page gets depends on the tier: one
-			// that is not caught up sends long windows to the live read; one
-			// that fails on a single bucket is still served, with that
-			// bucket's figures out of date.
+			// What a reader of the Flows page gets is a property of the whole
+			// summary, not of this tier (see FlowSummaryHealth.LongWindowsLive).
 			effect := "Long windows on the Flows page still use the summary, with figures that may be out of date."
-			if !th.CaughtUp {
+			if h.LongWindowsLive {
 				effect = "Long windows on the Flows page are read live meanwhile: slow, and possibly partial."
 			}
 			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). %s "+
-				"See the poller log for \"Flow summary:\" lines.", t.name, since, minutes, effect)
+				"See the poller log for \"Flow summary:\" lines.", name, since, minutes, effect)
 			if th.LastErrorClass != "" {
 				c.Message += " Last failure: " + th.LastErrorClass + "."
 				c.Fields["error_class"] = th.LastErrorClass

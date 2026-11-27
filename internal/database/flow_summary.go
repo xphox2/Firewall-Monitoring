@@ -476,8 +476,15 @@ func (d *Database) summarySettings(ctx context.Context, keys ...string) (map[str
 
 // summaryProgress reads a tier's watermark and fill marker for a pass. An
 // absent key is zero, and so is a blank one — clearSummaryFillMarker stores ""
-// on purpose. Anything else that does not parse is an error: guessing zero is
-// how a marker gets advanced past work nobody did.
+// on purpose.
+//
+// The two markers treat garbage differently, because zero means different
+// things. A watermark that does not parse is an ERROR: zero there is the
+// first-pass arm, which advances it past work nobody did. A fill marker that
+// does not parse is "never filled": that only makes the tier rebuild its range
+// (with the read path off meanwhile), which is exactly what a marker nobody
+// can read calls for — and failing instead would stall the tier until someone
+// edited the setting by hand.
 func (d *Database) summaryProgress(interval string) (watermark int64, filled time.Time, err error) {
 	wmKey, fillKey := flowSummaryWatermarkKeyPrefix+interval, flowSummaryFillKeyPrefix+interval
 	vals, err := d.summarySettings(context.Background(), wmKey, fillKey)
@@ -490,11 +497,11 @@ func (d *Database) summaryProgress(interval string) (watermark int64, filled tim
 		}
 	}
 	if v := strings.TrimSpace(vals[fillKey]); v != "" {
-		t, perr := time.Parse(time.RFC3339, v)
-		if perr != nil {
-			return 0, time.Time{}, fmt.Errorf("%w: fill marker %q is not a time", errSummarySettings, v)
+		if t, perr := time.Parse(time.RFC3339, v); perr == nil {
+			filled = t.UTC()
+		} else {
+			log.Printf("Flow summary: %s = %q is not a time; rebuilding the %s tier's range", fillKey, v, interval)
 		}
-		filled = t.UTC()
 	}
 	return watermark, filled, nil
 }

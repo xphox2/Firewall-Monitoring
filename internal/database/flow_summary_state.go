@@ -45,9 +45,6 @@ const (
 	FlowSummaryFailing    = "failing"     // the latest pass failed, more recently than that
 	FlowSummaryCatchingUp = "catching_up" // passes succeed; history is still being built
 	FlowSummaryOK         = "ok"
-	// FlowSummaryStale is not a verdict: it is what a reader reports when the
-	// stored verdicts are too old to trust (see GetFlowSummaryHealth).
-	FlowSummaryStale = "stale"
 )
 
 // Error classes recorded for a failed pass. A class, never the error text: the
@@ -321,8 +318,17 @@ type FlowSummaryHealth struct {
 	// Stale is set by the reader, not stored: the evaluation is older than
 	// flowSummaryHealthMaxAge, so the poller is stopped or wedged and the
 	// verdicts below describe the past.
-	Stale bool                             `json:"stale"`
-	Tiers map[string]FlowSummaryTierHealth `json:"tiers"`
+	Stale bool `json:"stale"`
+	// LongWindowsLive: at the evaluation, windows the summary would serve were
+	// being read live instead (summaryBackfillComplete was false).
+	//
+	// One flag for the whole summary, NOT derived from a tier's CaughtUp: the
+	// read path is all-or-nothing across tiers. A caught-up hourly tier that
+	// fails on one bucket is still served — unless the daily tier is behind,
+	// in which case nothing is. Judging "is it read live?" per tier told the
+	// operator the opposite of what the page was doing in exactly that case.
+	LongWindowsLive bool                             `json:"long_windows_live"`
+	Tiers           map[string]FlowSummaryTierHealth `json:"tiers"`
 }
 
 // FlowSummaryTierHealth is one tier's verdict and what the banner needs to
@@ -349,6 +355,7 @@ func (d *Database) EvaluateFlowSummaryHealth(ctx context.Context, now time.Time,
 	}
 	threshold := time.Duration(thresholdMinutes) * time.Minute
 	h := FlowSummaryHealth{EvaluatedAt: now.UTC(), Tiers: map[string]FlowSummaryTierHealth{}}
+	h.LongWindowsLive = !d.WithContext(ctx).summaryBackfillComplete()
 
 	st, _, stErr := d.flowSummaryState(ctx)
 	rollupsExist, probeErr := d.flowRollupsExist(ctx)
@@ -419,4 +426,15 @@ func (d *Database) GetFlowSummaryHealth(ctx context.Context) (FlowSummaryHealth,
 	}
 	h.Stale = !h.EvaluatedAt.IsZero() && flowSummaryNow().Sub(h.EvaluatedAt) > flowSummaryHealthMaxAge
 	return h, nil
+}
+
+// FlowSummaryTierIntervals lists the summary's tiers ("1h", "1d"), so a caller
+// that alerts or reports per tier cannot fall out of step with the tiers that
+// are actually summarised.
+func FlowSummaryTierIntervals() []string {
+	out := make([]string, 0, len(flowSummaryTiers))
+	for _, t := range flowSummaryTiers {
+		out = append(out, t.interval)
+	}
+	return out
 }

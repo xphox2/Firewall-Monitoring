@@ -9,8 +9,9 @@ All notable changes to this project are documented in this file.
   stopped updating for a month on one install and the only sign was a log
   line. The poller now records what each summary pass did and judges each
   tier every five minutes: **ok**, **failing** (the last pass failed),
-  **rebuilding** (passes succeed, history is still being built) or
-  **stalled** (no successful pass for the threshold).
+  **rebuilding** (`catching_up`: passes succeed, history is still being
+  built), **stalled** (no successful pass for the threshold) or **unknown**
+  (it cannot be judged yet — for example right after a restart).
 - **Flows page**: a status line appears, in both consoles, when a tier is not
   healthy — for example "The hourly flow summary has not updated since …
   Long ranges are read live meanwhile and may be slow or incomplete." It is
@@ -42,8 +43,9 @@ All notable changes to this project are documented in this file.
   newest id as done. Every row the walk had not yet summarised was passed
   over, and nothing would revisit it.
 - A pass that cannot read its markers now does nothing and reports the
-  failure. A marker that holds something unparseable is an error too, rather
-  than zero.
+  failure. A watermark that holds something unparseable is an error too,
+  rather than zero. (An unparseable fill marker still means "never filled":
+  that only makes the tier rebuild.)
 - A source row whose timestamp cannot be read now fails the changed-rows scan
   instead of being dropped from it.
 - A panic inside one tier's pass is now recorded as a failed pass, and the

@@ -288,6 +288,7 @@ export interface FlowSummaryTierHealth {
 export interface FlowSummaryHealth {
   evaluated_at?: string;
   stale?: boolean;
+  long_windows_live?: boolean;
   tiers?: Record<string, FlowSummaryTierHealth>;
 }
 
@@ -300,9 +301,9 @@ function summaryWhen(ts?: string): string {
 /**
  * One line describing the flow summary's health, or '' when there is nothing
  * to say (every tier healthy, or not judged yet). The worst tier speaks:
- * stalled, then failing, then rebuilding. "Read live" is only claimed for a
- * tier that is not caught up — a tier can fail every pass on one bucket while
- * the rest of the summary is still served. Mirrors AC.flowSummaryStatusText in
+ * stalled, then failing, then rebuilding. Whether long ranges are read live is
+ * a property of the whole summary (long_windows_live), not of the tier that
+ * speaks. Mirrors AC.flowSummaryStatusText in
  * the classic console.
  */
 export function flowSummaryStatusText(v?: FlowSummaryHealth | null): string {
@@ -323,9 +324,11 @@ export function flowSummaryStatusText(v?: FlowSummaryHealth | null): string {
     }
   }
   if (!worst) return '';
-  const live = worst.caught_up
-    ? ''
-    : ' Long ranges are read live meanwhile and may be slow or incomplete.';
+  const live = v.long_windows_live
+    ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
+    : worst.verdict === 'catching_up'
+      ? ''
+      : ' Long ranges may show out-of-date figures.';
   const ok = summaryWhen(worst.last_ok_at);
   switch (worst.verdict) {
     case 'stalled':

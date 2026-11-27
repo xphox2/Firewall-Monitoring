@@ -739,9 +739,10 @@
     // page status line; '' when there is nothing to say (every tier healthy,
     // or not judged yet). v is GET /admin/api/flows/summary/status.
     //
-    // The worst tier speaks: stalled, then failing, then rebuilding. "Read
-    // live" is only claimed for a tier that is not caught up — a tier can fail
-    // every pass on one bucket while the rest of the summary is still served.
+    // The worst tier speaks: stalled, then failing, then rebuilding. Whether
+    // long ranges are read live is a property of the WHOLE summary
+    // (long_windows_live), not of the tier that speaks: a tier can fail every
+    // pass on one bucket while the summary is still served.
     function flowSummaryStatusText(v) {
         if (!v || !v.tiers) return '';
         function when(ts) {
@@ -761,7 +762,8 @@
             if (t && rank[t.verdict] && (!worst || rank[t.verdict] > rank[worst.verdict])) { worst = t; worstName = names[k]; }
         });
         if (!worst) return '';
-        var live = worst.caught_up ? '' : ' Long ranges are read live meanwhile and may be slow or incomplete.';
+        var live = v.long_windows_live ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
+            : (worst.verdict === 'catching_up' ? '' : ' Long ranges may show out-of-date figures.');
         var ok = when(worst.last_ok_at);
         switch (worst.verdict) {
             case 'stalled':

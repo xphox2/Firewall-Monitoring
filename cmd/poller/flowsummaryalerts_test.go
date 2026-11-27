@@ -205,45 +205,65 @@ func TestCheckServerHealth_RunsTheFlowSummaryCheck(t *testing.T) {
 	}
 }
 
-// TestFlowSummaryConditions_MessageSaysWhatTheReaderGets: a stalled tier that
-// is not caught up sends long windows to the live read; one that fails on a
-// single bucket is still served, stale. The alert must not claim the first
-// for the second, and it names the kind of failure. Switching alerting off
-// resolves without claiming a recovery.
+// TestFlowSummaryConditions_MessageSaysWhatTheReaderGets: whether long windows
+// are read live is a property of the whole summary, not of the stalled tier —
+// a caught-up hourly tier is NOT served while the daily tier is behind. The
+// message also names the kind of failure, does not quote a "since" older than
+// this process as if the alert had waited that long, and switching alerting
+// off resolves without claiming a recovery.
 func TestFlowSummaryConditions_MessageSaysWhatTheReaderGets(t *testing.T) {
+	start := time.Date(2026, 11, 27, 8, 0, 0, 0, time.UTC)
 	lastOK := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
-	h := database.FlowSummaryHealth{Tiers: map[string]database.FlowSummaryTierHealth{
-		"1h": {Verdict: database.FlowSummaryStalled, LastOKAt: lastOK, CaughtUp: true, LastErrorClass: "timeout"},
-		"1d": {Verdict: database.FlowSummaryStalled, CaughtUp: false},
-	}}
-	byTier := map[string]alerts.ServerCondition{}
-	for _, c := range flowSummaryConditions(h, 60) {
-		byTier[c.Fields["tier"]] = c
+	tiers := func(live bool, hourlyOK time.Time) database.FlowSummaryHealth {
+		return database.FlowSummaryHealth{LongWindowsLive: live, Tiers: map[string]database.FlowSummaryTierHealth{
+			"1h": {Verdict: database.FlowSummaryStalled, LastOKAt: hourlyOK, CaughtUp: true, LastErrorClass: "timeout"},
+			"1d": {Verdict: database.FlowSummaryCatchingUp, CaughtUp: false},
+		}}
 	}
-	hourly, daily := byTier["1h"], byTier["1d"]
-	if !hourly.Breached || !daily.Breached {
-		t.Fatalf("stalled tiers not breached: %+v / %+v", hourly, daily)
+	hourlyOf := func(h database.FlowSummaryHealth, minutes int) alerts.ServerCondition {
+		t.Helper()
+		conds := flowSummaryConditions(h, minutes, start)
+		if len(conds) != len(database.FlowSummaryTierIntervals()) {
+			t.Fatalf("%d condition(s) for %d tiers", len(conds), len(database.FlowSummaryTierIntervals()))
+		}
+		for _, c := range conds {
+			if c.Fields["tier"] == "1h" {
+				return c
+			}
+		}
+		t.Fatal("no hourly condition")
+		return alerts.ServerCondition{}
+	}
+
+	served := hourlyOf(tiers(false, lastOK), 60)
+	if !served.Breached || served.Fields["error_class"] != "timeout" {
+		t.Fatalf("stalled hourly tier: %+v", served)
 	}
 	for _, want := range []string{"hourly", "since 2026-11-27 09:00 UTC", "still use the summary", "Last failure: timeout."} {
-		if !strings.Contains(hourly.Message, want) {
-			t.Errorf("hourly message lacks %q: %s", want, hourly.Message)
+		if !strings.Contains(served.Message, want) {
+			t.Errorf("message lacks %q: %s", want, served.Message)
 		}
 	}
-	if strings.Contains(hourly.Message, "read live") {
-		t.Errorf("a caught-up tier is said to be read live: %s", hourly.Message)
+	if strings.Contains(served.Message, "read live") {
+		t.Errorf("a served summary is said to be read live: %s", served.Message)
 	}
-	if hourly.Fields["error_class"] != "timeout" {
-		t.Errorf("error_class field = %q", hourly.Fields["error_class"])
+
+	// The same caught-up hourly tier, with the daily tier behind.
+	live := hourlyOf(tiers(true, lastOK), 60)
+	if !strings.Contains(live.Message, "read live") || strings.Contains(live.Message, "still use the summary") {
+		t.Errorf("with the summary bypassed the message says: %s", live.Message)
 	}
-	for _, want := range []string{"daily", "since the poller started", "read live"} {
-		if !strings.Contains(daily.Message, want) {
-			t.Errorf("daily message lacks %q: %s", want, daily.Message)
+
+	// Last success before this process started.
+	old := hourlyOf(tiers(false, start.Add(-5*time.Hour)), 60)
+	for _, want := range []string{"since the poller started at 2026-11-27 08:00 UTC", "(last success 2026-11-27 03:00 UTC)"} {
+		if !strings.Contains(old.Message, want) {
+			t.Errorf("message lacks %q: %s", want, old.Message)
 		}
 	}
 
-	for _, c := range flowSummaryConditions(h, 0) {
-		if c.Breached || !strings.Contains(c.Recovery, "switched off") {
-			t.Errorf("threshold 0: breached=%v recovery=%q", c.Breached, c.Recovery)
-		}
+	off := hourlyOf(tiers(false, lastOK), 0)
+	if off.Breached || !strings.Contains(off.Recovery, "switched off") {
+		t.Errorf("threshold 0: breached=%v recovery=%q", off.Breached, off.Recovery)
 	}
 }
