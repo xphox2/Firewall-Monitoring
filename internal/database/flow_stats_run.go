@@ -183,10 +183,14 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	return d.GetFlowStatsOpts(hours, filter, FlowStatsOptions{})
 }
 
+// flowStatsNow is the clock a request takes its window from; a variable so a
+// test can read the same window twice.
+var flowStatsNow = time.Now
+
 // GetFlowStatsOpts is GetFlowStats with progress reporting and, for the
 // streamed endpoint, a budget scaled to the window.
 func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts FlowStatsOptions) (*FlowStatsResult, error) {
-	now := time.Now()
+	now := flowStatsNow()
 	cutoff := now.Add(-time.Duration(hours) * time.Hour)
 	parent := d.db.Statement.Context
 	// Read before anything is pinned, like useSummary: it queries through d.

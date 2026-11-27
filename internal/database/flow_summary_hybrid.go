@@ -225,7 +225,8 @@ func (d *Database) flowHybridPlan(ctx context.Context, h *gorm.DB, cutoff time.T
 			return refuse(flowHybridRefusedProbe)
 		}
 	}
-	_, newest, ok, err := tierTimeBoundsOn(h, []string{"5m"})
+	newest, ok, err := aggregateTimestamp(
+		h.Session(&gorm.Session{}).Model(&models.FlowRollup{}).Where("interval_type = ?", "5m"), "MAX(timestamp)")
 	if err != nil {
 		return refuse(flowHybridRefusedProbe)
 	}
@@ -268,14 +269,22 @@ const flowHybridCubeColumns = "timestamp, device_id, protocol, app_category, dir
 // edge rollup rows and middle summary rows under the cube's column names, so
 // every panel runs the SQL it runs against flow_rollups.
 //
-// edge and middle are complete queries (filters applied, including the probe
-// filter — a filter missing from one arm would serve other devices' traffic
-// for that part of the window). The derived-table form of the union is the
-// one flowStatsMaterialized already uses: a parenthesised compound does not
-// parse on SQLite.
-func flowHybridCube(session func() *gorm.DB, d Dialect, edge, middle *gorm.DB) *gorm.DB {
-	union := session().Raw("SELECT * FROM (?) AS hybrid_edge UNION ALL SELECT * FROM (?) AS hybrid_middle",
-		edge.Select(flowHybridCubeColumns+", sampling_rate_avg"),
+// head, tail and middle are complete queries (filters applied, including the
+// probe filter — a filter missing from one arm would serve other devices'
+// traffic for that part of the window). The derived-table form of the union
+// is the one flowStatsMaterialized already uses: a parenthesised compound does
+// not parse on SQLite.
+//
+// Head and tail are separate arms rather than one arm with
+// `timestamp < headEnd OR timestamp >= tailStart`. Each is then a plain range
+// on (interval_type, timestamp); the OR form is as fast only while the planner
+// chooses to OR two bitmap scans, and as slow as the whole live read when it
+// does not.
+func flowHybridCube(session func() *gorm.DB, d Dialect, head, tail, middle *gorm.DB) *gorm.DB {
+	edgeCols := flowHybridCubeColumns + ", sampling_rate_avg"
+	union := session().Raw("SELECT * FROM (?) AS hybrid_head UNION ALL SELECT * FROM (?) AS hybrid_tail "+
+		"UNION ALL SELECT * FROM (?) AS hybrid_middle",
+		head.Select(edgeCols), tail.Select(edgeCols),
 		middle.Select(flowHybridCubeColumns+", "+nullNumeric(d)+" AS sampling_rate_avg"))
 	return session().Table("(?) AS flow_hybrid", union)
 }
@@ -320,11 +329,14 @@ func flowSummaryTopDimensionNamed(d Dialect, name string) (flowSummaryTopDimensi
 // the same shape with the writer's own value encoding and row predicate. The
 // summary's top-N readers then run unchanged, and the edges contribute EXACT
 // totals to the merge instead of a second truncated list.
-func flowHybridTops(session func() *gorm.DB, dim flowSummaryTopDimension, edge, middle *gorm.DB) *gorm.DB {
+func flowHybridTops(session func() *gorm.DB, dim flowSummaryTopDimension, head, tail, middle *gorm.DB) *gorm.DB {
 	const cols = "dimension, scope_local, value, bytes_sum, packets_sum, flow_count"
-	union := session().Raw("SELECT * FROM (?) AS hybrid_edge UNION ALL SELECT * FROM (?) AS hybrid_middle",
-		edge.Where(dim.skip).Select("? AS dimension, scope_local, "+dim.expr+" AS value, bytes_sum, packets_sum, flow_count", dim.name),
-		middle.Where("dimension = ?", dim.name).Select(cols))
+	edge := func(q *gorm.DB) *gorm.DB {
+		return q.Where(dim.skip).Select("? AS dimension, scope_local, "+dim.expr+" AS value, bytes_sum, packets_sum, flow_count", dim.name)
+	}
+	union := session().Raw("SELECT * FROM (?) AS hybrid_head UNION ALL SELECT * FROM (?) AS hybrid_tail "+
+		"UNION ALL SELECT * FROM (?) AS hybrid_middle",
+		edge(head), edge(tail), middle.Where("dimension = ?", dim.name).Select(cols))
 	return session().Table("(?) AS flow_hybrid_tops", union)
 }
 

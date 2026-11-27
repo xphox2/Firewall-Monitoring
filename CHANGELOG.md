@@ -36,8 +36,9 @@ All notable changes to this project are documented in this file.
   - The unique sources / destinations tiles are still computed from the
     5-minute rows. They are now the slowest thing on the page (several
     seconds); if one runs out of time, that tile alone is marked partial.
-- Not used when a protocol, application, direction, country, source or event
-  filter is set: those requests are read as before.
+- Not used when a filter other than device, site or probe is set (protocol,
+  application, direction, country, source, event, address, port, network):
+  those requests are read as before.
 - `docs/OPERATIONS.md` (Failure modes) lists the reasons a window is read
   live.
 
@@ -47,9 +48,9 @@ All notable changes to this project are documented in this file.
   the live read's — every panel and flag — across window sizes, device and
   probe filters, rows stamped exactly on both boundaries, rows the summary
   has not seen, a bucket the summariser failed on, and a row committed while
-  the request is running. Thirteen reasons for refusing are each shown to end
-  in the live read, including its progress steps and a single read of the raw
-  samples.
+  the request is running. Thirteen reasons for refusing are each shown to
+  return the live read's response; one of them is also checked for the same
+  progress steps and a single read of the raw samples.
 - A PostgreSQL integration test runs the hybrid read and, for the first time,
   the summary read through the statistics call on PostgreSQL.
 - The top-N readers and the summary's writer now share one definition of how

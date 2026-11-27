@@ -15,8 +15,8 @@ import (
 // the live response — every panel, every flag — and a refused request must be
 // the live read itself.
 
-// hybridFixture is 30 hours of 5-minute rollups ending at the last full hour,
-// with the summary built over them.
+// hybridFixture is 31 hours of 5-minute rollups, the newest hour being the one
+// two hours before the current hour, with the summary built over them.
 type hybridFixture struct {
 	d *Database
 	// newest is the hour of the newest rollup row; hour(n) is n hours before it.
@@ -102,11 +102,30 @@ func (f hybridFixture) build(t *testing.T) {
 	}
 }
 
-// useHybridKnobs restores every package-level knob and hook these tests move.
+// useHybridKnobs restores every package-level knob and hook these tests move,
+// and FREEZES the request clock for the test.
+//
+// Every comparison here reads the same window twice. Each read takes its
+// cutoff from the clock, and the fixture has a row on every 5-minute stamp —
+// so with a running clock, a 5-minute mark passing between the two reads puts
+// one row in the first window and not the second, and the comparison fails
+// for a reason that has nothing to do with the code.
 func useHybridKnobs(t *testing.T) {
 	t.Helper()
 	enabled, tail, chunk, topN := flowHybridEnabled, flowHybridMaxTail, flowSummaryDirtyScanChunk, flowSummaryTopN
+	clock, frozen := flowStatsNow, time.Now().UTC()
+	flowStatsNow = func() time.Time { return frozen }
+	// And pins the process zone to UTC. SQLite compares timestamps as text,
+	// and the summariser cuts its buckets with UTC bounds, so on SQLite the
+	// summary — and therefore anything compared against it — is only right
+	// in UTC. That is a property of the unit lane, which CI runs in UTC, not
+	// of PostgreSQL, which compares instants; without the pin these tests
+	// would fail on a laptop east of Greenwich for a reason that is not theirs.
+	zone := time.Local
+	time.Local = time.UTC
 	t.Cleanup(func() {
+		time.Local = zone
+		flowStatsNow = clock
 		flowHybridEnabled, flowHybridMaxTail, flowSummaryDirtyScanChunk, flowSummaryTopN = enabled, tail, chunk, topN
 		flowStatsBeforeRawHook, flowHybridPlanHook, flowStatsJobHook = nil, nil, nil
 		flowSummarySettingsHook, flowSummaryBucketHook = nil, nil
@@ -195,12 +214,10 @@ func TestFlowHybrid_EqualsLive(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	useHybridKnobs(t)
 	f := newHybridFixture(t, d)
-	// A coarser copy of traffic the hourly rows already hold.
-	day := time.Date(f.newest.Year(), f.newest.Month(), f.newest.Day(), 0, 0, 0, 0, time.UTC)
-	if f.newest.Sub(day) < 3*time.Hour {
-		day = day.Add(-24 * time.Hour)
-	}
-	if err := d.Gorm().Create(&models.FlowSummary{Timestamp: day.Add(24 * time.Hour).Add(-20 * time.Hour), IntervalType: "1d",
+	// A coarser copy of traffic the hourly rows already hold, stamped inside
+	// the middle of every window below (a real daily row sits at midnight;
+	// what matters here is only that the middle does not read the tier).
+	if err := d.Gorm().Create(&models.FlowSummary{Timestamp: f.hour(5), IntervalType: "1d",
 		DeviceID: 1, Protocol: 6, BytesSum: 987654321, PacketsSum: 1, FlowCount: 1}).Error; err != nil {
 		t.Fatalf("plant daily row: %v", err)
 	}
@@ -268,9 +285,11 @@ func TestFlowHybrid_HeldWatermarkKeepsTheBucketInTheTail(t *testing.T) {
 // TestFlowHybrid_PlansAfterTheRawRead: a rollup cycle that commits while the
 // request is running moves rows into an hour the summary has already built.
 // The plan is made after the raw read, so it sees those rows above the
-// watermark and reads their hour from the tail. Planned before the raw read
-// (the hook fires before the first query), the plan would have put that hour
-// in the middle and the rows would be in no source at all.
+// watermark and reads their hour from the tail. A plan made when the request
+// is set up — before the hook, which fires just ahead of the first query —
+// would have put that hour in the middle and the rows would be in no source
+// at all. (What this cannot tell apart is a plan made between the hook and
+// the last raw read; the code makes it in flushRollups, after all of them.)
 func TestFlowHybrid_PlansAfterTheRawRead(t *testing.T) {
 	d := NewDatabaseForTesting(t)
 	useHybridKnobs(t)
@@ -576,8 +595,9 @@ func TestFlowHybrid_UniqueTileFailureIsPartialNotDegraded(t *testing.T) {
 
 // TestFlowHybrid_TopNStaysWithinTheBound: with the per-bucket lists cut to two
 // entries the merge is visibly lossy, and it must still be the documented kind
-// of lossy — every key it shows is a real one, never shown above its true
-// total, and never short by more than the cut values of the middle buckets.
+// of lossy — every key it shows is a real one and is never shown above its
+// true total. (How far BELOW it may fall — the sum of the middle buckets' cut
+// values — is the summary read's existing bound and is not re-measured here.)
 // The edges contribute exact totals, so a value that lives only at an edge is
 // exact.
 func TestFlowHybrid_TopNStaysWithinTheBound(t *testing.T) {
@@ -600,7 +620,7 @@ func TestFlowHybrid_TopNStaysWithinTheBound(t *testing.T) {
 		t.Fatalf("served from %q (%q), want hybrid", got.ServedFrom, got.SummaryBypassReason)
 	}
 	// The true totals, with no cut anywhere.
-	cutoff := time.Now().Add(-24 * time.Hour)
+	cutoff := flowStatsNow().Add(-24 * time.Hour)
 	var truth []struct {
 		SrcAddr string
 		Total   int64

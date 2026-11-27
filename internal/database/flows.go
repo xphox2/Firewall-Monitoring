@@ -814,9 +814,18 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	hybridOn := func() bool { return run.hybrid && hybridPlan.ok }
 	hourly := hourlySummaryTier()
 	// Edge rows: the live rollup base (filters and probe filter included)
-	// narrowed to the head and the tail. timestamp > cutoff comes with the base.
-	hybridEdge := func() *gorm.DB {
-		return newSourceRollupBase().Where("(timestamp < ? OR timestamp >= ?)", hybridPlan.headEnd, hybridPlan.tailStart)
+	// narrowed to the head or the tail. timestamp > cutoff comes with the base.
+	// The bounds are UTC, exactly as summariseBucket's are: the two must cut
+	// rollup rows at the same place, or an hour's rows would be split
+	// differently between the edge and the summary bucket beside it. (On
+	// SQLite, which compares timestamps as text, that is only right when the
+	// process runs in UTC — true of the summariser too, and of the test lane.
+	// PostgreSQL compares instants.)
+	hybridHead := func() *gorm.DB {
+		return newSourceRollupBase().Where("timestamp < ?", hybridPlan.headEnd)
+	}
+	hybridTail := func() *gorm.DB {
+		return newSourceRollupBase().Where("timestamp >= ?", hybridPlan.tailStart)
 	}
 	// Middle rows of a summary table: the hourly tier only (a daily row inside
 	// the window would be a different, coarser copy of the same traffic), in
@@ -830,7 +839,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		if filter.ProbeID > 0 {
 			middle = middle.Where("device_id IN (SELECT id FROM devices WHERE probe_id = ?)", filter.ProbeID)
 		}
-		return flowHybridCube(session, d.dialect, hybridEdge(), middle)
+		return flowHybridCube(session, d.dialect, hybridHead(), hybridTail(), middle)
 	}
 	hybridTopsBase := func(dimension string) func() *gorm.DB {
 		return func() *gorm.DB {
@@ -844,7 +853,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				return session().Model(&models.FlowSummaryTop{}).Where("1 = 0")
 			}
 			middle := applySummaryDeviceFilters(hybridMiddleRange(session().Model(&models.FlowSummaryTop{})), filter)
-			return flowHybridTops(session, dim, hybridEdge(), middle)
+			return flowHybridTops(session, dim, hybridHead(), hybridTail(), middle)
 		}
 	}
 	if run.hybrid {
