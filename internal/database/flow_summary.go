@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -213,6 +215,10 @@ var flowSummaryTiers = []flowSummaryTier{
 // Returns true if it wrote anything.
 func (d *Database) RunFlowSummaryCycle() bool {
 	deadline := time.Now().Add(flowSummaryMaxCycleDuration)
+	// The health record (flow_summary_state.go): what each pass did, so a tier
+	// that stops advancing is visible to an operator and not only in the log.
+	rep := d.newSummaryReporter()
+	defer rep.flush()
 	// A reclassification that re-stamped rollups in place asks for its
 	// buckets to be recomputed (flow_summary_recompute.go).
 	d.consumeRecomputeRequest()
@@ -235,8 +241,9 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	wrote := false
 	bounds := make(map[string]tierBounds, len(ordered))
 	for _, tier := range ordered {
-		n, b, err := d.summariseTier(tier, deadline)
+		n, b, err := d.summariseTierRecovered(tier, deadline, rep)
 		bounds[tier.interval] = b
+		rep.tierDone(tier.interval, b, err)
 		if n > 0 {
 			log.Printf("Flow summary: wrote %d %s bucket(s)", n, tier.interval)
 			wrote = true
@@ -249,7 +256,7 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	// routine work: run inside the daily tier it would spend the shared
 	// deadline before the hourly backfill, stalling the hourly fill marker and
 	// switching the summary read path off for the whole rebuild.
-	if n := d.runSummaryRecompute(ordered, bounds, deadline); n > 0 {
+	if n := d.runSummaryRecompute(ordered, bounds, deadline, rep); n > 0 {
 		wrote = true
 	}
 	return wrote
@@ -438,8 +445,58 @@ func (d *Database) clearSummaryFillMarker(interval string) {
 	}
 }
 
-func (d *Database) summaryWatermark(interval string) int64 {
-	return int64(d.GetIntSetting(flowSummaryWatermarkKeyPrefix+interval, 0))
+// errSummarySettings marks a failure to READ the summariser's own progress
+// markers, as opposed to a failure in the data it summarises.
+var errSummarySettings = errors.New("flow summary settings")
+
+// flowSummarySettingsHook is a test-only injection point that fails a strict
+// read of the summariser's settings (summarySettings).
+var flowSummarySettingsHook func(keys []string) error
+
+// summarySettings reads settings and REPORTS a failed read.
+//
+// GetSettingValue cannot be used for progress markers: it returns "" for a
+// database error exactly as it does for a key that was never written, so one
+// transient error read a tier's watermark as 0. A zero watermark is the
+// first-pass arm of summariseTier — skip the dirty walk, then record the id
+// ceiling — so that single read moved the watermark past every row the walk
+// had not yet summarised, and nothing would ever revisit them.
+func (d *Database) summarySettings(ctx context.Context, keys ...string) (map[string]string, error) {
+	if flowSummarySettingsHook != nil {
+		if err := flowSummarySettingsHook(keys); err != nil {
+			return nil, fmt.Errorf("%w: %v", errSummarySettings, err)
+		}
+	}
+	vals, err := d.SettingValues(ctx, keys)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errSummarySettings, err)
+	}
+	return vals, nil
+}
+
+// summaryProgress reads a tier's watermark and fill marker for a pass. An
+// absent key is zero, and so is a blank one — clearSummaryFillMarker stores ""
+// on purpose. Anything else that does not parse is an error: guessing zero is
+// how a marker gets advanced past work nobody did.
+func (d *Database) summaryProgress(interval string) (watermark int64, filled time.Time, err error) {
+	wmKey, fillKey := flowSummaryWatermarkKeyPrefix+interval, flowSummaryFillKeyPrefix+interval
+	vals, err := d.summarySettings(context.Background(), wmKey, fillKey)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	if v := strings.TrimSpace(vals[wmKey]); v != "" {
+		if watermark, err = strconv.ParseInt(v, 10, 64); err != nil || watermark < 0 {
+			return 0, time.Time{}, fmt.Errorf("%w: watermark %q is not an id", errSummarySettings, v)
+		}
+	}
+	if v := strings.TrimSpace(vals[fillKey]); v != "" {
+		t, perr := time.Parse(time.RFC3339, v)
+		if perr != nil {
+			return 0, time.Time{}, fmt.Errorf("%w: fill marker %q is not a time", errSummarySettings, v)
+		}
+		filled = t.UTC()
+	}
+	return watermark, filled, nil
 }
 
 func (d *Database) setSummaryWatermark(interval string, id int64) {
@@ -475,9 +532,27 @@ type tierBounds struct {
 	// pre-reclassification rows (it is retried by the routine walks), so the
 	// service boundary is not removed on a cycle where either tier was unclean.
 	clean bool
+	// filled is the contiguous fill marker as this pass left it, for the health
+	// record.
+	filled time.Time
 }
 
-func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int, tierBounds, error) {
+// summariseTierRecovered is summariseTier with a panic turned into a failed
+// pass. The poller runs the cycle under a recover of its own, which keeps the
+// process alive but ends the cycle there: the tier would never reach the point
+// where its outcome is recorded, and a tier that panics on every pass would
+// keep reading as healthy from its last good record.
+func (d *Database) summariseTierRecovered(tier flowSummaryTier, deadline time.Time, rep *summaryReporter) (n int, b tierBounds, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Flow summary: %s tier panicked: %v", tier.interval, r)
+			n, b, err = 0, tierBounds{}, fmt.Errorf("%w: %v", errSummaryPanic, r)
+		}
+	}()
+	return d.summariseTier(tier, deadline, rep)
+}
+
+func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time, rep *summaryReporter) (int, tierBounds, error) {
 	// Capture the id ceiling BEFORE reading, so rows arriving mid-pass are picked
 	// up next time rather than being skipped.
 	//
@@ -498,7 +573,12 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		Select("COALESCE(MAX(id),0)").Scan(&ceiling).Error; err != nil {
 		return 0, tierBounds{}, fmt.Errorf("id ceiling: %w", err)
 	}
-	watermark := d.summaryWatermark(tier.interval)
+	// Both progress markers, read strictly and before anything is decided from
+	// them (see summarySettings). A pass that cannot read them does nothing.
+	watermark, filled, err := d.summaryProgress(tier.interval)
+	if err != nil {
+		return 0, tierBounds{}, err
+	}
 
 	written := 0
 	var firstErr error
@@ -519,6 +599,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	// do (no source rows and no stale summary rows), which the backfill walks
 	// do not count against the per-tier cap.
 	run := func(b time.Time) (succeeded, wrote bool) {
+		rep.progress()
 		wrote, err := d.summariseBucket(tier, b)
 		if err != nil {
 			if firstErr == nil {
@@ -701,7 +782,6 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	// summaryBackfillComplete reads the stored marker, so a reader between the
 	// first write and the end of the re-walk — or after a crash in between —
 	// sees the summary as incomplete rather than short.
-	filled := d.summaryFillMarker(tier.interval)
 	// Self-heal if the summary was emptied underneath us. MAX(summary
 	// timestamp) used to re-backfill automatically after a TRUNCATE or a
 	// failed migration; a persisted marker does not, so a cleared table would
@@ -755,7 +835,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 
 	dirtyComplete := true
 	if watermark > 0 {
-		dirty, err := d.dirtyBuckets(tier, watermark, ceiling)
+		dirty, err := d.dirtyBuckets(tier, watermark, ceiling, rep)
 		if err != nil {
 			return written, tierBounds{}, fmt.Errorf("dirty buckets: %w", err)
 		}
@@ -831,6 +911,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		}
 		caughtUp = !newFilled.IsZero() && !newFilled.Add(tier.width).Before(ownedTo)
 		backfilledN = backfilled
+		filled = newFilled
 	}
 
 	// Advance the watermark when this pass SAW everything up to the ceiling — not
@@ -858,7 +939,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 		d.setSummaryWatermark(tier.interval, ceiling)
 	}
 	return written, tierBounds{valid: !yieldUncertain && !floorUncertain, clean: firstErr == nil, ownedFrom: ownedFrom, ownedTo: ownedTo,
-		caughtUp: caughtUp, backfilled: backfilledN}, firstErr
+		caughtUp: caughtUp, backfilled: backfilledN, filled: filled}, firstErr
 }
 
 // dirtyBuckets lists the buckets touched by rows newer than the watermark and
@@ -882,7 +963,7 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 // the same transaction with higher ids, so what they touch is dirty on the
 // next pass, and which tier owns a bucket is decided by the ownership probes,
 // not here.
-func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64) ([]time.Time, error) {
+func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64, rep *summaryReporter) ([]time.Time, error) {
 	if flowSummaryDirtyHook != nil {
 		if err := flowSummaryDirtyHook(tier.interval); err != nil {
 			return nil, err
@@ -903,6 +984,7 @@ func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64) 
 		if ceiling-lo > chunk {
 			hi = lo + chunk
 		}
+		rep.progress()
 		if flowSummaryDirtyChunkHook != nil {
 			if err := flowSummaryDirtyChunkHook(tier.interval, lo, hi); err != nil {
 				return nil, err
@@ -943,9 +1025,13 @@ func dirtyChunkStamps(h *gorm.DB, sources []string, lo, hi int64) ([]time.Time, 
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		if ts, ok := coerceDBTime(raw); ok {
-			stamps = append(stamps, ts)
+		ts, ok := coerceDBTime(raw)
+		if !ok {
+			// Dropping it would let the caller advance the watermark past a
+			// row whose bucket was never marked.
+			return nil, fmt.Errorf("unreadable rollup timestamp %v (%T)", raw, raw)
 		}
+		stamps = append(stamps, ts)
 	}
 	return stamps, rows.Err()
 }

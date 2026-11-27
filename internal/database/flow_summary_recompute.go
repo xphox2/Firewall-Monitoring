@@ -241,7 +241,7 @@ func (d *Database) reclassificationBusy() bool {
 // runSummaryRecompute runs the recompute step for every tier, daily first,
 // with whatever the cycle's deadline leaves, then removes the service
 // boundary once everything is rebuilt. Returns the buckets recomputed.
-func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[string]tierBounds, deadline time.Time) int {
+func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[string]tierBounds, deadline time.Time, rep *summaryReporter) int {
 	var st FlowSummaryRecomputeStatus
 	if raw, ok := d.GetSettingValue(flowSummaryRecomputeStatusKey); ok {
 		_ = json.Unmarshal([]byte(raw), &st)
@@ -275,6 +275,9 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 			ts = &FlowSummaryRecomputeTier{}
 			st.Tiers[tier.interval] = ts
 		}
+		// Bounded by the cycle deadline plus one bucket, so one tick per tier
+		// keeps the health record's liveness current through the rebuild.
+		rep.progress()
 		n, active := d.recomputeTier(tier, bounds[tier.interval], deadline, busy, ts, &st)
 		total += n
 		anyActive = anyActive || active

@@ -189,7 +189,8 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	if !FlowStatsMaterializes(hours, filter) {
 		// Decided here, before anything is pinned: summaryBackfillComplete
 		// queries through d.
-		useSummary := hours > flowSummaryMinHours && flowSummaryCompatible(filter) && d.summaryBackfillComplete()
+		summaryCandidate := hours > flowSummaryMinHours && flowSummaryCompatible(filter)
+		useSummary := summaryCandidate && d.summaryBackfillComplete()
 		run := &flowStatsRun{
 			h: d.db, cutoff: cutoff, useSummary: useSummary, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,
@@ -199,6 +200,19 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 		res, err := d.flowStats(hours, filter, run)
 		if err == nil {
 			run.finish()
+		}
+		if res != nil {
+			switch {
+			case hours <= 1:
+				res.ServedFrom = FlowServedRaw
+			case useSummary:
+				res.ServedFrom = FlowServedSummary
+			default:
+				res.ServedFrom = FlowServedLive
+				if summaryCandidate {
+					res.SummaryBypassReason = FlowBypassSummaryBehind
+				}
+			}
 		}
 		return res, err
 	}
@@ -212,6 +226,9 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	})
 	if connErr != nil {
 		return nil, connErr
+	}
+	if res != nil {
+		res.ServedFrom = FlowServedMaterialized
 	}
 	return res, runErr
 }

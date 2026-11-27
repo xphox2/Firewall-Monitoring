@@ -63,6 +63,9 @@ func flowStatsJSON(t *testing.T, d *Database, hours int, f FlowStatsFilter) stri
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Which read served the window is the one field the two runs are MEANT to
+	// differ in; everything else must be identical.
+	res.ServedFrom, res.SummaryBypassReason = "", ""
 	b, err := json.Marshal(res)
 	if err != nil {
 		t.Fatal(err)

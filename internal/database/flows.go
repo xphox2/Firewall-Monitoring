@@ -122,7 +122,29 @@ type FlowStatsResult struct {
 	// last 59 days and up to 1:1024 before that, averaging to a fictitious 1:125.
 	SamplingRateMin float64 `json:"sampling_rate_min,omitempty"`
 	SamplingRateMax float64 `json:"sampling_rate_max,omitempty"`
+	// ServedFrom names the read that produced the rolled-up panels (see the
+	// FlowServed* constants). Before this existed nothing distinguished a
+	// seven-day window answered from the summary in a second from the same
+	// window scanned live because the summary had fallen behind — the second
+	// just looked like a slow, partial page.
+	ServedFrom string `json:"served_from,omitempty"`
+	// SummaryBypassReason says why a window the summary could have served was
+	// read live instead. Empty when the summary served it or was never a
+	// candidate.
+	SummaryBypassReason string `json:"summary_bypass_reason,omitempty"`
 }
+
+// Values of FlowStatsResult.ServedFrom.
+const (
+	FlowServedRaw          = "raw"          // an hour or less: raw samples only
+	FlowServedLive         = "live"         // raw samples + the rollup tiers
+	FlowServedSummary      = "summary"      // raw samples + the summary tables
+	FlowServedMaterialized = "materialized" // a filtered window, via the scope table
+)
+
+// FlowBypassSummaryBehind is the SummaryBypassReason of a window read live
+// because a summary tier has not finished building its history.
+const FlowBypassSummaryBehind = "summary not caught up"
 
 // GetMixedFlowSourceDevices returns the names of devices whose last hour of
 // flow_samples contains >1 distinct flow_source. Uses the (device_id,
