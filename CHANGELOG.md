@@ -1,6 +1,68 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.462] - 2026-11-27
+
+### Added — A stalled flow summary is now visible, and alerts
+
+- The flow summary (the pre-aggregate behind the Flows page's long windows)
+  stopped updating for a month on one install and the only sign was a log
+  line. The poller now records what each summary pass did and judges each
+  tier every five minutes: **ok**, **failing** (the last pass failed),
+  **rebuilding** (passes succeed, history is still being built) or
+  **stalled** (no successful pass for the threshold).
+- **Flows page**: a status line appears, in both consoles, when a tier is not
+  healthy — for example "The hourly flow summary has not updated since …
+  Long ranges are read live meanwhile and may be slow or incomplete." It is
+  hidden when everything is healthy. If the poller itself stops reporting,
+  the line says so.
+- **Alert `FLOW_SUMMARY_STALLED`**, one per tier, raised by the server about
+  itself like `SERVER_DISK_HIGH`. Threshold: Alerting → global thresholds →
+  "Flow summary stalled after" (`flow_summary_stall_alert_minutes`, default
+  60; 0 turns the alert off; otherwise 30–1440). A rebuild never alerts. The
+  alert resolves on the next successful pass. A seeded event rule ("Default:
+  Flow summary stalled", 6 h re-notify) lets it be re-graded or scoped by
+  `tier`.
+- A restart does not page: time without a success is counted from the
+  poller's start at the earliest, and the first check after a restart neither
+  raises nor clears the alert.
+- The flow statistics response now says which read produced it
+  (`served_from`: `raw`, `live`, `summary` or `materialized`) and, when a
+  window the summary could have served was read live instead, why
+  (`summary_bypass_reason`).
+- Not detected: a tier that stays "rebuilding" indefinitely without making
+  progress, and anything at all while the poller is not running.
+
+### Fixed — A failed settings read could make the flow summary skip rows for good
+
+- The summariser read its progress markers through a helper that returns
+  "nothing" for a database error exactly as it does for a marker that was
+  never written. One transient error therefore read a tier's watermark as 0,
+  which is the first-pass case: skip the changed-rows walk, then record the
+  newest id as done. Every row the walk had not yet summarised was passed
+  over, and nothing would revisit it.
+- A pass that cannot read its markers now does nothing and reports the
+  failure. A marker that holds something unparseable is an error too, rather
+  than zero.
+- A source row whose timestamp cannot be read now fails the changed-rows scan
+  instead of being dropped from it.
+- A panic inside one tier's pass is now recorded as a failed pass, and the
+  other tier still runs. Before, the cycle ended at the panic with nothing
+  recorded.
+
+### Tests
+
+- `flow_summary_state_test.go`: the strict reads, the health record across
+  failures and successes, a failing record write, a panicking tier, a tier
+  that owns nothing, a multi-hour rebuild, and a table of every verdict rule.
+- `cmd/poller/flowsummaryalerts_test.go`: one alert per tier, no re-fire
+  inside the cooldown, resolution, and the three states that must leave an
+  open alert alone (a record from before a restart, a single failure, an
+  unreadable threshold); threshold 0.
+- Handler tests for the status endpoint and the threshold's validation; a
+  static guard that the status line and the threshold field are wired on
+  both consoles.
+
 ## [0.11.461] - 2026-11-26
 
 ### Fixed — The Flows page could not load 7-day, 30-day or 90-day windows
