@@ -21,6 +21,8 @@ type hybridFixture struct {
 	d *Database
 	// newest is the hour of the newest rollup row; hour(n) is n hours before it.
 	newest time.Time
+	// probe owns device 1 (and not device 2).
+	probe uint
 }
 
 func (f hybridFixture) hour(back int) time.Time {
@@ -66,7 +68,16 @@ func newHybridFixture(t *testing.T, d *Database) hybridFixture {
 	}
 	// Devices 1 and 2, the first owned by probe 1, so a probe filter selects
 	// exactly device 1's rows.
-	one := uint(1)
+	site := models.Site{Name: "hybrid-site"}
+	if err := d.Gorm().Create(&site).Error; err != nil {
+		t.Fatalf("seed site: %v", err)
+	}
+	probe := models.Probe{Name: "hybrid-probe", RegistrationKey: "hybrid-probe-key", SiteID: site.ID}
+	if err := d.Gorm().Create(&probe).Error; err != nil {
+		t.Fatalf("seed probe: %v", err)
+	}
+	one := probe.ID
+	f.probe = probe.ID
 	for i, probe := range []*uint{&one, nil} {
 		dev := models.Device{Name: fmt.Sprintf("hybrid-%d", i+1), IPAddress: fmt.Sprintf("192.0.2.%d", 201+i), Vendor: "fortigate", ProbeID: probe}
 		if err := d.Gorm().Create(&dev).Error; err != nil {
@@ -199,7 +210,7 @@ func TestFlowHybrid_EqualsLive(t *testing.T) {
 	}
 	assertHybridEqualsLive(t, d, 24, FlowStatsFilter{DeviceID: 2}, "24 h, one device")
 	// Device 1 belongs to probe 1; device 2 to none.
-	one := assertHybridEqualsLive(t, d, 24, FlowStatsFilter{ProbeID: 1}, "24 h, one probe")
+	one := assertHybridEqualsLive(t, d, 24, FlowStatsFilter{ProbeID: f.probe}, "24 h, one probe")
 	if all := liveStats(t, d, 24, FlowStatsFilter{}); one.TotalBytes == 0 || one.TotalBytes >= all.TotalBytes {
 		t.Fatalf("the probe filter selected %d of %d bytes: it does not narrow the window", one.TotalBytes, all.TotalBytes)
 	}

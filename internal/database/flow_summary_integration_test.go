@@ -189,3 +189,39 @@ func TestFlowSummaryIntegration_ChunkedDirtyScan(t *testing.T) {
 		}
 	}
 }
+
+// TestFlowHybridIntegration_EqualsLiveOnPostgres runs the hybrid read's union
+// queries on PostgreSQL, where they have to type-check (a UNION resolves its
+// column types arm by arm), where the value encodings of the top-N lists are
+// CAST and || rather than SQLite's, and where the bucket labels of the chart
+// come from date_trunc. The comparison is the same as in the unit lane: the
+// whole response against the live read.
+//
+// It also runs the SUMMARY read through GetFlowStats on PostgreSQL, which no
+// test did: the per-bucket tests above compare summary rows with their source,
+// not what a reader is served.
+func TestFlowHybridIntegration_EqualsLiveOnPostgres(t *testing.T) {
+	d := NewIntegrationDB(t)
+	useHybridKnobs(t)
+	f := newHybridFixture(t, d)
+
+	assertHybridEqualsLive(t, d, 24, FlowStatsFilter{}, "24 h on PostgreSQL")
+	assertHybridEqualsLive(t, d, 7, FlowStatsFilter{}, "7 h on PostgreSQL")
+	assertHybridEqualsLive(t, d, 24, FlowStatsFilter{DeviceID: 2}, "24 h, one device, on PostgreSQL")
+	assertHybridEqualsLive(t, d, 24, FlowStatsFilter{ProbeID: f.probe}, "24 h, one probe, on PostgreSQL")
+
+	// The summary read, over a window that starts before the fixture's first
+	// row (so the hour the cutoff falls in holds nothing either read could
+	// drop). The unique tiles are the one deliberate difference.
+	summary, live := statsBothWays(t, d, 40, FlowStatsFilter{})
+	if summary.ServedFrom != FlowServedSummary || live.ServedFrom != FlowServedLive {
+		t.Fatalf("precondition: served from %q and %q, want summary and live", summary.ServedFrom, live.ServedFrom)
+	}
+	for _, r := range []*FlowStatsResult{summary, live} {
+		r.UniqueSources, r.UniqueDests, r.UniqueApproximate = 0, 0, false
+		r.PartialBlocks, r.PartialReasons = nil, nil
+	}
+	if g, w := statsJSON(t, summary), statsJSON(t, live); g != w {
+		t.Fatalf("summary read differs from live on PostgreSQL:\nlive:    %s\nsummary: %s", w, g)
+	}
+}
