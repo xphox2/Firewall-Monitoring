@@ -42,9 +42,13 @@ func seedReadPath(t *testing.T, d *Database, base time.Time) {
 }
 
 // statsBothWays runs the same window through the summary and the live path.
+// The live leg switches the hybrid read off as well: with the summary's
+// minimum raised out of reach every window is otherwise hybrid-eligible, and
+// the reference would not be the live read.
 func statsBothWays(t *testing.T, d *Database, hours int, filter FlowStatsFilter) (summary, live *FlowStatsResult) {
 	t.Helper()
-	orig := flowSummaryMinHours
+	orig, origHybrid := flowSummaryMinHours, flowHybridEnabled
+	defer func() { flowHybridEnabled = origHybrid }()
 
 	flowSummaryMinHours = 1 // any window qualifies
 	s, err := d.GetFlowStats(hours, filter)
@@ -53,6 +57,7 @@ func statsBothWays(t *testing.T, d *Database, hours int, filter FlowStatsFilter)
 	}
 
 	flowSummaryMinHours = 1 << 30 // no window qualifies
+	flowHybridEnabled = false
 	l, err := d.GetFlowStats(hours, filter)
 	if err != nil {
 		t.Fatalf("GetFlowStats via live path: %v", err)

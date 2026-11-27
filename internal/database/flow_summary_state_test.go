@@ -506,9 +506,15 @@ func TestGetFlowStats_SaysWhichReadServedIt(t *testing.T) {
 	if from, why := served(1, FlowStatsFilter{}); from != FlowServedRaw || why != "" {
 		t.Fatalf("1 h: served_from=%q reason=%q, want raw", from, why)
 	}
-	// Below the summary's minimum: live, and the summary was never a candidate.
-	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != "" {
-		t.Fatalf("24 h: served_from=%q reason=%q, want live with no reason", from, why)
+	// Six hours: live, and neither the summary nor the hybrid read was ever a
+	// candidate (5-minute chart buckets).
+	if from, why := served(6, FlowStatsFilter{}); from != FlowServedLive || why != "" {
+		t.Fatalf("6 h: served_from=%q reason=%q, want live with no reason", from, why)
+	}
+	// 24 hours is the hybrid read's (flow_summary_hybrid_test.go covers it);
+	// here the fixture's rollups stop 24 hours ago, so it is refused and says why.
+	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != flowHybridRefusedNoRollups {
+		t.Fatalf("24 h: served_from=%q reason=%q, want live + %q", from, why, flowHybridRefusedNoRollups)
 	}
 	flowSummaryMinHours = 1
 	if from, why := served(24, FlowStatsFilter{}); from != FlowServedSummary || why != "" {

@@ -605,9 +605,6 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	cutoff := run.cutoff
 	result := &FlowStatsResult{}
 	budget := run.budget
-	if flowStatsBeforeRawHook != nil {
-		flowStatsBeforeRawHook()
-	}
 	run.step("Reading recent samples")
 
 	// Determine which data source to use:
@@ -1009,6 +1006,13 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			}
 			run.step(flowStatsPanelLabel(job.block))
 		}
+	}
+
+	// The first query of the request is the one below. (The hook stands where
+	// a rollup cycle's commit could land: after everything above has been set
+	// up, before any row has been read.)
+	if flowStatsBeforeRawHook != nil {
+		flowStatsBeforeRawHook()
 	}
 
 	// Combined aggregates: count, bytes, unique src/dst from raw samples

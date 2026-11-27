@@ -50,7 +50,14 @@ func newHybridFixture(t *testing.T, d *Database) hybridFixture {
 	for back := 30; back >= 0; back-- {
 		for slot := 0; slot < 12; slot++ {
 			for device := uint(1); device <= 2; device++ {
-				rows = append(rows, hybridRow(f.hour(back), slot, device, uint64(1000*(back+1)+100*slot+int(device))))
+				r := hybridRow(f.hour(back), slot, device, uint64(1000*(back+1)+100*slot+int(device)))
+				if back == 5 && slot == 3 && device == 1 {
+					// A sampling rate found nowhere else, in an hour that is
+					// always in the middle: the window's range is right only
+					// if the middle's own sampling panel ran.
+					r.SamplingRateAvg = 4096
+				}
+				rows = append(rows, r)
 			}
 		}
 	}
@@ -143,6 +150,12 @@ func assertHybridEqualsLive(t *testing.T, d *Database, hours int, filter FlowSta
 	if got.TotalBytes == 0 || len(got.TopSources) == 0 || len(got.BytesOverTime) == 0 {
 		t.Fatalf("%s: the window is empty, so the comparison proves nothing", when)
 	}
+	if got.SamplingRateMax != 4096 {
+		// Only for windows that reach the fixture's marked middle hour.
+		if hours >= 12 && filter.DeviceID != 2 {
+			t.Fatalf("%s: sampling range tops out at %v, want the middle hour's 4096", when, got.SamplingRateMax)
+		}
+	}
 	return got
 }
 
@@ -202,7 +215,10 @@ func TestFlowHybrid_UnsummarisedRowsComeFromTheTail(t *testing.T) {
 	f := newHybridFixture(t, d)
 	before := liveStats(t, d, 24, FlowStatsFilter{}).TotalBytes
 
-	late := []models.FlowRollup{hybridRow(f.hour(0), 7, 1, 5_000_000), hybridRow(f.hour(2), 3, 2, 7_000_000)}
+	// The third row is unsummarised too, but 28 hours back — outside the
+	// window. It must not drag the tail back (and so refuse the request).
+	late := []models.FlowRollup{hybridRow(f.hour(0), 7, 1, 5_000_000), hybridRow(f.hour(2), 3, 2, 7_000_000),
+		hybridRow(f.hour(28), 3, 2, 11_000_000)}
 	if err := d.Gorm().Create(&late).Error; err != nil {
 		t.Fatal(err)
 	}
