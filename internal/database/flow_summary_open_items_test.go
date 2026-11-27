@@ -381,9 +381,16 @@ func TestFlowSummaryRecompute_RetryListSurvivesAFailedRead(t *testing.T) {
 	d, base := reclassDoneFixture(t)
 	t.Cleanup(func() { flowSummaryRecomputeHook = nil })
 	list := fmt.Sprintf(`["%s"]`, base.Add(time.Hour).Format(time.RFC3339))
+	// A cursor as well, at the last bucket: with the walk still in progress
+	// the step SAVES the retry list when it is done with it — which is where
+	// a list read as empty was written back as "nothing to retry".
+	cursor := recomputeMark{rev: 3, bucket: base.Add(3 * time.Hour)}.String()
 	set := func() {
 		t.Helper()
 		if err := d.setReclassSetting(recomputeRetryKey("1h"), list); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.setReclassSetting(recomputeCursorKey("1h"), cursor); err != nil {
 			t.Fatal(err)
 		}
 		d.deleteSetting(recomputeDoneKey("1h"))
@@ -404,6 +411,9 @@ func TestFlowSummaryRecompute_RetryListSurvivesAFailedRead(t *testing.T) {
 	}
 	if _, done := settingRaw(t, d, recomputeDoneKey("1h")); done {
 		t.Fatal("the tier was marked done on a retry list it could not read")
+	}
+	if got, _ := settingRaw(t, d, recomputeCursorKey("1h")); got != cursor {
+		t.Fatalf("the cursor moved to %q on a cycle that could not read the tier's state", got)
 	}
 }
 
