@@ -599,8 +599,11 @@ func TestFlowSummaryState_RecordWithoutProgressFieldsStartsItsClockNow(t *testin
 	d := NewDatabaseForTesting(t)
 	now := useSummaryClock(t)
 	base, _ := builtSummary(t, d, 3)
-	// The record as v0.11.463 wrote it: a tier with no progress fields.
-	old := `{"cycle_progress_at":"2026-01-01T00:00:00Z","tiers":{"1h":{"last_pass_at":"2026-01-01T00:00:00Z","last_ok_at":"2026-01-01T00:00:00Z","caught_up":true}}}`
+	// The record as v0.11.463 wrote it: a tier with no progress fields, and
+	// the fill marker where it is now — so nothing but the missing stamp can
+	// be what makes this pass start the clock.
+	marker := summaryState(t, d).Tiers["1h"].FilledTo.Format(time.RFC3339)
+	old := `{"cycle_progress_at":"2026-01-01T00:00:00Z","tiers":{"1h":{"last_pass_at":"2026-01-01T00:00:00Z","last_ok_at":"2026-01-01T00:00:00Z","caught_up":true,"filled_to":"` + marker + `"}}}`
 	if err := flowSummaryStateWrite(d, old); err != nil {
 		t.Fatal(err)
 	}
