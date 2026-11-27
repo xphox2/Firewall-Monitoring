@@ -40,6 +40,13 @@ import (
 //
 // The arms partition the window by timestamp, so no row is read twice.
 //
+// One thing it does not close: a row that is INGESTED and rolled up into a
+// middle hour after this request's raw read, before its panels run. The live
+// read would count it (its rollup query has no upper bound); this read does
+// not, as if the row had arrived a moment after the request — which it did.
+// A row that was already in raw samples when the request read them is counted
+// there, once, however the rollup cycle moves it afterwards.
+//
 // It is all-or-nothing per request and it FAILS CLOSED: when the plan cannot
 // show that the middle is current, the request runs the live read's own
 // queries instead (the panel bases dispatch on the plan; see flowStats), and
@@ -53,10 +60,10 @@ const FlowServedHybrid = "hybrid"
 const (
 	flowHybridRefusedSettings  = "summary state unreadable"
 	flowHybridRefusedNotBuilt  = "summary not built"
-	flowHybridRefusedBacklog   = "summary catching up on a large change"
+	flowHybridRefusedBacklog   = "summary more than one pass behind the rollups"
 	flowHybridRefusedProbe     = "summary state could not be checked"
 	flowHybridRefusedNoRollups = "rollups do not reach the window"
-	flowHybridRefusedTail      = "summary behind by several hours"
+	flowHybridRefusedTail      = "rows not yet summarised several hours back"
 	flowHybridRefusedRebuild   = "summary being rebuilt"
 	flowHybridRefusedRetention = "summary retention shorter than the window"
 )
@@ -214,8 +221,10 @@ func (d *Database) flowHybridPlan(ctx context.Context, h *gorm.DB, cutoff time.T
 		chunk = flowSummaryDirtyScanChunkDefault
 	}
 	if ceiling-watermark > chunk {
-		// Expected once a day, for one summary pass: the 1h→1d promotion
-		// inserts a day of rows in one go.
+		// More new ids than one scan piece: the summariser is more than a
+		// pass behind. Expected once a day for one pass (the 1h→1d promotion
+		// inserts a day of rows in one go), and whenever a pass overran its
+		// time bound and is still catching up.
 		return refuse(flowHybridRefusedBacklog)
 	}
 	var unsummarised []time.Time
@@ -248,6 +257,9 @@ func (d *Database) flowHybridPlan(ctx context.Context, h *gorm.DB, cutoff time.T
 		}
 	}
 	if newestHour.Add(tier.width).Sub(tailStart) > flowHybridMaxTail {
+		// Either the summariser is hours behind, or it is fine and ONE late
+		// row (a collector replaying its spool) landed hours back and has not
+		// been folded in yet. The reason names what was found, not a cause.
 		return refuse(flowHybridRefusedTail)
 	}
 	// The last middle hour is tailStart-1h; with an empty middle there is

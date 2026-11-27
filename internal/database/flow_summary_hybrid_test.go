@@ -15,8 +15,11 @@ import (
 // the live response — every panel, every flag — and a refused request must be
 // the live read itself.
 
-// hybridFixture is 31 hours of 5-minute rollups, the newest hour being the one
-// two hours before the current hour, with the summary built over them.
+// hybridFixture is 51 hours of 5-minute rollups, the newest hour being the one
+// two hours before the current hour, with the summary built over them. (Rows
+// older than 48 hours stay in the 5-minute tier here: no rollup cycle runs, so
+// nothing is promoted. That is also what a 48-hour window sees on a live
+// system — promotion works in whole hours and never reaches inside it.)
 type hybridFixture struct {
 	d *Database
 	// newest is the hour of the newest rollup row; hour(n) is n hours before it.
@@ -49,7 +52,7 @@ func newHybridFixture(t *testing.T, d *Database) hybridFixture {
 	t.Helper()
 	f := hybridFixture{d: d, newest: time.Now().UTC().Truncate(time.Hour).Add(-2 * time.Hour)}
 	var rows []models.FlowRollup
-	for back := 30; back >= 0; back-- {
+	for back := 50; back >= 0; back-- {
 		for slot := 0; slot < 12; slot++ {
 			for device := uint(1); device <= 2; device++ {
 				r := hybridRow(f.hour(back), slot, device, uint64(1000*(back+1)+100*slot+int(device)))
@@ -222,7 +225,7 @@ func TestFlowHybrid_EqualsLive(t *testing.T) {
 		t.Fatalf("plant daily row: %v", err)
 	}
 
-	for _, hours := range []int{7, 12, 24, 30} {
+	for _, hours := range []int{7, 12, 24, 30, 48} {
 		assertHybridEqualsLive(t, d, hours, FlowStatsFilter{}, fmt.Sprintf("%d h", hours))
 	}
 	assertHybridEqualsLive(t, d, 24, FlowStatsFilter{DeviceID: 2}, "24 h, one device")
@@ -243,10 +246,10 @@ func TestFlowHybrid_UnsummarisedRowsComeFromTheTail(t *testing.T) {
 	f := newHybridFixture(t, d)
 	before := liveStats(t, d, 24, FlowStatsFilter{}).TotalBytes
 
-	// The third row is unsummarised too, but 28 hours back — outside the
+	// The third row is unsummarised too, but 49 hours back — outside the
 	// window. It must not drag the tail back (and so refuse the request).
 	late := []models.FlowRollup{hybridRow(f.hour(0), 7, 1, 5_000_000), hybridRow(f.hour(2), 3, 2, 7_000_000),
-		hybridRow(f.hour(28), 3, 2, 11_000_000)}
+		hybridRow(f.hour(49), 3, 2, 11_000_000)}
 	if err := d.Gorm().Create(&late).Error; err != nil {
 		t.Fatal(err)
 	}

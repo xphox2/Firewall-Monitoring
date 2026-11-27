@@ -25,7 +25,8 @@ All notable changes to this project are documented in this file.
   request runs the previous read unchanged — complete, merely slower — and
   the response says so (`served_from: live` with a `summary_bypass_reason`;
   `hybrid` otherwise). This is expected for one summary pass a day, after the
-  daily promotion.
+  daily promotion, and briefly whenever the summariser is more than one pass
+  behind or a late row has landed hours back.
 - **Visible differences on 7–48 hour windows:**
   - Top sources, destinations, conversations, services and networks are now a
     merge of per-hour top-50 lists, as on the 7, 30 and 90 day windows, and
@@ -48,7 +49,7 @@ All notable changes to this project are documented in this file.
   the live read's — every panel and flag — across window sizes, device and
   probe filters, rows stamped exactly on both boundaries, rows the summary
   has not seen, a bucket the summariser failed on, and a row committed while
-  the request is running. Thirteen reasons for refusing are each shown to
+  the request is running. Thirteen refusal scenarios are each shown to
   return the live read's response; one of them is also checked for the same
   progress steps and a single read of the raw samples.
 - A PostgreSQL integration test runs the hybrid read and, for the first time,

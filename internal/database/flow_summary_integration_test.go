@@ -213,7 +213,7 @@ func TestFlowHybridIntegration_EqualsLiveOnPostgres(t *testing.T) {
 	// The summary read, over a window that starts before the fixture's first
 	// row (so the hour the cutoff falls in holds nothing either read could
 	// drop). The unique tiles are the one deliberate difference.
-	summary, live := statsBothWays(t, d, 40, FlowStatsFilter{})
+	summary, live := statsBothWays(t, d, 60, FlowStatsFilter{})
 	if summary.ServedFrom != FlowServedSummary || live.ServedFrom != FlowServedLive {
 		t.Fatalf("precondition: served from %q and %q, want summary and live", summary.ServedFrom, live.ServedFrom)
 	}

@@ -808,7 +808,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	// edges + summary middle if the plan accepted, flow_rollups as ever if it
 	// refused. The plan is made in flushRollups — after every raw read, before
 	// any base is called — so a refused request issues exactly the live read's
-	// SQL. That is the point of dispatching here instead of building a second
+	// panel SQL (after the plan's own four probes). That is the point of dispatching here instead of building a second
 	// set of panels: "refused" cannot drift from "live".
 	var hybridPlan flowHybridPlanResult
 	hybridOn := func() bool { return run.hybrid && hybridPlan.ok }
@@ -1741,7 +1741,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	}) {
 		// Trim the still-filling bucket at the NEW end.
 		if n := len(series); n > 0 {
-			if cutBucket := bucketLabelAt(time.Now(), bucketUnit); cutBucket != "" && series[n-1].Bucket == cutBucket {
+			if cutBucket := bucketLabelAt(flowStatsNow(), bucketUnit); cutBucket != "" && series[n-1].Bucket == cutBucket {
 				series = series[:n-1]
 			}
 		}
