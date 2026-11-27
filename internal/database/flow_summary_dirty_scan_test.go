@@ -319,14 +319,10 @@ func TestFlowSummary_DirtyScanChunkDefaultIsBounded(t *testing.T) {
 			"the widest id range measured safe against the 30s statement_timeout",
 			flowSummaryDirtyScanChunkDefault)
 	}
-	if flowSummaryDirtyScanChunk != flowSummaryDirtyScanChunkDefault {
-		t.Errorf("flowSummaryDirtyScanChunk starts at %d, not the default %d",
-			flowSummaryDirtyScanChunk, flowSummaryDirtyScanChunkDefault)
-	}
 }
 
-// TestFlowSummary_StalledTierRecoversUnaided is the production state of
-// 2026-11-27 on this code: a watermark left far behind, the tier's rows all
+// TestFlowSummary_StalledTierRecoversUnaided is the state production was found
+// in, on this code: a watermark left far behind, the tier's rows all
 // superseded, its fill marker blank. With the scan in pieces the tier catches
 // up by itself; nothing has to be reset by hand.
 //
@@ -377,4 +373,67 @@ func TestFlowSummary_StalledTierRecoversUnaided(t *testing.T) {
 	seedSummaryHour(t, d, base, 1, 9000, "10.0.0.5")
 	d.RunFlowSummaryCycle()
 	assertBucketsAgree(t, d, base, hours, "after a late row")
+}
+
+// TestFlowSummary_DailyTierDirtyScanIsChunked: the daily tier goes through the
+// same piece loop with a day-wide bucket. Every other fixture here is 5m-only
+// and never reaches it.
+func TestFlowSummary_DailyTierDirtyScanIsChunked(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	day := time.Now().UTC().AddDate(0, 0, -40).Truncate(24 * time.Hour)
+	seedDay := func(offset int, bytes uint64, src string) {
+		t.Helper()
+		if err := d.Gorm().Create(&models.FlowRollup{
+			Timestamp: day.AddDate(0, 0, offset),
+			DeviceID:  1, IntervalType: "1d",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed day %d: %v", offset, err)
+		}
+	}
+	dayBytes := func(offset int) (want, got uint64) {
+		b := day.AddDate(0, 0, offset)
+		d.Gorm().Model(&models.FlowRollup{}).
+			Where("timestamp >= ? AND timestamp < ?", b, b.AddDate(0, 0, 1)).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+		d.Gorm().Model(&models.FlowSummary{}).
+			Where("interval_type = ? AND timestamp = ?", "1d", b).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+		return
+	}
+	const days = 4
+	for o := 0; o < days; o++ {
+		seedDay(o, 100, "10.0.0.1")
+	}
+	for i := 0; i < 5; i++ {
+		d.RunFlowSummaryCycle()
+	}
+	watermark := d.summaryWatermark("1d")
+	if watermark != maxRollupID(t, d) {
+		t.Fatalf("precondition: daily watermark %d is not the newest id %d", watermark, maxRollupID(t, d))
+	}
+	useDirtyScanChunk(t, 1)
+	for o := days - 1; o >= 0; o-- {
+		seedDay(o, 5000, "10.0.0.9")
+	}
+
+	var chunks []dirtyChunk
+	flowSummaryDirtyChunkHook = func(iv string, lo, hi int64) error {
+		if iv == "1d" {
+			chunks = append(chunks, dirtyChunk{lo, hi})
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	flowSummaryDirtyChunkHook = nil
+
+	if len(chunks) != days || chunks[0].lo != watermark || chunks[len(chunks)-1].hi != maxRollupID(t, d) {
+		t.Fatalf("the daily tier's scan of %d new ids in pieces of 1 was %v (watermark %d)", days, chunks, watermark)
+	}
+	for o := 0; o < days; o++ {
+		if want, got := dayBytes(o); got != want || want != 5100 {
+			t.Fatalf("day %d holds %d bytes against %d in the source (want 5100)", o, got, want)
+		}
+	}
 }

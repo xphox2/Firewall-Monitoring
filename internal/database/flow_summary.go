@@ -103,6 +103,18 @@ var flowSummaryDirtyChunkHook func(interval string, lo, hi int64) error
 // 0.16s and a 1M-id range 0.20s (the id space is about 2.8x the row count; a
 // dense stretch costs several times that). 250k keeps a wide margin under the
 // timeout on a slower disk. Do not raise it past 1,000,000 without measuring.
+//
+// The bound is a property of the PLAN, so it was checked, not assumed. EXPLAIN
+// (ANALYZE, BUFFERS) of the piece statement on that table gave
+//
+//	HashAggregate -> Index Scan using flow_rollups_pkey
+//	  Index Cond: (id > lo AND id <= hi)   Filter: interval_type = ANY (...)
+//
+// with 2,531 buffers read for 250k ids: the interval_type IN list is only a
+// filter. That was a literal statement in psql, not the driver's prepared
+// one, so watch the slow-query log after a change here. If a piece is ever
+// seen on idx_rollup_interval_ts instead (it then costs the whole index,
+// whatever the range), issue one statement per interval_type.
 const flowSummaryDirtyScanChunkDefault int64 = 250_000
 
 // flowSummaryDirtyScanChunk is the width in use; a var so tests can make a

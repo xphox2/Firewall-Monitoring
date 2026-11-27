@@ -8,7 +8,7 @@ import (
 )
 
 // TestFlowSummaryDirtyScanIsBoundedPerStatement pins the fix for the flow
-// summary's month-long production stall (2026-10-25 to 2026-11-27).
+// summary's month-long production stall (found a month after 2026-10-25).
 //
 // The summariser finds the buckets that changed since its last pass by reading
 // the flow_rollups ids above its watermark. That used to be ONE statement:
@@ -40,6 +40,11 @@ func TestFlowSummaryDirtyScanIsBoundedPerStatement(t *testing.T) {
 	// alone.
 	reWhere := regexp.MustCompile(`(?s)Where\((.*?)\)\.`)
 	for _, m := range reWhere.FindAllStringSubmatch(body, -1) {
+		// Only an id-range predicate counts: the lazy match can run on through
+		// unrelated code and comments that merely mention both words.
+		if !strings.Contains(m[1], "id >") && !strings.Contains(m[1], "id <=") {
+			continue
+		}
 		if strings.Contains(m[1], "watermark") && strings.Contains(m[1], "ceiling") {
 			t.Errorf("%s: a Where(...) is bounded by the watermark and the ceiling together:\n%s\n"+
 				"That is one statement over the tier's whole backlog — the shape that stalled "+
@@ -50,7 +55,9 @@ func TestFlowSummaryDirtyScanIsBoundedPerStatement(t *testing.T) {
 	// 2. The id-range statement exists exactly once, inside dirtyChunkStamps,
 	// whose bounds are one piece (lo, hi].
 	const idRange = `id > ? AND id <= ?`
-	if n := strings.Count(body, idRange); n != 1 {
+	// Counted in code only, so describing the statement in a comment is free.
+	code := regexp.MustCompile(`(?m)^\s*//.*$`).ReplaceAllString(body, "")
+	if n := strings.Count(code, idRange); n != 1 {
 		t.Errorf("%s: found %d statements with %q, want exactly 1 (in dirtyChunkStamps). "+
 			"If the scan was restructured, update this guard deliberately — do not delete it.",
 			path, n, idRange)
