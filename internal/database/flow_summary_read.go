@@ -116,7 +116,12 @@ func (d *Database) summaryBackfillState() (bool, error) {
 			continue // this tier has no source data, so nothing to backfill
 		}
 		lastOwned := tier.bucketOf(newest)
-		filled := d.summaryFillMarker(tier.interval)
+		// Read strictly, for the same reason as the probe above: a marker
+		// that could not be read is not a marker that is behind.
+		_, filled, err := d.summaryProgress(tier.interval)
+		if err != nil {
+			return false, err
+		}
 		if filled.IsZero() || filled.Before(lastOwned) {
 			return false, nil
 		}

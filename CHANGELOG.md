@@ -22,7 +22,8 @@ All notable changes to this project are documented in this file.
   "Flow summary stalled after" (`flow_summary_stall_alert_minutes`, default
   60; 0 turns the alert off; otherwise 30–1440). A rebuild never alerts. The
   alert resolves at the first check after the tier completes a successful
-  pass — never on an older record. A seeded event rule ("Default:
+  pass, not on an older record. It takes two failed passes in a row to count
+  as stalled. A seeded event rule ("Default:
   Flow summary stalled", 6 h re-notify) lets it be re-graded or scoped by
   `tier`.
 - A restart does not page: time without a success is counted from the
@@ -35,7 +36,8 @@ All notable changes to this project are documented in this file.
   window the summary could have served was read live instead, why
   (`summary_bypass_reason`).
 - Not detected: a tier that stays "rebuilding" indefinitely without making
-  progress, and anything at all while the poller is not running.
+  progress, and anything at all while the poller is not running or is
+  restarting more often than the threshold.
 
 ### Fixed — A failed settings read could make the flow summary skip rows for good
 

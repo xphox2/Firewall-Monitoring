@@ -210,28 +210,32 @@ func TestFlowSummaryState_WriteFailureDoesNotStopThePass(t *testing.T) {
 }
 
 // TestFlowSummaryState_PanicIsAFailedPass: a tier that panics is recorded as
-// failing and the other tier still runs. Without the recover the cycle ended
-// at the panic, nothing was recorded, and the tier kept its last good record.
+// failing AND the tier after it still runs. The daily tier runs first, so it
+// is the one made to panic; the hourly tier must then complete a pass of its
+// own in the same cycle. Without the per-tier recover the cycle ended at the
+// panic, nothing was recorded, and both tiers kept their last good record.
 func TestFlowSummaryState_PanicIsAFailedPass(t *testing.T) {
 	d := NewDatabaseForTesting(t)
-	useSummaryClock(t)
+	now := useSummaryClock(t)
 	base, _ := builtSummary(t, d, 3)
 	seedSummaryHour(t, d, base, 1, 300, "10.0.0.3")
+	*now = now.Add(5 * time.Minute) // tell this cycle's records from the build's
 
-	flowSummaryBucketHook = func(interval string, _ time.Time) error {
-		if interval == "1h" {
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, flowSummaryWatermarkKeyPrefix+"1d") {
 			panic("nil map")
 		}
 		return nil
 	}
 	d.RunFlowSummaryCycle() // must not panic out of the cycle
 	st := summaryState(t, d)
-	if h := st.Tiers["1h"]; h == nil || h.LastErrorClass != flowSummaryErrPanic || h.FailingSince.IsZero() {
-		t.Fatalf("hourly tier after a panic: %+v", h)
+	if day := st.Tiers["1d"]; day == nil || day.LastErrorClass != flowSummaryErrPanic || !day.FailingSince.Equal(*now) {
+		t.Fatalf("daily tier after a panic: %+v", day)
 	}
-	if day := st.Tiers["1d"]; day == nil || day.LastPassAt.IsZero() || !day.FailingSince.IsZero() {
-		t.Fatalf("daily tier did not complete its own pass: %+v", day)
+	if h := st.Tiers["1h"]; h == nil || !h.LastPassAt.Equal(*now) || !h.LastOKAt.Equal(*now) {
+		t.Fatalf("the hourly tier did not run after the daily tier panicked: %+v (now %v)", h, *now)
 	}
+	assertBucketsAgree(t, d, base, 3, "after the other tier panicked")
 }
 
 // TestFlowSummaryState_OwnsNothingIsCaughtUp: a tier with nothing to build is
@@ -277,8 +281,8 @@ func TestFlowSummaryState_LongBackfillIsNotAStall(t *testing.T) {
 		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
 	}
 
-	flowSummaryMaxCycleDuration = 0 // every pass stops on the bound at once
-	for i := 0; i < 30; i++ {       // 2.5 hours of cycles
+	flowSummaryMaxCycleDuration = -time.Hour // every pass stops on the bound at once
+	for i := 0; i < 30; i++ {                // 2.5 hours of cycles
 		d.RunFlowSummaryCycle()
 		*now = now.Add(5 * time.Minute)
 	}
@@ -306,7 +310,14 @@ func TestFlowSummaryVerdict(t *testing.T) {
 	ago := func(min int) time.Time { return now.Add(-time.Duration(min) * time.Minute) }
 	var never time.Time
 	tier := func(lastPass, lastOK, failingSince time.Time, caughtUp bool) *FlowSummaryTierState {
-		return &FlowSummaryTierState{LastPassAt: lastPass, LastOKAt: lastOK, FailingSince: failingSince, CaughtUp: caughtUp}
+		ts := &FlowSummaryTierState{LastPassAt: lastPass, LastOKAt: lastOK, FailingSince: failingSince, CaughtUp: caughtUp}
+		if !failingSince.IsZero() {
+			ts.ConsecutiveFailures = 2 // a run of failures unless a case says otherwise
+			if failingSince.Equal(lastPass) {
+				ts.ConsecutiveFailures = 1
+			}
+		}
+		return ts
 	}
 	state := func(cycleAt time.Time, hourly *FlowSummaryTierState) *FlowSummaryState {
 		st := &FlowSummaryState{CycleProgressAt: cycleAt, Tiers: map[string]*FlowSummaryTierState{}}
@@ -329,6 +340,11 @@ func TestFlowSummaryVerdict(t *testing.T) {
 		// minutes old and says caught up. A routine pass is not a rebuild.
 		{"pass in flight on a caught-up tier", state(ago(1), tier(ago(20), ago(20), never, true)), longUp, true, FlowSummaryOK},
 		{"single failure", state(ago(2), tier(ago(2), ago(7), ago(2), true)), longUp, true, FlowSummaryFailing},
+		// Idle for three hours behind the other tier's walk, then ONE failed
+		// pass: its last success is old, but that is one failure, not a stall.
+		{"single failure after a long idle", state(ago(2), tier(ago(2), ago(185), ago(2), true)), longUp, true, FlowSummaryFailing},
+		{"failing for exactly the threshold", state(ago(1), tier(ago(1), ago(60), ago(55), true)), longUp, true, FlowSummaryStalled},
+		{"failing for just under the threshold", state(ago(1), tier(ago(1), ago(59), ago(55), true)), longUp, true, FlowSummaryFailing},
 		// One poison bucket: every pass fails, and every pass is busy.
 		{"failing every pass with fresh progress", state(ago(1), tier(ago(1), ago(90), ago(85), true)), longUp, true, FlowSummaryStalled},
 		{"hung pass", state(ago(75), tier(ago(80), ago(80), never, true)), longUp, true, FlowSummaryStalled},
@@ -590,5 +606,27 @@ func TestFlowSummaryHealth_ReadPathProbeFailureIsNotReadLive(t *testing.T) {
 	}
 	if h := d.EvaluateFlowSummaryHealth(ctx, *now, 60, now.Add(-time.Hour)); h.LongWindowsLive != nil {
 		t.Fatalf("a failed probe was recorded as long_windows_live=%v", *h.LongWindowsLive)
+	}
+}
+
+// TestFlowSummaryHealth_MarkerReadFailureIsNotReadLive: the same, for the
+// second read the probe makes — a fill marker that could not be READ is not a
+// fill marker that is behind.
+func TestFlowSummaryHealth_MarkerReadFailureIsNotReadLive(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	builtSummary(t, d, 3)
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, flowSummaryFillKeyPrefix+"1h") {
+			return errors.New("connection reset")
+		}
+		return nil
+	}
+	if h := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, now.Add(-time.Hour)); h.LongWindowsLive != nil {
+		t.Fatalf("a failed marker read was recorded as long_windows_live=%v", *h.LongWindowsLive)
+	}
+	// The read path itself still refuses the summary for that request.
+	if d.summaryBackfillComplete() {
+		t.Fatal("the read path used the summary without being able to read its marker")
 	}
 }

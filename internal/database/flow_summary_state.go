@@ -297,8 +297,13 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	// that fails still walks its other buckets, so a tier with one poison
 	// bucket is busy every cycle and broken every cycle. A failure recorded
 	// before a restart is not evidence about this process (rule 4 still shows
-	// it as failing).
-	if failing && tier.LastPassAt.After(processStart) && now.Sub(laterOf(tier.LastOKAt, processStart)) >= threshold {
+	// it as failing). And it takes TWO failures in a row: a tier that sat idle
+	// for hours behind the other tier's walk has an old last_ok_at through no
+	// fault of its own, and one failed pass after that is a single failure,
+	// not hours of them — paging on it would also start the alert's cooldown
+	// and mute a real stall that began soon after.
+	if failing && tier.ConsecutiveFailures >= 2 && tier.LastPassAt.After(processStart) &&
+		now.Sub(laterOf(tier.LastOKAt, processStart)) >= threshold {
 		return FlowSummaryStalled
 	}
 	// 2. No cycle has run in this process yet. The record is from before the

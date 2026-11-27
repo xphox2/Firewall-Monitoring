@@ -41,7 +41,14 @@ func writeSummaryRecord(t *testing.T, db *database.Database, cycleAt time.Time, 
 	t.Helper()
 	st := database.FlowSummaryState{CycleProgressAt: cycleAt, Tiers: map[string]*database.FlowSummaryTierState{}}
 	for iv, r := range tiers {
-		st.Tiers[iv] = &database.FlowSummaryTierState{LastPassAt: r.lastPass, LastOKAt: r.lastOK, FailingSince: r.failingSince, CaughtUp: r.caughtUp}
+		ts := &database.FlowSummaryTierState{LastPassAt: r.lastPass, LastOKAt: r.lastOK, FailingSince: r.failingSince, CaughtUp: r.caughtUp}
+		if !r.failingSince.IsZero() {
+			ts.ConsecutiveFailures = 2 // a run of failures...
+			if r.failingSince.Equal(r.lastPass) {
+				ts.ConsecutiveFailures = 1 // ...unless the record is of a single one
+			}
+		}
+		st.Tiers[iv] = ts
 	}
 	js, err := json.Marshal(st)
 	if err != nil {
