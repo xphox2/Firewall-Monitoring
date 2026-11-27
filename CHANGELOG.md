@@ -1,6 +1,77 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.464] - 2026-11-27
+
+### Fixed — A flow summary that is "rebuilding" but not moving now alerts
+
+- A summary tier whose routine work used the whole cycle every time never
+  built any of its missing history and never failed either: it read
+  "rebuilding" indefinitely and nothing was raised. The poller now records
+  whether a tier that is behind is getting anywhere. At least two passes in a
+  row that build nothing, for the stall threshold, make it **stalled**; the
+  alert and the Flows page say "rebuilding but has made no progress since …".
+  One pass that finds no time left, or a caught-up tier whose marker simply
+  has nowhere to go, is not a stall.
+- `FLOW_SUMMARY_STALLED` now says which of three things is wrong: passes keep
+  failing, no summary cycle shows any sign of life, or the rebuild makes no
+  progress. The cause is also a rule-matchable field (`stall_class`).
+
+### Fixed — One failed settings read could lose a rebuild's progress for good
+
+- After a flow reclassification the summaries are rebuilt bucket by bucket,
+  tracked by a cursor, a list of buckets to retry and a done mark. These were
+  read through a helper that answers "nothing" for a database error exactly as
+  for a missing key, and here "nothing" was acted on: a cursor read as absent
+  was overwritten with a later bucket (the ones in between were never
+  rebuilt); a retry list read as empty was saved as empty (buckets still
+  holding pre-reclassification figures were forgotten and the tier finished
+  "done"); and the service boundary — which cannot be restored — could be
+  removed because "is a reclassification due?" read as "no".
+- The decisions that write or delete that state — and "is a reclassification
+  due or running?", which gates them — now read strictly and do nothing for
+  the cycle if the read fails. A value that is read but does
+  not parse is still treated as absent, as before.
+- The rebuild's status (buckets done, rate) is no longer overwritten with
+  zeroes by a cycle that could not read it.
+
+### Fixed — Smaller things in the same area
+
+- Two steps of a summary cycle run outside any tier. A panic in the first
+  ended the cycle before either tier ran, with nothing recorded, while the
+  cycle's own start stamp kept saying the summariser was alive; a panic in
+  the second cost that step — the post-reclassification rebuild — every cycle,
+  silently. Both are now contained and logged with a stack trace, and the
+  tiers still run. A stored rebuild status with a null entry no longer panics
+  every cycle.
+- The "no summary cycle alive" stall could fire for a single check after the
+  poller's loop had been blocked for the threshold (a long rollup cycle, a
+  database outage), and its cooldown would then mute a real stall. It is now
+  acted on only when two checks in a row find it, and never within a minute
+  of a summary cycle being launched — five minutes later for a summariser
+  that really is hung.
+- When the stall threshold cannot be read, the Flows page's verdict is judged
+  against the threshold last in use instead of the default.
+
+### Tests
+
+- New tests for each of the above, including the three cases that must NOT
+  read as a stall (a long backfill that moves every pass, one starved pass,
+  two starved passes after hours of being caught up).
+- Hybrid read: a site filter, a request whose time is already spent, and a
+  failing sampling panel are now covered.
+- `TestArchiveGate_Syslog_PG` no longer fails outside UTC for a month after a
+  daylight-saving change: it computed its cutoffs on the UTC calendar, where
+  the code under test (correctly, and consistently) uses the local one.
+
+### Not addressed, on purpose
+
+- A poller that keeps restarting is not detected by the stall alert. Two
+  designs were tried in review and each could both miss the likeliest loop and
+  page at boot after ordinary downtime. It shows as a restarting container
+  and as "status has not been reported" on the Flows page.
+- The unique sources / destinations tiles are still computed live.
+
 ## [0.11.463] - 2026-11-27
 
 ### Changed — The 24-hour Flows window no longer scans every 5-minute row

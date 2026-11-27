@@ -113,6 +113,27 @@ type FlowSummaryTierState struct {
 	CaughtUp bool      `json:"caught_up"`
 	OwnedTo  time.Time `json:"owned_to"`
 	FilledTo time.Time `json:"filled_to"`
+	// ProgressAt and StuckPasses answer "is a tier that is behind getting
+	// anywhere?". A tier whose dirty walk uses the whole cycle deadline every
+	// time never errors and never builds a bucket of history; without these it
+	// read as "rebuilding" for ever.
+	//
+	// ProgressAt is stamped when the fill marker MOVED (a reset counts: the
+	// tier is working again from the start), when a pass ended caught up or
+	// owning nothing, and when the tier is first recorded. It is NOT "when the
+	// marker last moved": a caught-up tier's marker stands still for an hour
+	// (hourly) or a day (daily) with nothing wrong, so the clock has to restart
+	// on every caught-up pass or one starved pass afterwards would look like a
+	// day without progress.
+	//
+	// StuckPasses counts consecutive SUCCESSFUL passes that ended behind with
+	// the marker where it was. A failed pass that got nowhere neither adds to
+	// it nor clears it: failures are rule 1's, and letting one clear the count
+	// would let a tier alternating between failing and stuck escape both
+	// rules. (A failed pass that did move the marker is progress like any
+	// other.)
+	ProgressAt  time.Time `json:"progress_at"`
+	StuckPasses int       `json:"stuck_passes"`
 }
 
 // summaryReporter keeps the health record for one cycle. progress, tierDone
@@ -190,9 +211,15 @@ func (r *summaryReporter) tierDone(interval string, b tierBounds, err error) {
 	}
 	now := flowSummaryNow().UTC()
 	ts := r.state.Tiers[interval]
+	// "First" includes a tier recorded by a version that did not keep
+	// ProgressAt: its clock starts now, not at year one.
+	first := ts == nil || ts.ProgressAt.IsZero()
 	if ts == nil {
 		ts = &FlowSummaryTierState{}
 		r.state.Tiers[interval] = ts
+	}
+	if first {
+		ts.ProgressAt, ts.StuckPasses = now, 0
 	}
 	ts.LastPassAt = now
 	if err == nil {
@@ -210,7 +237,18 @@ func (r *summaryReporter) tierDone(interval string, b tierBounds, err error) {
 	// A pass that failed before it knew its range returns zero bounds, which
 	// say nothing: keep what the last pass that did know recorded.
 	if err == nil || b.ownsNothing || !b.ownedTo.IsZero() {
-		ts.CaughtUp = b.caughtUp || b.ownsNothing
+		caughtUp := b.caughtUp || b.ownsNothing
+		// Compared BEFORE FilledTo is overwritten, and only here: outside this
+		// guard a zero-bounds pass would compare a zero marker with the stored
+		// one and count as movement.
+		moved := !b.filled.UTC().Equal(ts.FilledTo)
+		switch {
+		case moved || caughtUp || first:
+			ts.ProgressAt, ts.StuckPasses = now, 0
+		case err == nil:
+			ts.StuckPasses++
+		}
+		ts.CaughtUp = caughtUp
 		ts.OwnedTo = b.ownedTo.UTC()
 		ts.FilledTo = b.filled.UTC()
 	}
@@ -279,6 +317,20 @@ func (d *Database) flowSummaryState(ctx context.Context) (st *FlowSummaryState, 
 // measured from — is never earlier than that, so downtime or a restored backup
 // cannot page at boot for time the summariser was not running.
 func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, threshold time.Duration, processStart time.Time, rollupsExist bool) string {
+	verdict, _ := flowSummaryJudge(st, interval, now, threshold, processStart, rollupsExist)
+	return verdict
+}
+
+// Why a tier is stalled (FlowSummaryTierHealth.StallClass). The three causes
+// read differently to an operator and are handled differently by the poller.
+const (
+	FlowSummaryStallFailing    = "failing"     // passes keep failing
+	FlowSummaryStallNoCycle    = "no_cycle"    // no summary cycle shows signs of life
+	FlowSummaryStallNoProgress = "no_progress" // passes succeed; the rebuild does not move
+)
+
+// flowSummaryJudge is flowSummaryVerdict with the cause of a stall.
+func flowSummaryJudge(st *FlowSummaryState, interval string, now time.Time, threshold time.Duration, processStart time.Time, rollupsExist bool) (verdict, stallClass string) {
 	var tier *FlowSummaryTierState
 	var cycleAt time.Time
 	if st != nil {
@@ -304,23 +356,23 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	// and mute a real stall that began soon after.
 	if failing && tier.ConsecutiveFailures >= 2 && tier.LastPassAt.After(processStart) &&
 		now.Sub(laterOf(tier.LastOKAt, processStart)) >= threshold {
-		return FlowSummaryStalled
+		return FlowSummaryStalled, FlowSummaryStallFailing
 	}
 	// 2. No cycle has run in this process yet. The record is from before the
 	// restart: it can neither confirm a stall nor clear one, and above all it
 	// must not resolve an open alert on the strength of an old "ok".
 	if !cycleAt.After(processStart) && now.Sub(processStart) < threshold {
-		return FlowSummaryUnknown
+		return FlowSummaryUnknown, ""
 	}
 	// 3. There is work to summarise and no cycle has shown signs of life for
 	// the threshold: a pass that hung, or a summariser that never runs (an old
 	// poller holding the lock, a panic before the first write). Both tiers.
 	if rollupsExist && now.Sub(laterOf(cycleAt, processStart)) >= threshold {
-		return FlowSummaryStalled
+		return FlowSummaryStalled, FlowSummaryStallNoCycle
 	}
 	// 4. Failed, but not for long enough to call it stalled.
 	if failing {
-		return FlowSummaryFailing
+		return FlowSummaryFailing, ""
 	}
 	// 5. The tier's last good pass is not RECENT evidence: it predates this
 	// process, or it is older than the threshold. A cycle that has merely
@@ -333,16 +385,24 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	// tier's hours-long walk lands here too, which is right: nothing has been
 	// learned about it.)
 	if tier == nil || !tier.LastPassAt.After(processStart) || now.Sub(tier.LastPassAt) >= threshold {
-		return FlowSummaryUnknown
+		return FlowSummaryUnknown, ""
 	}
 	// 6. Passes succeed but history is still being built; long windows are
 	// served by the live read meanwhile. A pass IN FLIGHT does not put a
 	// caught-up tier here — that would show "rebuilding" during every routine
 	// pass.
 	if !tier.CaughtUp {
-		return FlowSummaryCatchingUp
+		// ...unless it is behind and not moving: at least two successful
+		// passes in a row left the fill marker where it was, and it has been
+		// the threshold since the tier last got anywhere (see ProgressAt).
+		// Two passes, because one pass that found no time left (the other
+		// tier's long walk, a busy cycle at an hour boundary) is routine.
+		if tier.StuckPasses >= 2 && now.Sub(laterOf(tier.ProgressAt, processStart)) >= threshold {
+			return FlowSummaryStalled, FlowSummaryStallNoProgress
+		}
+		return FlowSummaryCatchingUp, ""
 	}
-	return FlowSummaryOK
+	return FlowSummaryOK, ""
 }
 
 // FlowSummaryHealth is the poller's evaluation, as stored for the API.
@@ -352,6 +412,9 @@ type FlowSummaryHealth struct {
 	// flowSummaryHealthMaxAge, so the poller is stopped or wedged and the
 	// verdicts below describe the past.
 	Stale bool `json:"stale"`
+	// ThresholdMinutes is the stall threshold this evaluation used, so the
+	// next one can use the same yardstick if it cannot read the setting.
+	ThresholdMinutes int `json:"threshold_minutes,omitempty"`
 	// LongWindowsLive: at the evaluation, windows the summary would serve were
 	// being read live instead (summaryBackfillComplete was false).
 	//
@@ -370,7 +433,11 @@ type FlowSummaryHealth struct {
 // FlowSummaryTierHealth is one tier's verdict and what the banner needs to
 // phrase it.
 type FlowSummaryTierHealth struct {
-	Verdict        string    `json:"verdict"`
+	Verdict string `json:"verdict"`
+	// StallClass says why a stalled tier is stalled (FlowSummaryStall*).
+	StallClass string `json:"stall_class,omitempty"`
+	// ProgressAt is when a tier that is behind last got anywhere.
+	ProgressAt     time.Time `json:"progress_at"`
 	LastOKAt       time.Time `json:"last_ok_at"`
 	FailingSince   time.Time `json:"failing_since"`
 	CaughtUp       bool      `json:"caught_up"`
@@ -390,7 +457,7 @@ func (d *Database) EvaluateFlowSummaryHealth(ctx context.Context, now time.Time,
 		thresholdMinutes = FlowSummaryDefaultStallMinutes
 	}
 	threshold := time.Duration(thresholdMinutes) * time.Minute
-	h := FlowSummaryHealth{EvaluatedAt: now.UTC(), Tiers: map[string]FlowSummaryTierHealth{}}
+	h := FlowSummaryHealth{EvaluatedAt: now.UTC(), ThresholdMinutes: thresholdMinutes, Tiers: map[string]FlowSummaryTierHealth{}}
 	if complete, err := d.WithContext(ctx).summaryBackfillState(); err == nil {
 		live := !complete
 		h.LongWindowsLive = &live
@@ -409,12 +476,13 @@ func (d *Database) EvaluateFlowSummaryHealth(ctx context.Context, now time.Time,
 	for _, tier := range flowSummaryTiers {
 		th := FlowSummaryTierHealth{Verdict: FlowSummaryUnknown}
 		if stErr == nil && probeErr == nil {
-			th.Verdict = flowSummaryVerdict(st, tier.interval, now, threshold, processStart, rollupsExist)
+			th.Verdict, th.StallClass = flowSummaryJudge(st, tier.interval, now, threshold, processStart, rollupsExist)
 		}
 		if st != nil {
 			if ts := st.Tiers[tier.interval]; ts != nil {
 				th.LastOKAt, th.FailingSince, th.CaughtUp = ts.LastOKAt, ts.FailingSince, ts.CaughtUp
 				th.FilledTo, th.OwnedTo, th.LastErrorClass = ts.FilledTo, ts.OwnedTo, ts.LastErrorClass
+				th.ProgressAt = ts.ProgressAt
 			}
 		}
 		h.Tiers[tier.interval] = th

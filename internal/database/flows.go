@@ -450,7 +450,7 @@ type flowStatsBudget struct {
 // aggregates in one request. It is deliberately well under WriteTimeout: the
 // raw-side queries, JSON encoding and the network write all have to fit in
 // what is left.
-const flowStatsRollupBudget = 20 * time.Second
+var flowStatsRollupBudget = 20 * time.Second // a var so a test can spend it
 
 // flowStatsRollupConcurrency caps how many rolled-up panels query at once.
 //

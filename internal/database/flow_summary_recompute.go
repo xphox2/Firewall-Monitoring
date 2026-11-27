@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -58,6 +59,10 @@ var (
 	recomputeBlockedCycles int
 )
 
+// flowSummaryConsumeHook is a test-only injection point at the start of
+// consumeRecomputeRequest (the one step of a cycle that runs before any tier).
+var flowSummaryConsumeHook func()
+
 func recomputeCursorKey(interval string) string { return "flow_summary_recompute_" + interval }
 func recomputeDoneKey(interval string) string   { return "flow_summary_recompute_" + interval + "_done" }
 func recomputeRetryKey(interval string) string {
@@ -90,8 +95,39 @@ func (m recomputeMark) String() string {
 	return fmt.Sprintf("%d|%s", m.rev, m.bucket.UTC().Format(time.RFC3339))
 }
 
-func (d *Database) recomputeCursor(interval string) (recomputeMark, bool) {
-	raw, ok := d.GetSettingValue(recomputeCursorKey(interval))
+// The recompute's state is a handful of settings: a request, and per tier a
+// cursor, a retry list and a done mark. Every decision that WRITES or DELETES
+// one of them reads what it needs through recomputeRead, which reports a failed
+// read. (Two reads that only shape the STATUS text stay lenient: the boundary
+// probe behind its "waiting" reason, and the readers the API uses.)
+//
+// WHY: GetSettingValue answers "" for a database error exactly as for a key
+// that was never written, and here "absent" is never neutral. A cursor read
+// as absent let consumeRecomputeRequest overwrite it with the request's later
+// bucket, so the buckets in between were never recomputed. A retry list read
+// as absent was then SAVED as empty, which deletes the key: buckets still
+// holding pre-reclassification rows were forgotten, the tier finished "done"
+// and the service boundary was removed for good. One transient error each.
+//
+// Strict means the READ. A value that was read and does not parse is treated
+// as absent, as it always was — a garbled cursor that aborted every cycle
+// would stall the rebuild (and the hybrid read with it) until someone edited
+// the setting by hand.
+type recomputeSettings map[string]string
+
+func (d *Database) recomputeRead(keys ...string) (recomputeSettings, error) {
+	vals, err := d.summarySettings(context.Background(), keys...)
+	return recomputeSettings(vals), err
+}
+
+// has reports whether the key is present at all (a blank value is present).
+func (v recomputeSettings) has(key string) bool {
+	_, ok := v[key]
+	return ok
+}
+
+func (v recomputeSettings) cursor(interval string) (recomputeMark, bool) {
+	raw, ok := v[recomputeCursorKey(interval)]
 	if !ok {
 		return recomputeMark{}, false
 	}
@@ -102,9 +138,27 @@ func (d *Database) recomputeCursor(interval string) (recomputeMark, bool) {
 	return m, ok
 }
 
+func (v recomputeSettings) retries(interval string) []time.Time {
+	return parseRecomputeRetries(v[recomputeRetryKey(interval)])
+}
+
+// recomputeCursor and recomputeRetries are the LENIENT readers, for reporting
+// only (the status the API shows). Nothing that writes may be decided on them.
+func (d *Database) recomputeCursor(interval string) (recomputeMark, bool) {
+	raw, ok := d.GetSettingValue(recomputeCursorKey(interval))
+	if !ok {
+		return recomputeMark{}, false
+	}
+	return recomputeSettings{recomputeCursorKey(interval): raw}.cursor(interval)
+}
+
 func (d *Database) recomputeRetries(interval string) []time.Time {
-	raw, ok := d.GetSettingValue(recomputeRetryKey(interval))
-	if !ok || raw == "" {
+	raw, _ := d.GetSettingValue(recomputeRetryKey(interval))
+	return parseRecomputeRetries(raw)
+}
+
+func parseRecomputeRetries(raw string) []time.Time {
+	if raw == "" {
 		return nil
 	}
 	var stamps []string
@@ -151,14 +205,26 @@ func (d *Database) deleteSetting(key string) {
 // earlier bucket; an older one is ignored. The request is then deleted only if
 // unchanged, so a newer request posted meanwhile survives to the next cycle.
 func (d *Database) consumeRecomputeRequest() {
-	raw, ok := d.GetSettingValue(flowSummaryRecomputeRequestKey)
-	if !ok || raw == "" {
+	if flowSummaryConsumeHook != nil {
+		flowSummaryConsumeHook()
+	}
+	keys := []string{flowSummaryRecomputeRequestKey}
+	for _, tier := range flowSummaryTiers {
+		keys = append(keys, recomputeCursorKey(tier.interval))
+	}
+	vals, err := d.recomputeRead(keys...)
+	if err != nil {
+		log.Printf("Flow summary: recompute request not consumed this cycle: %v", err)
+		return // the request is kept; retried next cycle
+	}
+	raw := vals[flowSummaryRecomputeRequestKey]
+	if raw == "" {
 		return
 	}
 	req, ok := parseRecomputeMark(raw)
 	if ok {
 		for _, tier := range flowSummaryTiers {
-			cur, has := d.recomputeCursor(tier.interval)
+			cur, has := vals.cursor(tier.interval)
 			next := recomputeMark{rev: req.rev, bucket: tier.bucketOf(req.bucket)}
 			switch {
 			case !has || req.rev > cur.rev:
@@ -227,37 +293,55 @@ func (d *Database) GetFlowSummaryRecomputeStatus() FlowSummaryRecomputeStatus {
 	return st
 }
 
-// reclassificationBusy: stored history is mid-rewrite (a run due or under
-// way), so buckets rebuilt now could mix old and new classifications. A run
-// that finishes posts a fresh request, so nothing waiting here is lost.
-func (d *Database) reclassificationBusy() bool {
-	if d.FlowReclassDoneRev() < d.FlowReclassTargetRev() {
-		return true
-	}
-	_, running := d.loadReclassState()
-	return running
-}
-
 // runSummaryRecompute runs the recompute step for every tier, daily first,
 // with whatever the cycle's deadline leaves, then removes the service
 // boundary once everything is rebuilt. Returns the buckets recomputed.
 func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[string]tierBounds, deadline time.Time, rep *summaryReporter) int {
 	var st FlowSummaryRecomputeStatus
-	if raw, ok := d.GetSettingValue(flowSummaryRecomputeStatusKey); ok {
+	// The status is history (how many buckets are done, at what rate). If it
+	// cannot be READ this cycle it is not written either: writing would
+	// replace that history with this cycle's zeroes.
+	// The tiers' cursors come with it: the status's revision is taken from
+	// them, and a cursor read as absent would reset the counters to zero for
+	// a rebuild that is in fact advancing.
+	statusKeys := []string{flowSummaryRecomputeStatusKey}
+	for _, tier := range ordered {
+		statusKeys = append(statusKeys, recomputeCursorKey(tier.interval))
+	}
+	statusVals, statusErr := d.recomputeRead(statusKeys...)
+	if statusErr != nil {
+		log.Printf("Flow summary: recompute status unreadable, not updated this cycle: %v", statusErr)
+	} else if raw := statusVals[flowSummaryRecomputeStatusKey]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &st)
 	}
 	if st.Tiers == nil {
 		st.Tiers = map[string]*FlowSummaryRecomputeTier{}
 	}
+	// A stored null entry (a hand edit, a truncated write) would be
+	// dereferenced by both loops below, on every cycle.
+	for k, ts := range st.Tiers {
+		if ts == nil {
+			delete(st.Tiers, k)
+		}
+	}
 	// A newer revision's rebuild starts its counts afresh.
 	for _, tier := range ordered {
-		if cur, ok := d.recomputeCursor(tier.interval); ok && cur.rev != st.Rev {
+		if cur, ok := statusVals.cursor(tier.interval); ok && cur.rev != st.Rev {
 			st.Rev = cur.rev
 			st.Tiers = map[string]*FlowSummaryRecomputeTier{}
 			break
 		}
 	}
-	busy := d.reclassificationBusy()
+	// Read strictly, like the rest of the step's state: "is a
+	// reclassification due or running?" read as "no" on a failed read would
+	// let a tier walk — and finish — while history is being rewritten under
+	// it. Unreadable means busy for this cycle.
+	busy := true
+	if vals, err := d.recomputeRead(FlowReclassDoneRevKey, FlowReclassTargetRevKey, flowReclassStateKey); err != nil {
+		log.Printf("Flow summary: reclassification state unreadable; the recompute waits this cycle: %v", err)
+	} else {
+		busy = reclassBusyFrom(vals)
+	}
 	st.WaitingReason = ""
 	total := 0
 	anyActive := false
@@ -296,7 +380,7 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 		st.WaitingReason = "a summary bucket keeps failing; see the log"
 		stateChanged = true
 	}
-	if anyActive || total > 0 || stateChanged {
+	if statusErr == nil && (anyActive || total > 0 || stateChanged) {
 		st.UpdatedAt = time.Now().UTC()
 		b, _ := json.Marshal(st)
 		_ = d.setReclassSetting(flowSummaryRecomputeStatusKey, string(b))
@@ -311,8 +395,22 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 // a rebuild pending after this cycle.
 func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline time.Time, busy bool,
 	ts *FlowSummaryRecomputeTier, st *FlowSummaryRecomputeStatus) (recomputed int, active bool) {
-	cur, hasCur := d.recomputeCursor(tier.interval)
-	retries := d.recomputeRetries(tier.interval)
+	wait := func(reason string) (int, bool) {
+		ts.State = "waiting"
+		if st.WaitingReason == "" {
+			st.WaitingReason = reason
+		}
+		return 0, true
+	}
+	vals, err := d.recomputeRead(recomputeCursorKey(tier.interval), recomputeRetryKey(tier.interval))
+	if err != nil {
+		// Nothing is decided, and above all nothing is saved, on a read that
+		// failed: see recomputeSettings.
+		log.Printf("Flow summary: %s recompute state unreadable this cycle: %v", tier.interval, err)
+		return wait("the rebuild's progress could not be read; retrying")
+	}
+	cur, hasCur := vals.cursor(tier.interval)
+	retries := vals.retries(tier.interval)
 	if !hasCur && len(retries) == 0 {
 		if ts.State != "done" && ts.State != "" {
 			ts.State = "done"
@@ -326,13 +424,6 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 		// A cursor on a tier recorded as done is a new walk (a same-revision
 		// re-arm): its counts start afresh.
 		*ts = FlowSummaryRecomputeTier{}
-	}
-	wait := func(reason string) (int, bool) {
-		ts.State = "waiting"
-		if st.WaitingReason == "" {
-			st.WaitingReason = reason
-		}
-		return 0, true
 	}
 	if !b.valid {
 		return wait("the summary pass failed; see the log")
@@ -483,7 +574,15 @@ func (d *Database) recomputeTier(tier flowSummaryTier, b tierBounds, deadline ti
 func (d *Database) finishRecomputeTier(tier flowSummaryTier, cur recomputeMark, hasCur bool, ts *FlowSummaryRecomputeTier) {
 	rev := cur.rev
 	if !hasCur {
-		rev = d.FlowReclassDoneRev()
+		// Read strictly: a failed read would record the tier as done for
+		// revision 0, which holds the service boundary until the next
+		// reclassification.
+		vals, err := d.recomputeRead(FlowReclassDoneRevKey)
+		if err != nil {
+			log.Printf("Flow summary: %s rebuild not recorded as done this cycle: %v", tier.interval, err)
+			return
+		}
+		rev = parseDoneRev(vals[FlowReclassDoneRevKey])
 	}
 	if err := d.setReclassSetting(recomputeDoneKey(tier.interval), strconv.Itoa(int(rev))); err != nil {
 		log.Printf("Flow summary: could not record the %s rebuild as done: %v", tier.interval, err)
@@ -502,26 +601,51 @@ func (d *Database) finishRecomputeTier(tier flowSummaryTier, cur recomputeMark, 
 // bucket has been rebuilt for the current classification: both tiers done for
 // the same revision, which is the completed and current one, with no request
 // pending, no reclassification running and nothing left to retry.
+// reclassBusyFrom: stored history is mid-rewrite (a reclassification due or
+// under way), so buckets rebuilt now could mix old and new classifications. A
+// run that finishes posts a fresh request, so nothing waiting here is lost.
+// Decided from values the caller has already read STRICTLY — the completed
+// revision, the target revision and the running state — never from a read
+// that can turn an error into "not busy".
+func reclassBusyFrom(vals recomputeSettings) bool {
+	if parseDoneRev(vals[FlowReclassDoneRevKey]) < parseTargetRev(vals[FlowReclassTargetRevKey]) {
+		return true
+	}
+	var running reclassState
+	raw := vals[flowReclassStateKey]
+	return raw != "" && json.Unmarshal([]byte(raw), &running) == nil && running.Rev != 0
+}
+
 func (d *Database) maybeClearServiceSince() {
-	if _, ok := d.GetSettingValue(flowSummaryServiceSinceKey); !ok {
-		return
-	}
-	if _, pending := d.GetSettingValue(flowSummaryRecomputeRequestKey); pending {
-		return
-	}
-	if d.reclassificationBusy() {
-		return
-	}
-	done := d.FlowReclassDoneRev()
+	// Removing the boundary cannot be undone (only a migration ever wrote
+	// it), so every fact it rests on is read strictly and in one go: a failed
+	// read of "is a request pending?" or "is a reclassification due?" must
+	// not be taken for "no".
+	keys := []string{flowSummaryServiceSinceKey, flowSummaryRecomputeRequestKey,
+		FlowReclassDoneRevKey, FlowReclassTargetRevKey, flowReclassStateKey}
 	for _, tier := range flowSummaryTiers {
-		raw, ok := d.GetSettingValue(recomputeDoneKey(tier.interval))
-		if !ok || raw != strconv.Itoa(int(done)) {
+		keys = append(keys, recomputeDoneKey(tier.interval), recomputeCursorKey(tier.interval), recomputeRetryKey(tier.interval))
+	}
+	vals, err := d.recomputeRead(keys...)
+	if err != nil {
+		log.Printf("Flow summary: service boundary left in place this cycle: %v", err)
+		return
+	}
+	if !vals.has(flowSummaryServiceSinceKey) || vals.has(flowSummaryRecomputeRequestKey) {
+		return
+	}
+	done := parseDoneRev(vals[FlowReclassDoneRevKey])
+	if reclassBusyFrom(vals) {
+		return
+	}
+	for _, tier := range flowSummaryTiers {
+		if raw, ok := vals[recomputeDoneKey(tier.interval)]; !ok || raw != strconv.Itoa(int(done)) {
 			return
 		}
-		if _, has := d.recomputeCursor(tier.interval); has {
+		if _, has := vals.cursor(tier.interval); has {
 			return
 		}
-		if len(d.recomputeRetries(tier.interval)) > 0 {
+		if len(vals.retries(tier.interval)) > 0 {
 			return
 		}
 	}

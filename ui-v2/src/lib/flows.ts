@@ -277,6 +277,8 @@ export function exportFlowsCsv(rows: Array<Record<string, unknown>>): string {
 /** GET /admin/api/flows/summary/status — the poller's last judgement of the flow summary. */
 export interface FlowSummaryTierHealth {
   verdict: 'ok' | 'failing' | 'catching_up' | 'stalled' | 'unknown';
+  stall_class?: 'failing' | 'no_cycle' | 'no_progress';
+  progress_at?: string;
   last_ok_at?: string;
   failing_since?: string;
   caught_up?: boolean;
@@ -333,8 +335,18 @@ export function flowSummaryStatusText(v?: FlowSummaryHealth | null): string {
         : '';
   const ok = summaryWhen(worst.last_ok_at);
   switch (worst.verdict) {
-    case 'stalled':
+    case 'stalled': {
+      // Why it is stalled changes what is true to say: a rebuild that makes
+      // no progress has passes that SUCCEED.
+      if (worst.stall_class === 'no_progress') {
+        const moved = summaryWhen(worst.progress_at);
+        return `The ${worstName} flow summary is rebuilding but has made no progress${moved ? ` since ${moved}` : ''}.${live} See the poller log.`;
+      }
+      if (worst.stall_class === 'no_cycle') {
+        return `The flow summary has shown no sign of life for some time (${worstName} tier): a pass is hung, or it is not being run.${live} See the poller log.`;
+      }
       return `The ${worstName} flow summary has not updated${ok ? ` since ${ok}` : ''}.${live} See the poller log.`;
+    }
     case 'failing':
       return `The ${worstName} flow summary failed its last update${ok ? ` (last good ${ok})` : ''}; retrying.${live}`;
     default: {
