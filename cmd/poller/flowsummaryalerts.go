@@ -107,17 +107,27 @@ func flowSummaryConditions(h database.FlowSummaryHealth, minutes int) []alerts.S
 		}
 		switch {
 		case minutes <= 0:
-			// Alerting is off: resolve whatever is open.
+			// Alerting is off: resolve whatever is open, without claiming
+			// the tier recovered.
+			c.Recovery = fmt.Sprintf("Alerting on the %s flow summary is switched off (threshold 0).", t.name)
 		case th.Verdict == database.FlowSummaryStalled:
 			c.Breached = true
 			since := "since the poller started"
 			if !th.LastOKAt.IsZero() {
 				since = "since " + th.LastOKAt.UTC().Format("2006-01-02 15:04 UTC")
 			}
-			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). "+
-				"Long windows on the Flows page are read live meanwhile: slow, and possibly partial. "+
-				"See the poller log for \"Flow summary:\" lines.", t.name, since, minutes)
+			// What a reader of the Flows page gets depends on the tier: one
+			// that is not caught up sends long windows to the live read; one
+			// that fails on a single bucket is still served, with that
+			// bucket's figures out of date.
+			effect := "Long windows on the Flows page still use the summary, with figures that may be out of date."
+			if !th.CaughtUp {
+				effect = "Long windows on the Flows page are read live meanwhile: slow, and possibly partial."
+			}
+			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). %s "+
+				"See the poller log for \"Flow summary:\" lines.", t.name, since, minutes, effect)
 			if th.LastErrorClass != "" {
+				c.Message += " Last failure: " + th.LastErrorClass + "."
 				c.Fields["error_class"] = th.LastErrorClass
 			}
 		case th.Verdict == database.FlowSummaryOK, th.Verdict == database.FlowSummaryCatchingUp:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,11 @@ func TestFlowSummaryAlert_ZeroTurnsTheAlertOffNotTheVerdict(t *testing.T) {
 	// A longer threshold than the failure: not stalled yet, so no alert.
 	setStallMinutes(t, db, "180")
 	p.checkFlowSummaryHealth()
+	// Asserted on the VERDICT: the alert's own cooldown would hide a fire here
+	// whatever the threshold did.
+	if h, _ = db.GetFlowSummaryHealth(t.Context()); h.Tiers["1h"].Verdict != database.FlowSummaryFailing {
+		t.Fatalf("120 minutes into a 180-minute threshold the verdict is %q, want failing", h.Tiers["1h"].Verdict)
+	}
 	if got := openSummaryAlerts(t, db, "1h"); got != 0 {
 		t.Fatalf("a 180-minute threshold fired after 120 minutes (%d open)", got)
 	}
@@ -196,5 +202,48 @@ func TestCheckServerHealth_RunsTheFlowSummaryCheck(t *testing.T) {
 	h, err := db.GetFlowSummaryHealth(t.Context())
 	if err != nil || h.EvaluatedAt.IsZero() {
 		t.Fatalf("the server-health tick stored no flow summary evaluation: %+v err=%v", h, err)
+	}
+}
+
+// TestFlowSummaryConditions_MessageSaysWhatTheReaderGets: a stalled tier that
+// is not caught up sends long windows to the live read; one that fails on a
+// single bucket is still served, stale. The alert must not claim the first
+// for the second, and it names the kind of failure. Switching alerting off
+// resolves without claiming a recovery.
+func TestFlowSummaryConditions_MessageSaysWhatTheReaderGets(t *testing.T) {
+	lastOK := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
+	h := database.FlowSummaryHealth{Tiers: map[string]database.FlowSummaryTierHealth{
+		"1h": {Verdict: database.FlowSummaryStalled, LastOKAt: lastOK, CaughtUp: true, LastErrorClass: "timeout"},
+		"1d": {Verdict: database.FlowSummaryStalled, CaughtUp: false},
+	}}
+	byTier := map[string]alerts.ServerCondition{}
+	for _, c := range flowSummaryConditions(h, 60) {
+		byTier[c.Fields["tier"]] = c
+	}
+	hourly, daily := byTier["1h"], byTier["1d"]
+	if !hourly.Breached || !daily.Breached {
+		t.Fatalf("stalled tiers not breached: %+v / %+v", hourly, daily)
+	}
+	for _, want := range []string{"hourly", "since 2026-11-27 09:00 UTC", "still use the summary", "Last failure: timeout."} {
+		if !strings.Contains(hourly.Message, want) {
+			t.Errorf("hourly message lacks %q: %s", want, hourly.Message)
+		}
+	}
+	if strings.Contains(hourly.Message, "read live") {
+		t.Errorf("a caught-up tier is said to be read live: %s", hourly.Message)
+	}
+	if hourly.Fields["error_class"] != "timeout" {
+		t.Errorf("error_class field = %q", hourly.Fields["error_class"])
+	}
+	for _, want := range []string{"daily", "since the poller started", "read live"} {
+		if !strings.Contains(daily.Message, want) {
+			t.Errorf("daily message lacks %q: %s", want, daily.Message)
+		}
+	}
+
+	for _, c := range flowSummaryConditions(h, 0) {
+		if c.Breached || !strings.Contains(c.Recovery, "switched off") {
+			t.Errorf("threshold 0: breached=%v recovery=%q", c.Breached, c.Recovery)
+		}
 	}
 }

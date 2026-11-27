@@ -440,7 +440,7 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		// The fwmon server's own volumes; see serverhealth.
 		"server_disk_threshold":     85,
 		"server_disk_free_floor_gb": 5,
-		// FLOW_SUMMARY_STALLED; the poller's default (cmd/poller/flowsummaryalerts.go).
+		// FLOW_SUMMARY_STALLED; the default the poller applies.
 		"flow_summary_stall_alert_minutes": database.FlowSummaryDefaultStallMinutes,
 	}
 	keys := []string{

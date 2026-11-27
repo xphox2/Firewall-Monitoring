@@ -339,6 +339,10 @@ func TestFlowSummaryVerdict(t *testing.T) {
 		{"failing before a restart", state(ago(300), tier(ago(300), ago(400), ago(390), true)), ago(1), true, FlowSummaryUnknown},
 		{"failing through a restart, an hour on", state(ago(2), tier(ago(2), ago(400), ago(390), true)), ago(61), true, FlowSummaryStalled},
 		{"rebuilding", state(ago(2), tier(ago(2), ago(2), never, false)), longUp, true, FlowSummaryCatchingUp},
+		// Restarted five minutes ago; a cycle has STARTED (and may be hung),
+		// but this tier's "ok" is still the one from before the restart.
+		{"cycle started, no pass yet in this process", state(ago(1), tier(ago(300), ago(300), never, true)), ago(5), true, FlowSummaryUnknown},
+		{"same, an hour on with the cycle still alive", state(ago(1), tier(ago(300), ago(300), never, true)), ago(70), true, FlowSummaryUnknown},
 		{"no pass recorded for the tier", state(ago(2), nil), longUp, true, FlowSummaryUnknown},
 	}
 	for _, c := range cases {
@@ -468,5 +472,40 @@ func TestGetFlowStats_SaysWhichReadServedIt(t *testing.T) {
 	}
 	if from, why := served(24, FlowStatsFilter{SrcAddr: "10.0.0.1"}); from != FlowServedMaterialized || why != "" {
 		t.Fatalf("address filter: served_from=%q reason=%q, want materialized", from, why)
+	}
+}
+
+// TestFlowSummaryState_CorruptRecordIsReplaced: a record that does not parse
+// never will. The next cycle starts a new one; left in place it would make
+// every verdict "unknown" for good — no banner and no alert, silently.
+func TestFlowSummaryState_CorruptRecordIsReplaced(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	builtSummary(t, d, 3)
+	if err := flowSummaryStateWrite(d, "{not json"); err != nil {
+		t.Fatal(err)
+	}
+	start := now.Add(-10 * time.Hour)
+	if v := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start).Tiers["1h"].Verdict; v != FlowSummaryUnknown {
+		t.Fatalf("corrupt record: verdict = %q, want unknown", v)
+	}
+	*now = now.Add(5 * time.Minute)
+	d.RunFlowSummaryCycle()
+	if v := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start).Tiers["1h"].Verdict; v != FlowSummaryOK {
+		t.Fatalf("after the next cycle the verdict is %q, want ok (the record was not replaced)", v)
+	}
+
+	// An UNREADABLE record is not replaced: that would erase last_ok_at.
+	before, _ := d.GetSettingValue(FlowSummaryStateKey)
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, FlowSummaryStateKey) {
+			return errors.New("connection reset")
+		}
+		return nil
+	}
+	*now = now.Add(5 * time.Minute)
+	d.RunFlowSummaryCycle()
+	if after, _ := d.GetSettingValue(FlowSummaryStateKey); after != before {
+		t.Fatal("a cycle that could not read the record overwrote it")
 	}
 }

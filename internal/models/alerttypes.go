@@ -43,7 +43,7 @@ func AllAlertTypes() []AlertTypeInfo {
 		{AlertTypeMemoryHigh, FamilyMetrics, "Memory usage above threshold"},
 		{AlertTypeDiskHigh, FamilyMetrics, "Disk usage above threshold"},
 		{AlertTypeServerDiskHigh, FamilyMetrics, "Firewall-Mon server's own disk volume above threshold or low on free space"},
-		{AlertTypeFlowSummaryStalled, FamilyMetrics, "A flow summary tier has had no successful pass for its threshold; long Flows windows fall back to a slow live read"},
+		{AlertTypeFlowSummaryStalled, FamilyMetrics, "A flow summary tier has had no successful pass for its threshold; long Flows windows are read live (slowly) or show out-of-date figures"},
 		{AlertTypeSessionsHigh, FamilyMetrics, "Session count above threshold"},
 		{AlertTypeTrafficSpike, FamilyMetrics, "Throughput anomaly vs the device's own baseline"},
 

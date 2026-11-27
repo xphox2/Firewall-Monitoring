@@ -118,8 +118,8 @@ type FlowSummaryTierState struct {
 	FilledTo time.Time `json:"filled_to"`
 }
 
-// summaryReporter keeps the health record for one cycle. Every method is safe
-// on a nil receiver, and none of them can fail a pass: the record describes
+// summaryReporter keeps the health record for one cycle. progress, tierDone
+// and flush are safe on a nil receiver, and none of them can fail a pass: the record describes
 // the summariser, it must never be a reason the summariser did less.
 type summaryReporter struct {
 	d         *Database
@@ -130,12 +130,18 @@ type summaryReporter struct {
 // newSummaryReporter loads the previous record and stamps the cycle's start.
 // If the previous record cannot be READ the cycle records nothing: writing a
 // fresh one would erase last_ok_at, and with it the evidence of how long a
-// tier has been failing.
+// tier has been failing. A record that was read but does not PARSE is
+// different — it will never parse, so it is replaced; left alone it would make
+// every verdict "unknown" for good.
 func (d *Database) newSummaryReporter() *summaryReporter {
-	st, _, err := d.flowSummaryState(context.Background())
-	if err != nil {
+	st, present, err := d.flowSummaryState(context.Background())
+	if err != nil && !present {
 		log.Printf("Flow summary: health record unreadable, not updated this cycle: %v", err)
 		return nil
+	}
+	if err != nil {
+		log.Printf("Flow summary: health record corrupt, starting a new one: %v", err)
+		st = nil
 	}
 	r := &summaryReporter{d: d}
 	if st != nil {
@@ -291,8 +297,12 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	if failing {
 		return FlowSummaryFailing
 	}
-	// 5. No pass has completed for this tier.
-	if tier == nil || tier.LastPassAt.IsZero() {
+	// 5. No pass has completed for this tier IN THIS PROCESS. Rule 2 is not
+	// enough on its own: a cycle that has merely started stamps
+	// cycle_progress_at, and if it then hangs the tier's record is still the
+	// "ok" from before the restart — which would resolve an open alert that
+	// rule 3 is about to raise again.
+	if tier == nil || !tier.LastPassAt.After(processStart) {
 		return FlowSummaryUnknown
 	}
 	// 6. Passes succeed but history is still being built; long windows are

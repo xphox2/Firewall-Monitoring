@@ -167,4 +167,11 @@ func TestFlowSummaryStatusWired(t *testing.T) {
 	if !strings.Contains(string(v2), "/admin/api/flows/summary/status") {
 		t.Error("the v2 Flows page does not load the summary status")
 	}
+	v2alerting, err := os.ReadFile("../../ui-v2/src/pages/AlertingWorkspace.tsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(v2alerting), "key: 'flow_summary_stall_alert_minutes'") {
+		t.Error("the v2 Alerting page does not list the flow summary stall threshold")
+	}
 }

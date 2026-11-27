@@ -305,7 +305,7 @@ func defaultEventRules() []models.EventRule {
 			CooldownMinutes: func() *int { v := 360; return &v }(),
 			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_gate_unreadable"}`},
 		// Gen 9. An explicit 6 h cooldown for the same reason as the rules above.
-		{Name: "Default: Flow summary stalled", Description: "A tier of the flow summary (the pre-aggregate behind the Flows page's 7, 30 and 90 day windows) has had no successful pass for the configured time (Alerting: flow summary stall minutes, default 60). Long windows fall back to a live read that is slow and may be partial. One alert per tier; matchable field: tier (1h, 1d).",
+		{Name: "Default: Flow summary stalled", Description: "A tier of the flow summary (the pre-aggregate behind the Flows page's 7, 30 and 90 day windows) has had no successful pass for the configured time (Alerting: flow summary stall minutes, default 60). Long windows are then either read live (slow, possibly partial) or served with out-of-date figures. One alert per tier; matchable field: tier (1h, 1d).",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeFlowSummaryStalled, SeedVersion: seedVerFlowSummary,
 			CooldownMinutes: func() *int { v := 360; return &v }(),
