@@ -293,17 +293,6 @@ func (d *Database) GetFlowSummaryRecomputeStatus() FlowSummaryRecomputeStatus {
 	return st
 }
 
-// reclassificationBusy: stored history is mid-rewrite (a run due or under
-// way), so buckets rebuilt now could mix old and new classifications. A run
-// that finishes posts a fresh request, so nothing waiting here is lost.
-func (d *Database) reclassificationBusy() bool {
-	if d.FlowReclassDoneRev() < d.FlowReclassTargetRev() {
-		return true
-	}
-	_, running := d.loadReclassState()
-	return running
-}
-
 // runSummaryRecompute runs the recompute step for every tier, daily first,
 // with whatever the cycle's deadline leaves, then removes the service
 // boundary once everything is rebuilt. Returns the buckets recomputed.
@@ -612,8 +601,12 @@ func (d *Database) finishRecomputeTier(tier flowSummaryTier, cur recomputeMark, 
 // bucket has been rebuilt for the current classification: both tiers done for
 // the same revision, which is the completed and current one, with no request
 // pending, no reclassification running and nothing left to retry.
-// reclassBusyFrom is reclassificationBusy decided from values already read
-// (the completed revision, the target revision and the running state).
+// reclassBusyFrom: stored history is mid-rewrite (a reclassification due or
+// under way), so buckets rebuilt now could mix old and new classifications. A
+// run that finishes posts a fresh request, so nothing waiting here is lost.
+// Decided from values the caller has already read STRICTLY — the completed
+// revision, the target revision and the running state — never from a read
+// that can turn an error into "not busy".
 func reclassBusyFrom(vals recomputeSettings) bool {
 	if parseDoneRev(vals[FlowReclassDoneRevKey]) < parseTargetRev(vals[FlowReclassTargetRevKey]) {
 		return true
