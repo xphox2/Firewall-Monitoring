@@ -28,9 +28,12 @@ import (
 // cutoff lands in the hourly or daily rollup band and both paths truncate at the
 // same boundary, so they agree exactly (verified at 7d and 90d on production).
 //
-// Below the threshold the live path is also quick enough: 24 h completes in
-// 9.5 s, and its top-N lists are exact where the summary's are a per-bucket
-// merge.
+// Below the threshold the plain summary read is therefore never used. Windows
+// of 7 to 48 hours get the HYBRID read instead (flow_summary_hybrid.go), which
+// keeps the 5-minute truncation by reading the cutoff's hour from the rollup
+// rows themselves. ("Quick enough" was once the argument for leaving them on
+// the live read: 24 h took 9.5 s when this was written, and 14-21 s a few
+// months of growth later.)
 //
 // A var, not a const, so tests can force either path and compare them — which is
 // the only way to assert the two agree.

@@ -96,6 +96,12 @@ type flowStatsRun struct {
 	h          *gorm.DB // every query goes through this handle
 	cutoff     time.Time
 	useSummary bool
+	// hybrid: the request is eligible for the hybrid read
+	// (flow_summary_hybrid.go). hybridServed and hybridReason are flowStats'
+	// report of what its plan decided.
+	hybrid       bool
+	hybridServed bool
+	hybridReason string
 	// serviceSince is when flows began recording a service port (see
 	// serviceSinceBoundary); zero when every row has one. A window starting
 	// before it shows Top services for the part after it only.
@@ -177,10 +183,14 @@ func (d *Database) GetFlowStats(hours int, filter FlowStatsFilter) (*FlowStatsRe
 	return d.GetFlowStatsOpts(hours, filter, FlowStatsOptions{})
 }
 
+// flowStatsNow is the clock a request takes its window from; a variable so a
+// test can read the same window twice.
+var flowStatsNow = time.Now
+
 // GetFlowStatsOpts is GetFlowStats with progress reporting and, for the
 // streamed endpoint, a budget scaled to the window.
 func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts FlowStatsOptions) (*FlowStatsResult, error) {
-	now := time.Now()
+	now := flowStatsNow()
 	cutoff := now.Add(-time.Duration(hours) * time.Hour)
 	parent := d.db.Statement.Context
 	// Read before anything is pinned, like useSummary: it queries through d.
@@ -189,10 +199,15 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 	if !FlowStatsMaterializes(hours, filter) {
 		// Decided here, before anything is pinned: summaryBackfillComplete
 		// queries through d.
+		// The hybrid read is decided first and is exclusive with the summary
+		// read: a window is one or the other by its width, and a test that
+		// lowers flowSummaryMinHours to force the summary read must not have a
+		// hybrid-eligible window taken from under it — nor the reverse.
+		hybrid := flowHybridEligible(hours, filter) && hours <= flowSummaryMinHours
 		summaryCandidate := hours > flowSummaryMinHours && flowSummaryCompatible(filter)
 		useSummary := summaryCandidate && d.summaryBackfillComplete()
 		run := &flowStatsRun{
-			h: d.db, cutoff: cutoff, useSummary: useSummary, serviceSince: serviceSince,
+			h: d.db, cutoff: cutoff, useSummary: useSummary, hybrid: hybrid, serviceSince: serviceSince,
 			concurrency: flowStatsRollupConcurrency,
 			budget:      newFlowStatsBudget(parent, flowStatsRollupBudget),
 			progress:    opts.Progress, total: 20,
@@ -207,6 +222,11 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 				res.ServedFrom = FlowServedRaw
 			case useSummary:
 				res.ServedFrom = FlowServedSummary
+			case run.hybridServed:
+				res.ServedFrom = FlowServedHybrid
+			case hybrid:
+				res.ServedFrom = FlowServedLive
+				res.SummaryBypassReason = run.hybridReason
 			default:
 				res.ServedFrom = FlowServedLive
 				if summaryCandidate {
