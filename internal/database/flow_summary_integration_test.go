@@ -124,3 +124,68 @@ func TestFlowSummaryIntegration_ExactAndEngineSafe(t *testing.T) {
 		t.Errorf("a second pass changed the totals from %+v to %+v; the writer is merging, not recomputing", before, got)
 	}
 }
+
+// TestFlowSummaryIntegration_ChunkedDirtyScan runs the piece-by-piece dirty
+// scan on PostgreSQL: the id-range statement, the timestamp scan of each piece
+// and the merged walk are all engine code the SQLite lane cannot vouch for.
+func TestFlowSummaryIntegration_ChunkedDirtyScan(t *testing.T) {
+	d := NewIntegrationDB(t)
+	base := time.Now().UTC().Add(-12 * time.Hour).Truncate(time.Hour)
+	const hours = 8
+	seed := func(h int, bytes uint64, src string) {
+		if err := d.db.Create(&models.FlowRollup{
+			Timestamp: base.Add(time.Duration(h)*time.Hour + 5*time.Minute),
+			DeviceID:  1, IntervalType: "5m",
+			SrcAddr: src, DstAddr: "8.8.8.8", DstPort: 443, Protocol: 6,
+			BytesSum: bytes, PacketsSum: 1, FlowCount: 1,
+		}).Error; err != nil {
+			t.Fatalf("seed hour %d: %v", h, err)
+		}
+	}
+	for h := 0; h < hours; h++ {
+		seed(h, 100, "10.0.0.1")
+	}
+	for i := 0; i < 5; i++ {
+		d.RunFlowSummaryCycle()
+	}
+	watermark := d.summaryWatermark("1h")
+	if watermark == 0 {
+		t.Fatal("precondition: no watermark after the build")
+	}
+
+	orig := flowSummaryDirtyScanChunk
+	flowSummaryDirtyScanChunk = 2
+	t.Cleanup(func() { flowSummaryDirtyScanChunk = orig; flowSummaryDirtyChunkHook = nil })
+	// Newest hour first, so id order is the reverse of time order.
+	for h := hours - 1; h >= 0; h-- {
+		seed(h, 90000, "10.0.0.9")
+	}
+	statements := 0
+	flowSummaryDirtyChunkHook = func(iv string, lo, hi int64) error {
+		if iv == "1h" {
+			statements++
+			if hi-lo > 2 {
+				t.Errorf("statement over ids (%d, %d] is wider than the chunk of 2", lo, hi)
+			}
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle() // ONE pass
+	if statements < hours/2 {
+		t.Fatalf("%d new ids in pieces of 2 need at least %d statements; the scan issued %d",
+			hours, hours/2, statements)
+	}
+	for h := 0; h < hours; h++ {
+		bucket := base.Add(time.Duration(h) * time.Hour)
+		var want, got uint64
+		d.db.Model(&models.FlowRollup{}).
+			Where("timestamp >= ? AND timestamp < ?", bucket, bucket.Add(time.Hour)).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&want)
+		d.db.Model(&models.FlowSummary{}).
+			Where("interval_type = ? AND timestamp = ?", "1h", bucket).
+			Select("COALESCE(SUM(bytes_sum),0)").Scan(&got)
+		if got != want || want != 90100 {
+			t.Fatalf("bucket %d holds %d bytes against %d in the source (want 90100)", h, got, want)
+		}
+	}
+}
