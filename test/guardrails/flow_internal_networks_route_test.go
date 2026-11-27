@@ -148,8 +148,10 @@ func TestFlowSummaryStatusWired(t *testing.T) {
 	if !strings.Contains(flows, "AC.apiFetch('/admin/api/flows/summary/status')") || strings.Count(flows, "loadSummaryStatus();") < 2 {
 		t.Error("the Flows page does not load the summary status on both entry paths")
 	}
-	if !strings.Contains(flows, "refreshSummaryStatus();\n        var gen = ++statsGen;") {
-		t.Error("the summary status is not refreshed when the statistics reload (a tab left open would never learn of a stall)")
+	// The classic Flows page never reloads its statistics on a timer, so the
+	// status line needs one of its own.
+	if !strings.Contains(flows, "pollWhenVisible(refreshSummaryStatus, 300000)") {
+		t.Error("the summary status has no timer: a tab left open would never learn of a stall")
 	}
 	common := readJS(t, "admin-common.js")
 	if !strings.Contains(common, "flowSummaryStatusText: flowSummaryStatusText") {
