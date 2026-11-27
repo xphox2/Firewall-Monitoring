@@ -31,6 +31,7 @@ func summaryAlertPoller(t *testing.T, now, start time.Time) (*Poller, *database.
 	flowSummaryProcessStart = start
 	// What the tick remembers between evaluations belongs to one process.
 	resetTickMemory := func() {
+		flowSummaryLaunchedAt.Store(0)
 		flowSummaryNoCycleSeen = map[string]bool{}
 		flowSummaryLastThreshold.minutes, flowSummaryLastThreshold.known = 0, false
 	}
@@ -440,7 +441,7 @@ func TestFlowSummaryConditions_MessageNamesTheCause(t *testing.T) {
 			t.Errorf("no-progress message says %q: %s", not, stuck.Message)
 		}
 	}
-	if !stuck.Breached || stuck.Fields["stall_class"] != database.FlowSummaryStallNoProgress || stuck.Fields["error_class"] != "" {
+	if !stuck.Breached || stuck.Fields["stall_class"] != database.FlowSummaryStallNoProgress || stuck.Fields["error_class"] != "timeout" {
 		t.Errorf("no-progress condition: breached=%v fields=%v", stuck.Breached, stuck.Fields)
 	}
 	// Progress from before this poller started is not quoted as the wait.
@@ -457,5 +458,39 @@ func TestFlowSummaryConditions_MessageNamesTheCause(t *testing.T) {
 	failing := message(database.FlowSummaryStallFailing, database.FlowSummaryTierHealth{LastOKAt: progress, LastErrorClass: "timeout"})
 	if !strings.Contains(failing.Message, "no successful update since 2026-11-27 10:30 UTC") || !strings.Contains(failing.Message, "Last failure: timeout.") {
 		t.Errorf("failing message: %s", failing.Message)
+	}
+}
+
+// TestFlowSummaryAlert_NoCycleIsNotJudgedRightAfterALaunch: counting two
+// evaluations is not enough when no cycle could run between them — the first
+// check sees a stale stamp, a long rollup holds the loop past the next tick,
+// and the second check runs in the instant after the summariser was launched
+// and before its first write. A check within a minute of a launch does not
+// judge this cause and does not count as a sighting; a launch long ago (a pass
+// that is hung) does not excuse anything.
+func TestFlowSummaryAlert_NoCycleIsNotJudgedRightAfterALaunch(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	p, db := summaryAlertPoller(t, now, now.Add(-10*time.Hour))
+	ago := func(min int) time.Time { return now.Add(-time.Duration(min) * time.Minute) }
+	quiet := summaryTierRecord{lastPass: ago(70), lastOK: ago(70), caughtUp: true}
+	writeSummaryRecord(t, db, ago(70), map[string]summaryTierRecord{"1h": quiet, "1d": quiet})
+	open := func() int64 { return openSummaryAlerts(t, db, "1h") + openSummaryAlerts(t, db, "1d") }
+
+	p.checkFlowSummaryHealth() // first sighting
+	flowSummaryLaunchedAt.Store(now.Add(-2 * time.Second).UnixNano())
+	p.checkFlowSummaryHealth() // would be the second, but a cycle was launched 2 s ago
+	if got := open(); got != 0 {
+		t.Fatalf("%d alert(s) raised two seconds after a summary cycle was launched", got)
+	}
+	if h, _ := db.GetFlowSummaryHealth(t.Context()); h.Tiers["1h"].Verdict != database.FlowSummaryUnknown {
+		t.Fatalf("verdict right after a launch is %q, want unknown", h.Tiers["1h"].Verdict)
+	}
+
+	// The launch was an hour ago and still nothing has been written: hung.
+	// The sighting before the launch still counts, so this one acts.
+	flowSummaryLaunchedAt.Store(ago(60).UnixNano())
+	p.checkFlowSummaryHealth()
+	if got := open(); got != 2 {
+		t.Fatalf("a pass launched an hour ago with no sign of life raised %d alert(s), want one per tier", got)
 	}
 }

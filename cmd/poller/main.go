@@ -150,6 +150,9 @@ func (p *Poller) startFlowSummaryAsync() {
 			return
 		}
 		defer release()
+		// The health check must not judge "no cycle alive" in the instant
+		// between this launch and the cycle's first write (flowsummaryalerts.go).
+		flowSummaryLaunchedAt.Store(time.Now().UnixNano())
 		p.db.RunFlowSummaryCycle()
 	})
 }

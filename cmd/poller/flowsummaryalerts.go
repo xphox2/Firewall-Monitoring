@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"firewall-mon/internal/alerts"
@@ -71,7 +72,7 @@ func (p *Poller) checkFlowSummaryHealth() {
 
 	// The verdict is computed whatever the threshold says (0 uses the default).
 	h := p.db.EvaluateFlowSummaryHealth(ctx, now, minutes, flowSummaryProcessStart)
-	flowSummaryDebounceNoCycle(&h)
+	flowSummaryDebounceNoCycle(&h, now)
 	if err := p.db.SaveFlowSummaryHealth(ctx, h); err != nil {
 		log.Printf("flow summary health: store the evaluation: %v", err)
 	}
@@ -105,6 +106,16 @@ func flowSummaryThresholdFallback(ctx context.Context, db *database.Database) in
 // this process found no summary cycle alive.
 var flowSummaryNoCycleSeen = map[string]bool{}
 
+// flowSummaryLaunchedAt is when this process last launched a summary cycle
+// (unix nanoseconds; set by startFlowSummaryAsync once it holds the lock).
+var flowSummaryLaunchedAt atomic.Int64
+
+// flowSummaryLaunchGrace is how long after a launch "no cycle alive" is not
+// judged at all. The cycle's first write follows its launch by one settings
+// read; a minute is orders of magnitude more than that and far below the
+// smallest threshold (30 minutes), so a pass that is really hung is not hidden.
+const flowSummaryLaunchGrace = time.Minute
+
 // flowSummaryDebounceNoCycle makes "no summary cycle shows signs of life"
 // count only on its second evaluation in a row; the first is reported as
 // unknown, which neither raises nor resolves an alert.
@@ -118,17 +129,28 @@ var flowSummaryNoCycleSeen = map[string]bool{}
 // the two runs first is not something to reason about (two attempts to do so
 // each left a race): a state that lasts one evaluation is simply not acted on.
 //
+// Counting evaluations is not quite enough on its own: after a gap, the first
+// check can see the stale stamp, a long rollup can then hold the loop past the
+// next tick, and the second check can again run in the instant before the new
+// cycle's first write — two sightings, no cycle in between. So a check that
+// runs within flowSummaryLaunchGrace of a launch does not judge this cause at
+// all, and does not count as a sighting.
+//
 // The price is that a summariser that really is hung, or never runs, is
 // reported one evaluation (five minutes) later. The other two causes of a
 // stall are not delayed: each already takes two passes to establish.
-func flowSummaryDebounceNoCycle(h *database.FlowSummaryHealth) {
+func flowSummaryDebounceNoCycle(h *database.FlowSummaryHealth, now time.Time) {
+	launched := flowSummaryLaunchedAt.Load()
+	justLaunched := launched != 0 && now.Sub(time.Unix(0, launched)) < flowSummaryLaunchGrace && !now.Before(time.Unix(0, launched))
 	for interval, th := range h.Tiers {
 		noCycle := th.Verdict == database.FlowSummaryStalled && th.StallClass == database.FlowSummaryStallNoCycle
-		if noCycle && !flowSummaryNoCycleSeen[interval] {
+		if noCycle && (justLaunched || !flowSummaryNoCycleSeen[interval]) {
 			th.Verdict, th.StallClass = database.FlowSummaryUnknown, ""
 			h.Tiers[interval] = th
 		}
-		flowSummaryNoCycleSeen[interval] = noCycle
+		if !(noCycle && justLaunched) {
+			flowSummaryNoCycleSeen[interval] = noCycle
+		}
 	}
 }
 
@@ -217,9 +239,14 @@ func flowSummaryConditions(h database.FlowSummaryHealth, minutes int, processSta
 			if th.StallClass != "" {
 				c.Fields["stall_class"] = th.StallClass
 			}
-			if th.LastErrorClass != "" && th.StallClass == database.FlowSummaryStallFailing {
-				c.Message += " Last failure: " + th.LastErrorClass + "."
+			// The field is attached whenever the tier has a last failure, as
+			// before, so a rule scoped on it keeps matching; the sentence is
+			// only true of a tier that is stalled BECAUSE it fails.
+			if th.LastErrorClass != "" {
 				c.Fields["error_class"] = th.LastErrorClass
+				if th.StallClass == database.FlowSummaryStallFailing {
+					c.Message += " Last failure: " + th.LastErrorClass + "."
+				}
 			}
 		case th.Verdict == database.FlowSummaryOK, th.Verdict == database.FlowSummaryCatchingUp:
 			// Healthy, or rebuilding with passes succeeding: resolve.

@@ -28,23 +28,28 @@ All notable changes to this project are documented in this file.
   holding pre-reclassification figures were forgotten and the tier finished
   "done"); and the service boundary — which cannot be restored — could be
   removed because "is a reclassification due?" read as "no".
-- Every decision that writes or deletes that state now reads it strictly and
-  does nothing for the cycle if the read fails. A value that is read but does
+- The decisions that write or delete that state — and "is a reclassification
+  due or running?", which gates them — now read strictly and do nothing for
+  the cycle if the read fails. A value that is read but does
   not parse is still treated as absent, as before.
 - The rebuild's status (buckets done, rate) is no longer overwritten with
   zeroes by a cycle that could not read it.
 
 ### Fixed — Smaller things in the same area
 
-- A panic in the steps of a summary cycle that run outside a tier ended the
-  cycle with nothing recorded, while the cycle's own start stamp kept saying
-  the summariser was alive. Both steps are now contained; the tiers still run.
-  A stored rebuild status with a null entry no longer panics every cycle.
+- Two steps of a summary cycle run outside any tier. A panic in the first
+  ended the cycle before either tier ran, with nothing recorded, while the
+  cycle's own start stamp kept saying the summariser was alive; a panic in
+  the second cost that step — the post-reclassification rebuild — every cycle,
+  silently. Both are now contained and logged with a stack trace, and the
+  tiers still run. A stored rebuild status with a null entry no longer panics
+  every cycle.
 - The "no summary cycle alive" stall could fire for a single check after the
   poller's loop had been blocked for the threshold (a long rollup cycle, a
   database outage), and its cooldown would then mute a real stall. It is now
-  acted on only when two checks in a row find it — five minutes later for a
-  summariser that really is hung.
+  acted on only when two checks in a row find it, and never within a minute
+  of a summary cycle being launched — five minutes later for a summariser
+  that really is hung.
 - When the stall threshold cannot be read, the Flows page's verdict is judged
   against the threshold last in use instead of the default.
 

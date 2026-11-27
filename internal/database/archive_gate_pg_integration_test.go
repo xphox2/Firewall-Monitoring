@@ -264,7 +264,8 @@ func TestArchiveGate_Syslog_PG(t *testing.T) {
 			// calendar instead is an hour off whenever a daylight-saving
 			// change falls inside the window, and this then reported the
 			// hour of rows production rightly kept as "expired rows left" —
-			// on any machine not in UTC, for a month after each autumn change.
+			// on any machine not in UTC, for a month after a daylight-saving
+			// change.
 			ln := now.Local()
 			if n := gatePGCount(t, d, `SELECT count(*) FROM syslog_messages WHERE ("timestamp" < ? AND severity <= 5) OR ("timestamp" < ? AND severity >= 6)`,
 				SyslogWindow{Days: 30}.Cutoff(ln).Add(-time.Minute), SyslogWindow{Days: 7}.Cutoff(ln).Add(-time.Minute)); n != 0 {

@@ -98,7 +98,8 @@ func (m recomputeMark) String() string {
 // The recompute's state is a handful of settings: a request, and per tier a
 // cursor, a retry list and a done mark. Every decision that WRITES or DELETES
 // one of them reads what it needs through recomputeRead, which reports a failed
-// read.
+// read. (Two reads that only shape the STATUS text stay lenient: the boundary
+// probe behind its "waiting" reason, and the readers the API uses.)
 //
 // WHY: GetSettingValue answers "" for a database error exactly as for a key
 // that was never written, and here "absent" is never neutral. A cursor read
@@ -311,7 +312,14 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 	// The status is history (how many buckets are done, at what rate). If it
 	// cannot be READ this cycle it is not written either: writing would
 	// replace that history with this cycle's zeroes.
-	statusVals, statusErr := d.recomputeRead(flowSummaryRecomputeStatusKey)
+	// The tiers' cursors come with it: the status's revision is taken from
+	// them, and a cursor read as absent would reset the counters to zero for
+	// a rebuild that is in fact advancing.
+	statusKeys := []string{flowSummaryRecomputeStatusKey}
+	for _, tier := range ordered {
+		statusKeys = append(statusKeys, recomputeCursorKey(tier.interval))
+	}
+	statusVals, statusErr := d.recomputeRead(statusKeys...)
 	if statusErr != nil {
 		log.Printf("Flow summary: recompute status unreadable, not updated this cycle: %v", statusErr)
 	} else if raw := statusVals[flowSummaryRecomputeStatusKey]; raw != "" {
@@ -329,13 +337,22 @@ func (d *Database) runSummaryRecompute(ordered []flowSummaryTier, bounds map[str
 	}
 	// A newer revision's rebuild starts its counts afresh.
 	for _, tier := range ordered {
-		if cur, ok := d.recomputeCursor(tier.interval); ok && cur.rev != st.Rev {
+		if cur, ok := statusVals.cursor(tier.interval); ok && cur.rev != st.Rev {
 			st.Rev = cur.rev
 			st.Tiers = map[string]*FlowSummaryRecomputeTier{}
 			break
 		}
 	}
-	busy := d.reclassificationBusy()
+	// Read strictly, like the rest of the step's state: "is a
+	// reclassification due or running?" read as "no" on a failed read would
+	// let a tier walk — and finish — while history is being rewritten under
+	// it. Unreadable means busy for this cycle.
+	busy := true
+	if vals, err := d.recomputeRead(FlowReclassDoneRevKey, FlowReclassTargetRevKey, flowReclassStateKey); err != nil {
+		log.Printf("Flow summary: reclassification state unreadable; the recompute waits this cycle: %v", err)
+	} else {
+		busy = reclassBusyFrom(vals)
+	}
 	st.WaitingReason = ""
 	total := 0
 	anyActive := false
@@ -595,6 +612,17 @@ func (d *Database) finishRecomputeTier(tier flowSummaryTier, cur recomputeMark, 
 // bucket has been rebuilt for the current classification: both tiers done for
 // the same revision, which is the completed and current one, with no request
 // pending, no reclassification running and nothing left to retry.
+// reclassBusyFrom is reclassificationBusy decided from values already read
+// (the completed revision, the target revision and the running state).
+func reclassBusyFrom(vals recomputeSettings) bool {
+	if parseDoneRev(vals[FlowReclassDoneRevKey]) < parseTargetRev(vals[FlowReclassTargetRevKey]) {
+		return true
+	}
+	var running reclassState
+	raw := vals[flowReclassStateKey]
+	return raw != "" && json.Unmarshal([]byte(raw), &running) == nil && running.Rev != 0
+}
+
 func (d *Database) maybeClearServiceSince() {
 	// Removing the boundary cannot be undone (only a migration ever wrote
 	// it), so every fact it rests on is read strictly and in one go: a failed
@@ -613,13 +641,8 @@ func (d *Database) maybeClearServiceSince() {
 	if !vals.has(flowSummaryServiceSinceKey) || vals.has(flowSummaryRecomputeRequestKey) {
 		return
 	}
-	// reclassificationBusy, from the values just read.
 	done := parseDoneRev(vals[FlowReclassDoneRevKey])
-	if done < parseTargetRev(vals[FlowReclassTargetRevKey]) {
-		return
-	}
-	var running reclassState
-	if raw := vals[flowReclassStateKey]; raw != "" && json.Unmarshal([]byte(raw), &running) == nil && running.Rev != 0 {
+	if reclassBusyFrom(vals) {
 		return
 	}
 	for _, tier := range flowSummaryTiers {

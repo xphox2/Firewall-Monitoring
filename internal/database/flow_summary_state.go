@@ -127,9 +127,11 @@ type FlowSummaryTierState struct {
 	// day without progress.
 	//
 	// StuckPasses counts consecutive SUCCESSFUL passes that ended behind with
-	// the marker where it was. A failed pass neither adds to it nor clears it:
-	// failures are rule 1's, and letting one clear the count would let a tier
-	// alternating between failing and stuck escape both rules.
+	// the marker where it was. A failed pass that got nowhere neither adds to
+	// it nor clears it: failures are rule 1's, and letting one clear the count
+	// would let a tier alternating between failing and stuck escape both
+	// rules. (A failed pass that did move the marker is progress like any
+	// other.)
 	ProgressAt  time.Time `json:"progress_at"`
 	StuckPasses int       `json:"stuck_passes"`
 }
@@ -209,10 +211,15 @@ func (r *summaryReporter) tierDone(interval string, b tierBounds, err error) {
 	}
 	now := flowSummaryNow().UTC()
 	ts := r.state.Tiers[interval]
-	first := ts == nil
-	if first {
-		ts = &FlowSummaryTierState{ProgressAt: now}
+	// "First" includes a tier recorded by a version that did not keep
+	// ProgressAt: its clock starts now, not at year one.
+	first := ts == nil || ts.ProgressAt.IsZero()
+	if ts == nil {
+		ts = &FlowSummaryTierState{}
 		r.state.Tiers[interval] = ts
+	}
+	if first {
+		ts.ProgressAt, ts.StuckPasses = now, 0
 	}
 	ts.LastPassAt = now
 	if err == nil {

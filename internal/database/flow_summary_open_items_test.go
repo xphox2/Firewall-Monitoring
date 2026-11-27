@@ -553,3 +553,62 @@ func TestFlowSummaryVerdict_NoProgress(t *testing.T) {
 		t.Errorf("no cycle alive: %q (%q)", v, cls)
 	}
 }
+
+// TestFlowSummaryRecompute_UnreadableReclassStateMeansBusy: the recompute must
+// not walk while history is being rewritten. "Is a reclassification due or
+// running?" used to read as "no" when the read failed, so the tier could walk,
+// finish and mark itself done mid-rewrite.
+func TestFlowSummaryRecompute_UnreadableReclassStateMeansBusy(t *testing.T) {
+	d, base := reclassDoneFixture(t)
+	t.Cleanup(func() { flowSummaryRecomputeHook = nil })
+	cursor := recomputeMark{rev: 3, bucket: base}.String()
+	arm := func() {
+		t.Helper()
+		if err := d.setReclassSetting(recomputeCursorKey("1h"), cursor); err != nil {
+			t.Fatal(err)
+		}
+		d.deleteSetting(recomputeDoneKey("1h"))
+	}
+	walked := 0
+	flowSummaryRecomputeHook = func(string, time.Time) error { walked++; return nil }
+
+	// Control: readable and not busy, the tier walks.
+	arm()
+	d.RunFlowSummaryCycle()
+	if walked == 0 {
+		t.Fatal("precondition: this fixture does not walk when the reclassification state is readable")
+	}
+
+	arm()
+	walked = 0
+	failReadsOf(flowReclassStateKey)
+	d.RunFlowSummaryCycle()
+	if walked != 0 {
+		t.Fatalf("the recompute walked %d bucket(s) without knowing whether a reclassification was running", walked)
+	}
+	if got, _ := settingRaw(t, d, recomputeCursorKey("1h")); got != cursor {
+		t.Fatalf("the cursor moved to %q", got)
+	}
+}
+
+// TestFlowSummaryState_RecordWithoutProgressFieldsStartsItsClockNow: a tier
+// recorded by a version that did not keep progress_at has a zero one. Its
+// first pass under this version stamps it, so the Flows page and the alert
+// have a real "since" instead of none.
+func TestFlowSummaryState_RecordWithoutProgressFieldsStartsItsClockNow(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	base, _ := builtSummary(t, d, 3)
+	// The record as v0.11.463 wrote it: a tier with no progress fields.
+	old := `{"cycle_progress_at":"2026-01-01T00:00:00Z","tiers":{"1h":{"last_pass_at":"2026-01-01T00:00:00Z","last_ok_at":"2026-01-01T00:00:00Z","caught_up":true}}}`
+	if err := flowSummaryStateWrite(d, old); err != nil {
+		t.Fatal(err)
+	}
+	newerHours(t, d, base, 3, 2)
+	starve()
+	*now = now.Add(5 * time.Minute)
+	d.RunFlowSummaryCycle()
+	if st := summaryState(t, d).Tiers["1h"]; !st.ProgressAt.Equal(*now) || st.StuckPasses != 0 {
+		t.Fatalf("an old record's tier was not given a progress time on its first pass: %+v", st)
+	}
+}
