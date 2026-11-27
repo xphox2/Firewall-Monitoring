@@ -1,6 +1,60 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.463] - 2026-11-27
+
+### Changed — The 24-hour Flows window no longer scans every 5-minute row
+
+- Windows of 7 to 48 hours, the default 24 hours among them, were answered by
+  reading every 5-minute rollup row in the window: about two million rows on
+  a busy install, 14–21 s against a 20 s limit, where a few months earlier it
+  had been 9.5 s. They could not simply use the hourly summary the longer
+  windows use, because the summary can only cut a window at an hour and the
+  page cuts it at five minutes (1.1 GB short at 48 hours when it was tried).
+- These windows now use a **hybrid read**: the hourly summary for the window's
+  whole hours, and the 5-minute rows only at its two edges — the hour the
+  window starts in, and the newest hours the summary has not folded in yet.
+  Which hours those are is read from the summariser's own progress marker, so
+  rows a rollup cycle has just committed are counted from the rollup rows
+  themselves rather than missed until the next summary pass.
+- Measured on a production table (24 h, 2.1 million rows in the window): the
+  totals query 94 ms against 3.9 s, the chart 74 ms, top conversations
+  267 ms.
+- It is used only when the summary is demonstrably current for the window. If
+  it is rebuilding, stalled, mid-reclassification, or cannot be checked, the
+  request runs the previous read unchanged — complete, merely slower — and
+  the response says so (`served_from: live` with a `summary_bypass_reason`;
+  `hybrid` otherwise). This is expected for one summary pass a day, after the
+  daily promotion.
+- **Visible differences on 7–48 hour windows:**
+  - Top sources, destinations, conversations, services and networks are now a
+    merge of per-hour top-50 lists, as on the 7, 30 and 90 day windows, and
+    no longer an exact ranking. The measured bound is 10–55 MB against a
+    tenth entry of 562–2,607 MB. Rows with an empty address, service port 0
+    or network 0 are left out of these lists, as they already are on the
+    longer windows.
+  - The unique sources / destinations tiles are still computed from the
+    5-minute rows. They are now the slowest thing on the page (several
+    seconds); if one runs out of time, that tile alone is marked partial.
+- Not used when a protocol, application, direction, country, source or event
+  filter is set: those requests are read as before.
+- `docs/OPERATIONS.md` (Failure modes) lists the reasons a window is read
+  live.
+
+### Tests
+
+- `flow_summary_hybrid_test.go`: the hybrid response is compared whole with
+  the live read's — every panel and flag — across window sizes, device and
+  probe filters, rows stamped exactly on both boundaries, rows the summary
+  has not seen, a bucket the summariser failed on, and a row committed while
+  the request is running. Thirteen reasons for refusing are each shown to end
+  in the live read, including its progress steps and a single read of the raw
+  samples.
+- A PostgreSQL integration test runs the hybrid read and, for the first time,
+  the summary read through the statistics call on PostgreSQL.
+- The top-N readers and the summary's writer now share one definition of how
+  a list value is derived from a row.
+
 ## [0.11.462] - 2026-11-27
 
 ### Added — A stalled flow summary is now visible, and alerts
