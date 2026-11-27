@@ -1240,22 +1240,7 @@ func (d *Database) writeSummaryBucketScalars(tx *gorm.DB, src func() *gorm.DB, t
 // from here — a reader applying a cube filter must report these panels as
 // degraded rather than show unfiltered talkers beside filtered totals.
 func (d *Database) writeSummaryTops(tx *gorm.DB, src func() *gorm.DB, tier flowSummaryTier, bucket time.Time) error {
-	dims := []struct {
-		name string
-		expr string
-		skip string
-	}{
-		{flowSummaryDimSrcAddr, "src_addr", "src_addr <> ''"},
-		{flowSummaryDimDstAddr, "dst_addr", "dst_addr <> ''"},
-		// service_port replaced dst_port in v0.11.263 (Top services). Buckets
-		// written earlier carry the old dimension and none of this one; the
-		// reader gates on flow_summary_service_since for that.
-		{flowSummaryDimServicePort, d.dialect.CastText("service_port"), "service_port > 0"},
-		{flowSummaryDimDstASN, d.dialect.CastText("dst_asn"), "dst_asn <> 0"},
-		{flowSummaryDimConversation,
-			d.dialect.Concat("src_addr", "'|'", "dst_addr", "'|'", d.dialect.CastText("dst_port"), "'|'", d.dialect.CastText("protocol")),
-			"src_addr <> '' AND dst_addr <> ''"},
-	}
+	dims := flowSummaryTopDimensions(d.dialect)
 
 	// The key set is identical for every dimension, so read it once.
 	var keys []struct {

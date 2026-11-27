@@ -544,6 +544,10 @@ func (b *flowStatsBudget) skip(block string) {
 // (see the unique panels in flowStats), not because anything ran out of time.
 const flowUniqueSummaryReason = "not available for summary windows (last hour only)"
 
+// flowPartialTimedOut is the reason on a tile whose own query did not finish
+// on a response that is otherwise complete (see rollupJob.softOnHybrid).
+const flowPartialTimedOut = "did not finish in time (last hour only)"
+
 // partial records a panel that is complete as far as it goes but covers less
 // than the window for a stated reason. Unlike skip it does not make the result
 // Degraded.
@@ -601,6 +605,9 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	cutoff := run.cutoff
 	result := &FlowStatsResult{}
 	budget := run.budget
+	if flowStatsBeforeRawHook != nil {
+		flowStatsBeforeRawHook()
+	}
 	run.step("Reading recent samples")
 
 	// Determine which data source to use:
@@ -797,6 +804,61 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		aggBase = newSummaryBase
 	}
 
+	// --- Hybrid bases (flow_summary_hybrid.go) --------------------------------
+	//
+	// A hybrid-eligible request registers the LIVE read's panels and gives them
+	// bases that decide, when they are finally called, which rows to read:
+	// edges + summary middle if the plan accepted, flow_rollups as ever if it
+	// refused. The plan is made in flushRollups — after every raw read, before
+	// any base is called — so a refused request issues exactly the live read's
+	// SQL. That is the point of dispatching here instead of building a second
+	// set of panels: "refused" cannot drift from "live".
+	var hybridPlan flowHybridPlanResult
+	hybridOn := func() bool { return run.hybrid && hybridPlan.ok }
+	hourly := hourlySummaryTier()
+	// Edge rows: the live rollup base (filters and probe filter included)
+	// narrowed to the head and the tail. timestamp > cutoff comes with the base.
+	hybridEdge := func() *gorm.DB {
+		return newSourceRollupBase().Where("(timestamp < ? OR timestamp >= ?)", hybridPlan.headEnd, hybridPlan.tailStart)
+	}
+	// Middle rows of a summary table: the hourly tier only (a daily row inside
+	// the window would be a different, coarser copy of the same traffic), in
+	// the half-open range the summariser itself uses for a bucket.
+	hybridMiddleRange := func(q *gorm.DB) *gorm.DB {
+		return q.Where("interval_type = ? AND timestamp > ? AND timestamp >= ? AND timestamp < ?",
+			hourly.interval, cutoff, hybridPlan.headEnd, hybridPlan.tailStart)
+	}
+	hybridCubeBase := func() *gorm.DB {
+		middle := applyCommonFilters(hybridMiddleRange(session().Model(&models.FlowSummary{})))
+		if filter.ProbeID > 0 {
+			middle = middle.Where("device_id IN (SELECT id FROM devices WHERE probe_id = ?)", filter.ProbeID)
+		}
+		return flowHybridCube(session, d.dialect, hybridEdge(), middle)
+	}
+	hybridTopsBase := func(dimension string) func() *gorm.DB {
+		return func() *gorm.DB {
+			if !hybridOn() {
+				return newRollupBase().Where("scope_local = ?", false)
+			}
+			dim, err := flowSummaryTopDimensionNamed(d.dialect, dimension)
+			if err != nil {
+				// Unreachable for the constants passed below; an impossible
+				// predicate fails the panel rather than reading the wrong rows.
+				return session().Model(&models.FlowSummaryTop{}).Where("1 = 0")
+			}
+			middle := applySummaryDeviceFilters(hybridMiddleRange(session().Model(&models.FlowSummaryTop{})), filter)
+			return flowHybridTops(session, dim, hybridEdge(), middle)
+		}
+	}
+	if run.hybrid {
+		aggBase = func() *gorm.DB {
+			if hybridOn() {
+				return hybridCubeBase()
+			}
+			return newRollupBase()
+		}
+	}
+
 	// runRollup SCHEDULES one rolled-up panel; it does not run it. `query` fills
 	// the panel's own local variables, and `merge` folds them into the response.
 	// Queries run concurrently in flushRollups; merges run afterwards, one at a
@@ -817,16 +879,67 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		base  func() *gorm.DB
 		query func(*gorm.DB) error
 		merge func()
+		// hybridOnly: the job exists only for the hybrid read and is dropped
+		// when the plan refuses, so a refused request runs the live read's
+		// jobs and no others.
+		hybridOnly bool
+		// softOnHybrid: on a hybrid response, this job failing makes its own
+		// tile partial instead of the whole page degraded (the unique-address
+		// scans, which are the only full-window scans the hybrid read keeps).
+		softOnHybrid bool
 	}
 	var rollupJobs []*rollupJob
-	runRollup := func(block string, base func() *gorm.DB, query func(*gorm.DB) error, merge func()) {
-		rollupJobs = append(rollupJobs, &rollupJob{block: block, base: base, query: query, merge: merge})
+	runRollup := func(block string, base func() *gorm.DB, query func(*gorm.DB) error, merge func()) *rollupJob {
+		job := &rollupJob{block: block, base: base, query: query, merge: merge}
+		rollupJobs = append(rollupJobs, job)
+		return job
+	}
+	// topsJob schedules a top-N panel on whichever read serves it. sumQ reads
+	// a flow_summary_tops-shaped table, liveQ reads flow_rollups; the hybrid
+	// read uses sumQ over edges + middle, and liveQ if its plan refuses.
+	topsJob := func(block, dimension string, sumQ, liveQ func(*gorm.DB) error, merge func()) {
+		switch {
+		case summaryTopsUsable:
+			runRollup(block, newSummaryTopBase, sumQ, merge)
+		case useSummary:
+			budget.skip(block)
+		case run.hybrid:
+			runRollup(block, hybridTopsBase(dimension), func(q *gorm.DB) error {
+				if hybridOn() {
+					return sumQ(q)
+				}
+				return liveQ(q)
+			}, merge)
+		default:
+			runRollup(block, func() *gorm.DB { return newRollupBase().Where("scope_local = ?", false) }, liveQ, merge)
+		}
 	}
 
 	// flushRollups runs every scheduled panel, then merges the ones that
 	// succeeded. Concurrency is bounded so a single page load cannot drain the
 	// connection pool.
 	flushRollups := func() {
+		// The hybrid plan, made here and nowhere earlier: after every raw read
+		// (see flowHybridPlan for why the order matters) and before any panel
+		// base is built. A refusal drops the hybrid-only jobs, so what is left
+		// is exactly the live read.
+		if run.hybrid {
+			hybridPlan = flowHybridPlanResult{reason: flowHybridRefusedProbe}
+			if ctx, cancel, ok := budget.context(); ok {
+				hybridPlan = d.flowHybridPlan(ctx, session().WithContext(ctx), cutoff)
+				cancel()
+			}
+			run.hybridServed, run.hybridReason = hybridPlan.ok, hybridPlan.reason
+			if !hybridPlan.ok {
+				kept := rollupJobs[:0]
+				for _, job := range rollupJobs {
+					if !job.hybridOnly {
+						kept = append(kept, job)
+					}
+				}
+				rollupJobs = kept
+			}
+		}
 		if len(rollupJobs) == 0 {
 			run.expect(0)
 			return
@@ -860,14 +973,30 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
+				soft := job.softOnHybrid && hybridOn()
 				q, cancel, ok := budget.bound(job.base())
 				if !ok {
-					budget.skip(job.block)
+					if soft {
+						budget.partial(job.block, flowPartialTimedOut)
+					} else {
+						budget.skip(job.block)
+					}
 					return
 				}
 				defer cancel()
-				err := job.query(q)
-				budget.note(job.block, err)
+				var err error
+				if flowStatsJobHook != nil {
+					err = flowStatsJobHook(job.block)
+				}
+				if err == nil {
+					err = job.query(q)
+				}
+				if err != nil && soft {
+					log.Printf("Flow stats: %s did not complete on the hybrid read (%v); tile marked partial", job.block, err)
+					budget.partial(job.block, flowPartialTimedOut)
+				} else {
+					budget.note(job.block, err)
+				}
 				okFlags[i] = err == nil
 			}(i, job)
 		}
@@ -1019,6 +1148,11 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 			// The base here is d.db, not a rollup base: the rollup query is the
 			// SUBQUERY, wrapped so the planner can hash the distinct set instead
 			// of sorting it inside an aggregate.
+			// On the hybrid read these two stay exactly as they are — a
+			// full-window scan of the 5-minute tier each — because the summary
+			// has no honest window-level unique count (see above). They are
+			// then the slowest thing on the page by far, so there a failure
+			// costs only its own tile.
 			runRollup("unique_"+u.col, session,
 				func(q *gorm.DB) error {
 					return q.Table("(?) as distinct_vals", newRollupBase().Select("DISTINCT "+u.col)).
@@ -1026,7 +1160,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				}, func() {
 					*u.dst += n
 					result.UniqueApproximate = true
-				})
+				}).softOnHybrid = true
 		}
 
 		// The cube has no sampling column, so when reading the summary the range
@@ -1036,14 +1170,23 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		// dimension columns, so under such a filter it would report the range for
 		// ALL traffic beside filtered totals — quietly, since nothing else would
 		// hint at it.
+		// On the hybrid read the edges' range rides with the totals (their
+		// rows carry sampling_rate_avg) and this panel supplies the middle's.
+		// It is hybrid-only: a refused request must not run it.
 		if useSummary && !summaryTopsUsable {
 			budget.skip("sampling")
-		} else if useSummary {
+		} else if useSummary || run.hybrid {
 			var sampling struct {
 				Min float64
 				Max float64
 			}
-			runRollup("sampling", newSummaryBucketBase, func(q *gorm.DB) error {
+			bucketBase := newSummaryBucketBase
+			if run.hybrid {
+				bucketBase = func() *gorm.DB {
+					return applySummaryDeviceFilters(hybridMiddleRange(session().Model(&models.FlowSummaryBucket{})), filter)
+				}
+			}
+			runRollup("sampling", bucketBase, func(q *gorm.DB) error {
 				return q.Select("COALESCE(MIN(NULLIF(sampling_rate_min,0)),0) as min, " +
 					"COALESCE(MAX(sampling_rate_max),0) as max").Scan(&sampling).Error
 			}, func() {
@@ -1053,7 +1196,7 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				if sampling.Max > result.SamplingRateMax {
 					result.SamplingRateMax = sampling.Max
 				}
-			})
+			}).hybridOnly = run.hybrid
 		}
 	}
 
@@ -1104,6 +1247,10 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	filteredAggBase := newFilteredRollupBase
 	if useSummary {
 		filteredAggBase = newFilteredSummaryBase
+	}
+	if run.hybrid {
+		// aggBase already dispatches on the plan.
+		filteredAggBase = func() *gorm.DB { return aggBase().Where("scope_local = ?", false) }
 	}
 
 	// Protocol distribution (from raw; supplement with rollups).
@@ -1309,32 +1456,25 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 		if useRollups {
 			var rollup []KeyCount
 			mergeASNs := func() { result.TopASNs = mergeKeyCounts(out, rollup, flowTopDisplay) }
-			switch {
-			case summaryTopsUsable:
-				runRollup("top_asns", newSummaryTopBase, func(q *gorm.DB) error {
-					vals, err := flowSummaryTopValues(q, flowSummaryDimDstASN, flowTopFetch)
-					rollup = rollup[:0]
-					for _, v := range vals {
-						// Stored bare so one column serves every dimension.
-						rollup = append(rollup, KeyCount{Key: "AS" + v.Key, Count: v.Count})
-					}
-					return err
-				}, mergeASNs)
-			case useSummary:
-				budget.skip("top_asns")
-			default:
-				runRollup("top_asns", newFilteredRollupBase, func(q *gorm.DB) error {
-					var rows []grow
-					err := q.Where("dst_asn <> 0").
-						Select("dst_asn as k, SUM(bytes_sum) as total").
-						Group("dst_asn").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
-					rollup = rollup[:0]
-					for _, r := range rows {
-						rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
-					}
-					return err
-				}, mergeASNs)
-			}
+			topsJob("top_asns", flowSummaryDimDstASN, func(q *gorm.DB) error {
+				vals, err := flowSummaryTopValues(q, flowSummaryDimDstASN, flowTopFetch)
+				rollup = rollup[:0]
+				for _, v := range vals {
+					// Stored bare so one column serves every dimension.
+					rollup = append(rollup, KeyCount{Key: "AS" + v.Key, Count: v.Count})
+				}
+				return err
+			}, func(q *gorm.DB) error {
+				var rows []grow
+				err := q.Where("dst_asn <> 0").
+					Select("dst_asn as k, SUM(bytes_sum) as total").
+					Group("dst_asn").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
+				rollup = rollup[:0]
+				for _, r := range rows {
+					rollup = append(rollup, KeyCount{Key: fmt.Sprintf("AS%d", r.K), Count: r.Total})
+				}
+				return err
+			}, mergeASNs)
 		}
 	}
 	geoTopCountry()
@@ -1345,25 +1485,17 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	result.TopSources = firstKeyCounts(rawSrc, flowTopDisplay)
 	if useRollups {
 		var rollupSrc []KeyCount
-		if summaryTopsUsable {
-			runRollup("top_sources", newSummaryTopBase, func(q *gorm.DB) error {
-				var err error
-				rollupSrc, err = flowSummaryTopValues(q, flowSummaryDimSrcAddr, flowTopFetch)
-				return err
-			}, func() {
-				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, flowTopDisplay)
-			})
-		} else if useSummary {
-			budget.skip("top_sources")
-		} else {
-			runRollup("top_sources", newFilteredRollupBase, func(q *gorm.DB) error {
-				var err error
-				rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", flowTopFetch)
-				return err
-			}, func() {
-				result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, flowTopDisplay)
-			})
-		}
+		topsJob("top_sources", flowSummaryDimSrcAddr, func(q *gorm.DB) error {
+			var err error
+			rollupSrc, err = flowSummaryTopValues(q, flowSummaryDimSrcAddr, flowTopFetch)
+			return err
+		}, func(q *gorm.DB) error {
+			var err error
+			rollupSrc, err = topAddrsByBytesRollupQ(q, "src_addr", flowTopFetch)
+			return err
+		}, func() {
+			result.TopSources = mergeKeyCounts(rawSrc, rollupSrc, flowTopDisplay)
+		})
 	}
 
 	// Top destinations by bytes (filtered: excludes port-0 local traffic)
@@ -1371,25 +1503,17 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	result.TopDestinations = firstKeyCounts(rawDst, flowTopDisplay)
 	if useRollups {
 		var rollupDst []KeyCount
-		if summaryTopsUsable {
-			runRollup("top_destinations", newSummaryTopBase, func(q *gorm.DB) error {
-				var err error
-				rollupDst, err = flowSummaryTopValues(q, flowSummaryDimDstAddr, flowTopFetch)
-				return err
-			}, func() {
-				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, flowTopDisplay)
-			})
-		} else if useSummary {
-			budget.skip("top_destinations")
-		} else {
-			runRollup("top_destinations", newFilteredRollupBase, func(q *gorm.DB) error {
-				var err error
-				rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", flowTopFetch)
-				return err
-			}, func() {
-				result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, flowTopDisplay)
-			})
-		}
+		topsJob("top_destinations", flowSummaryDimDstAddr, func(q *gorm.DB) error {
+			var err error
+			rollupDst, err = flowSummaryTopValues(q, flowSummaryDimDstAddr, flowTopFetch)
+			return err
+		}, func(q *gorm.DB) error {
+			var err error
+			rollupDst, err = topAddrsByBytesRollupQ(q, "dst_addr", flowTopFetch)
+			return err
+		}, func() {
+			result.TopDestinations = mergeKeyCounts(rawDst, rollupDst, flowTopDisplay)
+		})
 	}
 
 	// Top conversations (filtered: excludes port-0 local traffic)
@@ -1438,47 +1562,39 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 				Group("src_addr, dst_addr, dst_port, protocol").
 				Order("bytes DESC").Limit(flowTopFetch).Scan(&rollupConvos).Error
 		}
-		convoBase := newFilteredRollupBase
-		if summaryTopsUsable {
-			convoBase = newSummaryTopBase
-			// The summary packs the tuple into one text column so a single table
-			// can serve every high-cardinality dimension; unpack it back into the
-			// same shape the raw side produces.
-			convoQuery = func(q *gorm.DB) error {
-				var rows []struct {
-					Value   string
-					Bytes   uint64
-					Packets uint64
-				}
-				err := q.Where("dimension = ? AND scope_local = ?", flowSummaryDimConversation, false).
-					Select("value, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets").
-					Group("value").Order("bytes DESC").Order("value ASC").Limit(flowTopFetch).Scan(&rows).Error
-				rollupConvos = rollupConvos[:0]
-				for _, r := range rows {
-					parts := strings.Split(r.Value, "|")
-					if len(parts) != 4 {
-						continue
-					}
-					port, _ := strconv.ParseUint(parts[2], 10, 16)
-					proto, _ := strconv.ParseUint(parts[3], 10, 8)
-					rollupConvos = append(rollupConvos, struct {
-						SrcAddr  string
-						DstAddr  string
-						DstPort  uint16
-						Protocol uint8
-						Bytes    uint64
-						Packets  uint64
-					}{parts[0], parts[1], uint16(port), uint8(proto), r.Bytes, r.Packets})
-				}
-				return err
+		// The summary packs the tuple into one text column so a single table
+		// can serve every high-cardinality dimension; unpack it back into the
+		// same shape the raw side produces.
+		convoSummaryQuery := func(q *gorm.DB) error {
+			var rows []struct {
+				Value   string
+				Bytes   uint64
+				Packets uint64
 			}
-		} else if useSummary {
-			convoBase = nil
+			err := q.Where("dimension = ? AND scope_local = ?", flowSummaryDimConversation, false).
+				Select("value, COALESCE(SUM(bytes_sum),0) as bytes, COALESCE(SUM(packets_sum),0) as packets").
+				Group("value").Order("bytes DESC").Order("value ASC").Limit(flowTopFetch).Scan(&rows).Error
+			rollupConvos = rollupConvos[:0]
+			for _, r := range rows {
+				parts := strings.Split(r.Value, "|")
+				if len(parts) != 4 {
+					continue
+				}
+				port, _ := strconv.ParseUint(parts[2], 10, 16)
+				proto, _ := strconv.ParseUint(parts[3], 10, 8)
+				rollupConvos = append(rollupConvos, struct {
+					SrcAddr  string
+					DstAddr  string
+					DstPort  uint16
+					Protocol uint8
+					Bytes    uint64
+					Packets  uint64
+				}{parts[0], parts[1], uint16(port), uint8(proto), r.Bytes, r.Packets})
+			}
+			return err
 		}
-		if convoBase == nil {
-			budget.skip("top_conversations")
-		} else {
-			runRollup("top_conversations", convoBase, convoQuery, func() {
+		{
+			topsJob("top_conversations", flowSummaryDimConversation, convoSummaryQuery, convoQuery, func() {
 				if len(rollupConvos) == 0 {
 					return
 				}
@@ -1549,37 +1665,30 @@ func (d *Database) flowStats(hours int, filter FlowStatsFilter, run *flowStatsRu
 	if useRollups {
 		var rollupSvc []FlowPortCount
 		mergeServices := func() { result.TopServices = mergePortCounts(rawSvc, rollupSvc, flowTopDisplay) }
-		switch {
-		case summaryTopsUsable:
-			// Buckets written before the service boundary have no rows for this
-			// dimension and simply contribute nothing; the badge above says so.
-			runRollup("top_services", newSummaryTopBase, func(q *gorm.DB) error {
-				vals, err := flowSummaryTopValues(q, flowSummaryDimServicePort, flowTopFetch)
-				rollupSvc = rollupSvc[:0]
-				for _, v := range vals {
-					if n, convErr := strconv.ParseUint(v.Key, 10, 16); convErr == nil {
-						rollupSvc = append(rollupSvc, FlowPortCount{Port: uint16(n), Count: v.Count})
-					}
+		// Buckets written before the service boundary have no rows for this
+		// dimension and simply contribute nothing; the badge above says so.
+		topsJob("top_services", flowSummaryDimServicePort, func(q *gorm.DB) error {
+			vals, err := flowSummaryTopValues(q, flowSummaryDimServicePort, flowTopFetch)
+			rollupSvc = rollupSvc[:0]
+			for _, v := range vals {
+				if n, convErr := strconv.ParseUint(v.Key, 10, 16); convErr == nil {
+					rollupSvc = append(rollupSvc, FlowPortCount{Port: uint16(n), Count: v.Count})
 				}
-				return err
-			}, mergeServices)
-		case useSummary:
-			budget.skip("top_services")
-		default:
-			runRollup("top_services", newFilteredRollupBase, func(q *gorm.DB) error {
-				var rows []struct {
-					Port  uint16
-					Total int64
-				}
-				err := q.Select("service_port as port, SUM(bytes_sum) as total").
-					Where("service_port > 0").Group("service_port").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
-				rollupSvc = rollupSvc[:0]
-				for _, r := range rows {
-					rollupSvc = append(rollupSvc, FlowPortCount{Port: r.Port, Count: r.Total})
-				}
-				return err
-			}, mergeServices)
-		}
+			}
+			return err
+		}, func(q *gorm.DB) error {
+			var rows []struct {
+				Port  uint16
+				Total int64
+			}
+			err := q.Select("service_port as port, SUM(bytes_sum) as total").
+				Where("service_port > 0").Group("service_port").Order("total DESC").Limit(flowTopFetch).Scan(&rows).Error
+			rollupSvc = rollupSvc[:0]
+			for _, r := range rows {
+				rollupSvc = append(rollupSvc, FlowPortCount{Port: r.Port, Count: r.Total})
+			}
+			return err
+		}, mergeServices)
 	}
 
 	// Adaptive time bucketing for bytes over time.
