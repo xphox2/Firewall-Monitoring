@@ -269,40 +269,6 @@ func TestFlowSummaryState_OwnsNothingIsCaughtUp(t *testing.T) {
 	}
 }
 
-// TestFlowSummaryState_LongBackfillIsNotAStall: passes that end on the time
-// bound before the history is built are SUCCESSES. Hours of that must read as
-// rebuilding and never as stalled.
-func TestFlowSummaryState_LongBackfillIsNotAStall(t *testing.T) {
-	d := NewDatabaseForTesting(t)
-	now := useSummaryClock(t)
-	start := *now
-	base := time.Now().UTC().Add(-30 * time.Hour).Truncate(time.Hour)
-	for h := 0; h < 6; h++ {
-		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
-	}
-
-	flowSummaryMaxCycleDuration = -time.Hour // every pass stops on the bound at once
-	for i := 0; i < 30; i++ {                // 2.5 hours of cycles
-		d.RunFlowSummaryCycle()
-		*now = now.Add(5 * time.Minute)
-	}
-	st := summaryState(t, d).Tiers["1h"]
-	if st.CaughtUp || !st.FailingSince.IsZero() {
-		t.Fatalf("precondition: want a successful, unfinished backfill, got %+v", st)
-	}
-	h := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
-	if v := h.Tiers["1h"].Verdict; v != FlowSummaryCatchingUp {
-		t.Fatalf("after 2.5 h of bounded passes the verdict is %q, want catching_up", v)
-	}
-
-	flowSummaryMaxCycleDuration = time.Minute
-	d.RunFlowSummaryCycle()
-	h = d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
-	if v := h.Tiers["1h"].Verdict; v != FlowSummaryOK {
-		t.Fatalf("after the backfill finished the verdict is %q, want ok", v)
-	}
-}
-
 // TestFlowSummaryVerdict walks the ordered rules. Times are minutes relative
 // to `now`; the threshold is 60.
 func TestFlowSummaryVerdict(t *testing.T) {

@@ -24,8 +24,9 @@ type hybridFixture struct {
 	d *Database
 	// newest is the hour of the newest rollup row; hour(n) is n hours before it.
 	newest time.Time
-	// probe owns device 1 (and not device 2).
+	// probe owns device 1 (and not device 2); so does site.
 	probe uint
+	site  uint
 }
 
 func (f hybridFixture) hour(back int) time.Time {
@@ -80,9 +81,12 @@ func newHybridFixture(t *testing.T, d *Database) hybridFixture {
 		t.Fatalf("seed probe: %v", err)
 	}
 	one := probe.ID
-	f.probe = probe.ID
+	f.probe, f.site = probe.ID, site.ID
 	for i, probe := range []*uint{&one, nil} {
 		dev := models.Device{Name: fmt.Sprintf("hybrid-%d", i+1), IPAddress: fmt.Sprintf("192.0.2.%d", 201+i), Vendor: "fortigate", ProbeID: probe}
+		if probe != nil {
+			dev.SiteID = &site.ID
+		}
 		if err := d.Gorm().Create(&dev).Error; err != nil {
 			t.Fatalf("seed device: %v", err)
 		}
@@ -116,6 +120,8 @@ func (f hybridFixture) build(t *testing.T) {
 func useHybridKnobs(t *testing.T) {
 	t.Helper()
 	enabled, tail, chunk, topN := flowHybridEnabled, flowHybridMaxTail, flowSummaryDirtyScanChunk, flowSummaryTopN
+	budget := flowStatsRollupBudget
+	t.Cleanup(func() { flowStatsRollupBudget = budget })
 	clock, frozen := flowStatsNow, time.Now().UTC()
 	flowStatsNow = func() time.Time { return frozen }
 	// And pins the process zone to UTC. SQLite compares timestamps as text,
@@ -654,5 +660,74 @@ func TestFlowHybrid_TopNStaysWithinTheBound(t *testing.T) {
 	// Totals are not a top-N: they stay exact whatever the cut.
 	if live := liveStats(t, d, 24, FlowStatsFilter{}); got.TotalBytes != live.TotalBytes || got.TotalFlows != live.TotalFlows {
 		t.Fatalf("totals differ under a top-N cut: %d/%d against %d/%d", got.TotalBytes, got.TotalFlows, live.TotalBytes, live.TotalFlows)
+	}
+}
+
+// TestFlowHybrid_SiteFilter: a site filter maps to devices by subquery, in
+// every arm. Device 1 belongs to the site, device 2 does not.
+func TestFlowHybrid_SiteFilter(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useHybridKnobs(t)
+	f := newHybridFixture(t, d)
+	one := assertHybridEqualsLive(t, d, 24, FlowStatsFilter{SiteID: f.site}, "24 h, one site")
+	if all := liveStats(t, d, 24, FlowStatsFilter{}); one.TotalBytes == 0 || one.TotalBytes >= all.TotalBytes {
+		t.Fatalf("the site filter selected %d of %d bytes: it does not narrow the window", one.TotalBytes, all.TotalBytes)
+	}
+}
+
+// TestFlowHybrid_NoBudgetNoPlan: when the request's time is already spent the
+// plan is not attempted at all — its probes would run unbounded — and the
+// request is reported as read live, with the reason.
+func TestFlowHybrid_NoBudgetNoPlan(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useHybridKnobs(t)
+	newHybridFixture(t, d)
+	planned := 0
+	flowHybridPlanHook = func() error { planned++; return nil }
+	flowStatsRollupBudget = time.Nanosecond // spent before the rolled-up work starts (zero would mean no limit)
+	got, err := d.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if planned != 0 {
+		t.Fatalf("the plan ran %d time(s) with the budget spent", planned)
+	}
+	if got.ServedFrom != FlowServedLive || got.SummaryBypassReason != flowHybridRefusedProbe {
+		t.Fatalf("served from %q (%q), want live + %q", got.ServedFrom, got.SummaryBypassReason, flowHybridRefusedProbe)
+	}
+	if !got.Degraded {
+		t.Fatal("a request with no time left is not reported as degraded")
+	}
+}
+
+// TestFlowHybrid_SamplingPanelFailureDegrades: the middle's sampling panel is
+// not one of the soft ones. Its failure means the sampling range covers only
+// the edges, and the page says so.
+func TestFlowHybrid_SamplingPanelFailureDegrades(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useHybridKnobs(t)
+	newHybridFixture(t, d)
+	flowStatsJobHook = func(block string) error {
+		if block == "sampling" {
+			return errors.New("canceling statement due to statement timeout")
+		}
+		return nil
+	}
+	got, err := d.GetFlowStats(24, FlowStatsFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ServedFrom != FlowServedHybrid {
+		t.Fatalf("served from %q (%q), want hybrid", got.ServedFrom, got.SummaryBypassReason)
+	}
+	named := false
+	for _, b := range got.DegradedBlocks {
+		named = named || b == "sampling"
+	}
+	if !got.Degraded || !named {
+		t.Fatalf("a failed sampling panel did not degrade the page by name: degraded=%v blocks=%v", got.Degraded, got.DegradedBlocks)
+	}
+	if _, soft := got.PartialReasons["sampling"]; soft {
+		t.Fatal("the sampling panel failed softly; only the unique tiles may")
 	}
 }
