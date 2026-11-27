@@ -463,8 +463,8 @@ func TestGetFlowStats_SaysWhichReadServedIt(t *testing.T) {
 		t.Fatalf("summary window: served_from=%q reason=%q, want summary", from, why)
 	}
 	d.clearSummaryFillMarker("1h")
-	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != FlowBypassSummaryBehind {
-		t.Fatalf("summary behind: served_from=%q reason=%q, want live + %q", from, why, FlowBypassSummaryBehind)
+	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != FlowLiveReasonSummaryBehind {
+		t.Fatalf("summary behind: served_from=%q reason=%q, want live + %q", from, why, FlowLiveReasonSummaryBehind)
 	}
 	if from, why := served(24, FlowStatsFilter{SrcAddr: "10.0.0.1"}); from != FlowServedMaterialized || why != "" {
 		t.Fatalf("address filter: served_from=%q reason=%q, want materialized", from, why)

@@ -142,9 +142,9 @@ const (
 	FlowServedMaterialized = "materialized" // a filtered window, via the scope table
 )
 
-// FlowBypassSummaryBehind is the SummaryBypassReason of a window read live
+// FlowLiveReasonSummaryBehind is the SummaryBypassReason of a window read live
 // because a summary tier has not finished building its history.
-const FlowBypassSummaryBehind = "summary not caught up"
+const FlowLiveReasonSummaryBehind = "summary not caught up"
 
 // GetMixedFlowSourceDevices returns the names of devices whose last hour of
 // flow_samples contains >1 distinct flow_source. Uses the (device_id,

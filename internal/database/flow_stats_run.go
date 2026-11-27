@@ -210,7 +210,7 @@ func (d *Database) GetFlowStatsOpts(hours int, filter FlowStatsFilter, opts Flow
 			default:
 				res.ServedFrom = FlowServedLive
 				if summaryCandidate {
-					res.SummaryBypassReason = FlowBypassSummaryBehind
+					res.SummaryBypassReason = FlowLiveReasonSummaryBehind
 				}
 			}
 		}
