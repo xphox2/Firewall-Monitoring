@@ -17,10 +17,12 @@ import {
   APP_CATEGORY_OPTIONS,
   FLOW_DIRECTIONS,
   FLOW_EXPORT_LIMIT,
+  flowSummaryStatusText,
   isLikelyAddress,
   isValidDstPort,
   type FlowFilters,
   type FlowRange,
+  type FlowSummaryHealth,
 } from '@/lib/flows';
 import { ResponsiveDataView } from '@/components/ui/responsive-data-view';
 import { RefreshButton } from '@/components/ui/refresh-button';
@@ -192,6 +194,15 @@ export function FlowsWorkspace() {
       apiFetch<FlowStats>(`/admin/api/flows/stats?${buildFlowQuery(appliedFilters, hours)}`),
     refetchInterval: 20_000,
   });
+
+  // Whether the pre-aggregate behind the long windows is keeping up. It moves
+  // over minutes to hours, so it is fetched far less often than the stats.
+  const { data: summaryHealth } = useQuery({
+    queryKey: ['flow-summary-status'],
+    queryFn: () => apiFetch<FlowSummaryHealth>('/admin/api/flows/summary/status'),
+    refetchInterval: 300_000,
+  });
+  const summaryStatus = flowSummaryStatusText(summaryHealth);
 
   const setTab = useCallback(
     (tab: FlowsTab) => {
@@ -465,6 +476,15 @@ export function FlowsWorkspace() {
       {isError && (
         <div className="rounded-lg border border-sig-crit/40 bg-sig-crit/10 px-3 py-2 text-xs text-sig-crit-text" role="alert">
           Could not load flow statistics: {error instanceof Error ? error.message : 'request failed'}
+        </div>
+      )}
+
+      {summaryStatus && (
+        <div
+          role="status"
+          className="rounded-lg border border-sig-warn/40 bg-sig-warn/10 px-3 py-2 text-[11px] text-sig-warn-text"
+        >
+          {summaryStatus}
         </div>
       )}
 

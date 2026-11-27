@@ -38,7 +38,7 @@ import (
 // on every page load — that lets operators instantly verify whether
 // their redeploy actually shipped (a browser refresh alone won't update
 // embedded JS/HTML, since they're compiled into this binary).
-const ServerVersion = "0.11.461"
+const ServerVersion = "0.11.462"
 
 // runMigrateCmd implements `fwmon-api migrate` (AUDIT-044): connect, apply any
 // pending migrations, print status, exit non-zero on failure.
@@ -1326,6 +1326,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// adminOnlyRoutes keys on the path for every method.
 		admin.GET("/api/flows/reclassify/status", handler.GetFlowReclassStatus)
 		admin.POST("/api/flows/reclassify", handler.ReapplyFlowClassification)
+		// Whether the flow summary is keeping up (viewer: the Flows page shows it).
+		admin.GET("/api/flows/summary/status", handler.GetFlowSummaryStatus)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)

@@ -339,20 +339,21 @@ func TestFlowSummary_TwoLateDaysCrashMidDirtyWalk(t *testing.T) {
 	seedLate5m(t, d, dayA.Add(14*time.Hour+5*time.Minute))
 	seedLate5m(t, d, dayB.Add(10*time.Hour+5*time.Minute))
 
+	crashed := false
 	flowSummaryBucketHook = func(interval string, b time.Time) error {
 		if interval == "1h" && b.Equal(dayB.Add(10*time.Hour)) {
+			crashed = true
 			panic("synthetic crash after the first write into the acquired span")
 		}
 		return nil
 	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("precondition: the injected crash did not fire")
-			}
-		}()
-		d.RunFlowSummaryCycle()
-	}()
+	// The cycle turns a tier's panic into a failed pass (summariseTierRecovered),
+	// so the crash is observed through the hook, not as a panic out of the cycle.
+	// The tier still dies exactly where the panic is raised.
+	d.RunFlowSummaryCycle()
+	if !crashed {
+		t.Fatal("precondition: the injected crash did not fire")
+	}
 	flowSummaryBucketHook = nil
 	if n := summaryBytesBetween(d, "1d", dayA, dayA.AddDate(0, 0, 1)); n != 0 {
 		t.Fatalf("precondition: day A's daily row (%d bytes) was not superseded by the crashed pass", n)
@@ -436,17 +437,18 @@ func TestFlowSummary_CrashAfterEmptyTierSelfHeal(t *testing.T) {
 	if !d.summaryBackfillComplete() {
 		t.Fatal("precondition: the markers still say the summary is complete")
 	}
+	crashed := false
 	flowSummaryBucketHook = func(interval string, b time.Time) error {
+		crashed = true
 		panic("synthetic crash after the self-heal, before the first write")
 	}
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("precondition: the injected crash did not fire")
-			}
-		}()
-		d.RunFlowSummaryCycle()
-	}()
+	// The cycle turns a tier's panic into a failed pass (summariseTierRecovered),
+	// so the crash is observed through the hook, not as a panic out of the cycle.
+	// The tier still dies exactly where the panic is raised.
+	d.RunFlowSummaryCycle()
+	if !crashed {
+		t.Fatal("precondition: the injected crash did not fire")
+	}
 	flowSummaryBucketHook = nil
 	if d.summaryBackfillComplete() {
 		t.Error("after a crash following the empty-tier self-heal the read path is on over an empty summary")

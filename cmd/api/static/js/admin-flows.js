@@ -113,6 +113,37 @@
         });
     }
 
+    // Flow summary status line: shown when the pre-aggregate behind the long
+    // windows is stalled, failing or rebuilding — the reason a 7-day window
+    // can be slow or partial, which the page could not say before. Hidden
+    // when it is healthy. Loaded with the page, and re-read at most every
+    // five minutes: when the statistics reload, and on a timer of its own —
+    // this page never reloads its statistics unprompted, so without the timer
+    // a tab left open would keep the line it got at page load and never learn
+    // that the summary stalled or the poller stopped reporting.
+    var summaryStatusAt = 0;
+    function refreshSummaryStatus() {
+        // The timer outlives the page (this is a single-page console): only
+        // fetch while the Flows page is the one on screen.
+        var el = document.getElementById('flows-summary-status');
+        if (!el || !el.parentNode || el.parentNode.getClientRects().length === 0) return;
+        if (Date.now() - summaryStatusAt >= 300000) loadSummaryStatus();
+    }
+    function loadSummaryStatus() {
+        var el = document.getElementById('flows-summary-status');
+        var AC = window.AdminCommon;
+        if (!el || !AC || !AC.apiFetch) return;
+        summaryStatusAt = Date.now();
+        AC.apiFetch('/admin/api/flows/summary/status').then(function(result) {
+            var text = AC.flowSummaryStatusText(result && result.data);
+            el.textContent = text;
+            el.hidden = !text;
+        }).catch(function(e) {
+            el.hidden = true;
+            if (window.fwmonLog) fwmonLog.warn('Flows: summary status unavailable', e);
+        });
+    }
+
     // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
@@ -124,6 +155,7 @@
             applyStateToControls();
             reload();
             loadReclassStatus();
+            loadSummaryStatus();
             return;
         }
         inited = true;
@@ -132,6 +164,10 @@
         applyStateToControls();
         reload();
         loadReclassStatus();
+        loadSummaryStatus();
+        if (window.AdminCommon && window.AdminCommon.pollWhenVisible) {
+            window.AdminCommon.pollWhenVisible(refreshSummaryStatus, 300000);
+        }
         // Rebuild the bandwidth uPlot on Day/Night toggle (canvas axes can't
         // be restyled in place) from the cached payload — no refetch.
         if (!themeWired) {
@@ -617,6 +653,7 @@
         var AC = window.AdminCommon;
         if (!AC || !AC.apiFetch) return;
         stopStatsLoad();
+        refreshSummaryStatus();
         var gen = ++statsGen;
         var url = statsURL();
         hideLoadError();

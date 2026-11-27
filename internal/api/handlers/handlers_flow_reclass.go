@@ -109,6 +109,27 @@ func (h *Handler) GetFlowReclassStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(flowReclassViewOf(db)))
 }
 
+// GetFlowSummaryStatus reports whether the flow summary — the pre-aggregate
+// behind the Flows page's long windows — is keeping up, as the poller last
+// judged it. Viewer-level like the reclassification status: verdicts and
+// timestamps, no network detail and no error text.
+//
+// It repeats the stored evaluation and never judges for itself; see
+// database/flow_summary_state.go for why only the poller can.
+func (h *Handler) GetFlowSummaryStatus(c *gin.Context) {
+	db := h.reqDB(c)
+	if db == nil {
+		c.JSON(http.StatusServiceUnavailable, response.Error("Database not available"))
+		return
+	}
+	health, err := db.GetFlowSummaryHealth(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, response.Error("Flow summary status not available"))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(health))
+}
+
 // ReapplyFlowClassification raises the classification revision so the poller
 // re-stamps all stored flow history with the current internal networks. The
 // ingest set is rebuilt BEFORE returning, so no new row is stamped with the

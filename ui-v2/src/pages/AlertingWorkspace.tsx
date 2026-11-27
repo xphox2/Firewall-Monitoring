@@ -355,6 +355,7 @@ const GLOBAL_THRESHOLD_META: Array<{
   { key: 'telemetry_stale_minutes', label: 'Polled Telemetry Stale After', unit: 'minutes', category: 'alerts', group: 'Server & Collector Health' },
   { key: 'server_disk_threshold', label: 'Monitoring Server Disk High', unit: '%', category: 'alerts', group: 'Server & Collector Health' },
   { key: 'server_disk_free_floor_gb', label: 'Server Disk Free Floor', unit: 'GiB', category: 'alerts', group: 'Server & Collector Health' },
+  { key: 'flow_summary_stall_alert_minutes', label: 'Flow Summary Stalled After', unit: 'minutes (0 = off, else 30–1440)', category: 'alerts', group: 'Server & Collector Health' },
   { key: 'spike_stddev_threshold', label: 'Traffic Spike StdDev Multiplier', unit: 'σ (1–10)', category: 'spike', group: 'Bandwidth Spike Detector', step: '0.1' },
   { key: 'spike_min_duration_minutes', label: 'Spike Sustained Duration', unit: 'minutes', category: 'spike', group: 'Bandwidth Spike Detector' },
   { key: 'spike_min_throughput_mbps', label: 'Spike Minimum Throughput Floor', unit: 'Mbps', category: 'spike', group: 'Bandwidth Spike Detector' },

@@ -608,8 +608,10 @@ func defaultCooldownForType(alertType models.AlertType) int {
 	}
 	switch alertType {
 	case models.AlertTypeArchiveLag, models.AlertTypeArchiveNeedsAttention, models.AlertTypeArchiveSealOverdue,
-		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong, models.AlertTypeArchiveGateUnreadable:
-		// Raw archive conditions move over hours and days, evaluated every 5
+		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong, models.AlertTypeArchiveGateUnreadable,
+		models.AlertTypeFlowSummaryStalled:
+		// Raw archive conditions (and a stalled flow summary, which is the
+		// same kind of thing: a background job behind for hours) move over hours and days, evaluated every 5
 		// minutes: a persistent one re-notifies every 6 h, not every tick. The
 		// seeded rules carry it too (the policy-level 5 minutes would
 		// otherwise shadow this).

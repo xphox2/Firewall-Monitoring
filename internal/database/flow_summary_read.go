@@ -97,21 +97,36 @@ func flowSummaryDimensionFiltered(filter FlowStatsFilter) bool {
 // is worse than a right one served slowly, which is the defect this entire
 // programme exists to remove.
 func (d *Database) summaryBackfillComplete() bool {
+	complete, _ := d.summaryBackfillState()
+	return complete
+}
+
+// summaryBackfillState is summaryBackfillComplete with the reason for a
+// "false" kept apart: err is set when a probe failed, in which case the answer
+// is "do not use the summary for this request" and NOT "the summary is
+// behind". The read path only needs the first; the health evaluation must not
+// record the second on the strength of one failed query.
+func (d *Database) summaryBackfillState() (bool, error) {
 	for _, tier := range flowSummaryTiers {
 		_, newest, ok, err := d.tierTimeBounds(tier.rangeSources)
 		if err != nil {
-			return false
+			return false, err
 		}
 		if !ok {
 			continue // this tier has no source data, so nothing to backfill
 		}
 		lastOwned := tier.bucketOf(newest)
-		filled := d.summaryFillMarker(tier.interval)
+		// Read strictly, for the same reason as the probe above: a marker
+		// that could not be read is not a marker that is behind.
+		_, filled, err := d.summaryProgress(tier.interval)
+		if err != nil {
+			return false, err
+		}
 		if filled.IsZero() || filled.Before(lastOwned) {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // flowSummaryTopValues reads one high-cardinality panel: a window's top-N as a

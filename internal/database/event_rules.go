@@ -25,8 +25,9 @@ const (
 	seedVerServerHealth = 6 // the fwmon server's own volumes (SERVER_DISK_HIGH)
 	seedVerArchive      = 7 // the raw archive's alerts (ARCHIVE_*, RETENTION_HELD)
 	seedVerArchiveGate  = 8 // ARCHIVE_GATE_UNREADABLE
+	seedVerFlowSummary  = 9 // FLOW_SUMMARY_STALLED
 
-	eventRuleSeedVersion = seedVerArchiveGate
+	eventRuleSeedVersion = seedVerFlowSummary
 )
 
 // EnsureDefaultRules seeds the default event rules exactly once (guarded by a
@@ -303,6 +304,12 @@ func defaultEventRules() []models.EventRule {
 			AlertType: models.AlertTypeArchiveGateUnreadable, SeedVersion: seedVerArchiveGate,
 			CooldownMinutes: func() *int { v := 360; return &v }(),
 			MatchJSON:       `{"op":"eq","field":"event_type","value":"archive_gate_unreadable"}`},
+		// Gen 9. An explicit 6 h cooldown for the same reason as the rules above.
+		{Name: "Default: Flow summary stalled", Description: "A tier of the flow summary (the pre-aggregate behind the Flows page's 7, 30 and 90 day windows) has had no successful pass for the configured time (Alerting: flow summary stall minutes, default 60). Long windows are then either read live (slow, possibly partial) or served with out-of-date figures. One alert per tier; matchable field: tier (1h, 1d).",
+			Enabled: true, Priority: 200, Source: "device", Action: "alert",
+			AlertType: models.AlertTypeFlowSummaryStalled, SeedVersion: seedVerFlowSummary,
+			CooldownMinutes: func() *int { v := 360; return &v }(),
+			MatchJSON:       `{"op":"eq","field":"event_type","value":"flow_summary_stalled"}`},
 		{Name: "Default: Interface errors", Description: "Interface error/discard delta alert. Add an interface_name condition to mute or re-grade one noisy port.",
 			Enabled: true, Priority: 200, Source: "device", Action: "alert",
 			AlertType: models.AlertTypeInterfaceErrors, SeedVersion: seedVerFullCoverage,

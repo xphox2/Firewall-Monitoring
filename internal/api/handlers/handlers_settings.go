@@ -313,6 +313,9 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 		// The fwmon server's OWN volumes. 0 disables either trigger.
 		"server_disk_threshold":     true,
 		"server_disk_free_floor_gb": true,
+		// FLOW_SUMMARY_STALLED: minutes a summary tier may go without a
+		// successful pass. 0 turns the alert off.
+		"flow_summary_stall_alert_minutes": true,
 		// Per-severity syslog retention. Blank inherits the default; 0 keeps
 		// forever; N is days.
 		"syslog_retention_days_0":       true,
@@ -554,6 +557,18 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 						"%s must be a whole number from 0 to %d (0 turns the alert off; blank uses the default)", s.Key, status.ThresholdMax)))
 					return
 				}
+			}
+		case "flow_summary_stall_alert_minutes":
+			// 0 turns the alert off. The floor is 30, not 1: the summariser
+			// and the check that judges it each run every five minutes, and a
+			// long rollup cycle can hold a summary start back by several more,
+			// so a threshold of a few minutes would fire and clear on every
+			// cycle of a perfectly healthy install.
+			v, err := strconv.Atoi(strings.TrimSpace(s.Value))
+			if err != nil || (v != 0 && (v < 30 || v > 1440)) {
+				c.JSON(http.StatusBadRequest, response.Error(
+					"flow_summary_stall_alert_minutes must be 0 (alert off) or between 30 and 1440"))
+				return
 			}
 		case "server_disk_free_floor_gb":
 			// 0 disables the free-space trigger (the percentage can still fire).

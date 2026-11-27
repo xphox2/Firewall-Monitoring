@@ -22,6 +22,7 @@
         telemetry_stale_minutes: 'alerting-g-telemetry-stale',
         server_disk_threshold: 'alerting-g-server-disk',
         server_disk_free_floor_gb: 'alerting-g-server-disk-floor',
+        flow_summary_stall_alert_minutes: 'alerting-g-flow-summary-stall',
         // Raw archive alerts (internal/archive/status/alerts.go).
         archive_lag_alert_hours_syslog: 'alerting-g-archive-lag-syslog',
         archive_lag_alert_hours_flows: 'alerting-g-archive-lag-flows',
@@ -178,6 +179,7 @@
         pushNum('telemetry_stale_minutes', 'alerts');
         pushNum('server_disk_threshold', 'alerts');
         pushNum('server_disk_free_floor_gb', 'alerts');
+        pushNum('flow_summary_stall_alert_minutes', 'alerts');
         pushNum('archive_lag_alert_hours_syslog', 'alerts');
         pushNum('archive_lag_alert_hours_flows', 'alerts');
         pushNum('archive_lag_alert_hours_counters', 'alerts');
