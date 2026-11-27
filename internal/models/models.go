@@ -21,6 +21,10 @@ const (
 	// SERVER_DISK_HIGH is the fwmon server's OWN volume, not a monitored
 	// device's. DISK_HIGH is keyed on a device id and can never cover it.
 	AlertTypeServerDiskHigh     AlertType = "SERVER_DISK_HIGH"
+	// AlertTypeFlowSummaryStalled: a tier of the flow summary (the pre-aggregate
+	// behind the Flows page's long windows) has had no successful pass for the
+	// configured time. Raised by the server about itself, one per tier.
+	AlertTypeFlowSummaryStalled AlertType = "FLOW_SUMMARY_STALLED"
 	AlertTypeSessionsHigh       AlertType = "SESSIONS_HIGH"
 	AlertTypeDeviceOffline      AlertType = "DEVICE_OFFLINE"
 	AlertTypeInterfaceDown      AlertType = "INTERFACE_DOWN"

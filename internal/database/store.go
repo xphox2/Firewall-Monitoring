@@ -392,6 +392,7 @@ type TelemetryReadStore interface {
 	MarkFlowReclassRearm() error
 	BumpFlowReclassTargetRev() (uint16, error)
 	GetFlowSummaryRecomputeStatus() FlowSummaryRecomputeStatus
+	GetFlowSummaryHealth(ctx context.Context) (FlowSummaryHealth, error)
 	GetLatestInterfaceStats() ([]models.InterfaceStats, error)
 	GetLatestProcessorStats(deviceID uint) ([]models.ProcessorStats, error)
 	GetLatestSDWANHealth(deviceID uint) ([]models.SDWANHealth, error)

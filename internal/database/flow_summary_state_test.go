@@ -1,0 +1,472 @@
+package database
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"firewall-mon/internal/models"
+
+	"gorm.io/gorm"
+)
+
+// The flow summary's health record, its verdict, and the strict progress
+// reads that came with it. Fixtures hold 5m rows only (see
+// flow_summary_dirty_scan_test.go), so the daily tier owns nothing.
+
+// useSummaryClock gives the health record a clock the test moves, and puts
+// every hook this file touches back afterwards.
+func useSummaryClock(t *testing.T) *time.Time {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Second)
+	origNow, origWrite, origBound := flowSummaryNow, flowSummaryStateWrite, flowSummaryMaxCycleDuration
+	flowSummaryNow = func() time.Time { return now }
+	t.Cleanup(func() {
+		flowSummaryNow, flowSummaryStateWrite, flowSummaryMaxCycleDuration = origNow, origWrite, origBound
+		flowSummarySettingsHook = nil
+		flowSummaryDirtyHook = nil
+		flowSummaryBucketHook = nil
+	})
+	return &now
+}
+
+func summaryState(t *testing.T, d *Database) *FlowSummaryState {
+	t.Helper()
+	st, present, err := d.flowSummaryState(context.Background())
+	if err != nil || !present {
+		t.Fatalf("health record: present=%v err=%v", present, err)
+	}
+	return st
+}
+
+func settingKeyIn(keys []string, want string) bool {
+	for _, k := range keys {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFlowSummary_ProgressReadFailureDoesNothing: a pass that cannot READ its
+// watermark must leave it alone. Reading the failure as 0 took the first-pass
+// arm — no dirty walk, watermark moved to the newest id — so the changed
+// bucket here would never be rebuilt.
+func TestFlowSummary_ProgressReadFailureDoesNothing(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useSummaryClock(t)
+	base, watermark := builtSummary(t, d, 4)
+	seedSummaryHour(t, d, base, 2, 900, "10.0.0.9") // changes bucket 2
+
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, flowSummaryWatermarkKeyPrefix+"1h") {
+			return errors.New("connection reset")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	if got := d.summaryWatermark("1h"); got != watermark {
+		t.Fatalf("watermark moved from %d to %d on a pass that could not read it", watermark, got)
+	}
+	if want, got := summaryBucketBytes(d, base.Add(2*time.Hour)); got == want {
+		t.Fatal("precondition: the changed bucket was rebuilt by a pass that should have done nothing")
+	}
+	if st := summaryState(t, d).Tiers["1h"]; st == nil || st.LastErrorClass != flowSummaryErrSettings || st.FailingSince.IsZero() {
+		t.Fatalf("the failed read was not recorded as a settings failure: %+v", st)
+	}
+
+	flowSummarySettingsHook = nil
+	d.RunFlowSummaryCycle()
+	assertBucketsAgree(t, d, base, 4, "after the read recovered")
+	if got := d.summaryWatermark("1h"); got <= watermark {
+		t.Fatalf("watermark still %d after a clean pass", got)
+	}
+}
+
+// TestFlowSummary_UnparseableWatermarkIsAnError: garbage in the watermark is
+// not zero. A blank fill marker IS zero — the summariser stores "" itself when
+// it restarts a backfill — and the next pass must simply rebuild.
+func TestFlowSummary_UnparseableWatermarkIsAnError(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useSummaryClock(t)
+	base, _ := builtSummary(t, d, 4)
+
+	d.clearSummaryFillMarker("1h")
+	if _, filled, err := d.summaryProgress("1h"); err != nil || !filled.IsZero() {
+		t.Fatalf("blank fill marker: filled=%v err=%v, want zero and no error", filled, err)
+	}
+	d.RunFlowSummaryCycle()
+	if st := summaryState(t, d).Tiers["1h"]; st.LastErrorClass != "" || !st.CaughtUp {
+		t.Fatalf("a blank marker failed or stalled the pass: %+v", st)
+	}
+	assertBucketsAgree(t, d, base, 4, "after a marker reset")
+
+	if err := d.UpsertSetting(&models.SystemSetting{Key: flowSummaryWatermarkKeyPrefix + "1h", Value: "12x", Category: "system", Type: "number"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := d.summaryProgress("1h"); !errors.Is(err, errSummarySettings) {
+		t.Fatalf("watermark \"12x\": err = %v, want a settings error", err)
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{Key: flowSummaryFillKeyPrefix + "1h", Value: "yesterday", Category: "system", Type: "string"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertSetting(&models.SystemSetting{Key: flowSummaryWatermarkKeyPrefix + "1h", Value: "12", Category: "system", Type: "number"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := d.summaryProgress("1h"); !errors.Is(err, errSummarySettings) {
+		t.Fatalf("fill marker \"yesterday\": err = %v, want a settings error", err)
+	}
+}
+
+// TestFlowSummary_UnreadableStampFailsTheScan: a source row whose timestamp
+// cannot be read must fail the dirty scan. Skipping it lets the watermark pass
+// a row whose bucket was never marked.
+func TestFlowSummary_UnreadableStampFailsTheScan(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	base := time.Now().UTC().Add(-10 * time.Hour).Truncate(time.Hour)
+	seedSummaryHour(t, d, base, 0, 100, "10.0.0.1")
+	seedSummaryHour(t, d, base, 1, 100, "10.0.0.1")
+	top := maxRollupID(t, d)
+	if err := d.Gorm().Exec("UPDATE flow_rollups SET timestamp = 'not a time' WHERE id = ?", top).Error; err != nil {
+		t.Fatal(err)
+	}
+	stamps, err := dirtyChunkStamps(d.db.Session(&gorm.Session{}), []string{"5m"}, 0, top)
+	if err == nil {
+		t.Fatalf("scan returned %d stamp(s) and no error for an unreadable timestamp", len(stamps))
+	}
+}
+
+// TestFlowSummaryState_RecordsOutcomes: failing_since marks the START of a run
+// of failures, the class is recorded and the error text is not, and a success
+// clears it.
+func TestFlowSummaryState_RecordsOutcomes(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	builtSummary(t, d, 3)
+
+	flowSummaryDirtyHook = func(interval string) error {
+		if interval == "1h" {
+			return errors.New("SELECT secret_column FROM somewhere")
+		}
+		return nil
+	}
+	*now = now.Add(5 * time.Minute) // the last good pass is behind us
+	first := *now
+	for i := 0; i < 3; i++ {
+		d.RunFlowSummaryCycle()
+		*now = now.Add(5 * time.Minute)
+	}
+	st := summaryState(t, d).Tiers["1h"]
+	if !st.FailingSince.Equal(first) {
+		t.Fatalf("failing_since = %v, want the first failure %v", st.FailingSince, first)
+	}
+	if st.ConsecutiveFailures != 3 || st.LastErrorClass != flowSummaryErrQuery {
+		t.Fatalf("failures = %d class = %q, want 3 and %q", st.ConsecutiveFailures, st.LastErrorClass, flowSummaryErrQuery)
+	}
+	if !st.LastOKAt.Before(first) {
+		t.Fatalf("last_ok_at %v moved during the failures (first at %v)", st.LastOKAt, first)
+	}
+	if raw, _ := d.GetSettingValue(FlowSummaryStateKey); strings.Contains(raw, "secret_column") {
+		t.Fatalf("the record repeats the error text: %s", raw)
+	}
+
+	flowSummaryDirtyHook = nil
+	d.RunFlowSummaryCycle()
+	st = summaryState(t, d).Tiers["1h"]
+	if !st.FailingSince.IsZero() || st.ConsecutiveFailures != 0 || !st.LastOKAt.Equal(*now) {
+		t.Fatalf("a success did not clear the failure: %+v (now %v)", st, *now)
+	}
+}
+
+// TestFlowSummaryState_WriteFailureDoesNotStopThePass: the record describes
+// the summariser; it must never be why the summariser did less.
+func TestFlowSummaryState_WriteFailureDoesNotStopThePass(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useSummaryClock(t)
+	base, watermark := builtSummary(t, d, 4)
+	seedSummaryHour(t, d, base, 1, 700, "10.0.0.7")
+
+	writes := 0
+	flowSummaryStateWrite = func(*Database, string) error {
+		writes++
+		return errors.New("disk full")
+	}
+	d.RunFlowSummaryCycle()
+	if writes == 0 {
+		t.Fatal("precondition: the record was never written")
+	}
+	assertBucketsAgree(t, d, base, 4, "with the health record unwritable")
+	if got := d.summaryWatermark("1h"); got <= watermark {
+		t.Fatalf("watermark stayed at %d", got)
+	}
+}
+
+// TestFlowSummaryState_PanicIsAFailedPass: a tier that panics is recorded as
+// failing and the other tier still runs. Without the recover the cycle ended
+// at the panic, nothing was recorded, and the tier kept its last good record.
+func TestFlowSummaryState_PanicIsAFailedPass(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useSummaryClock(t)
+	base, _ := builtSummary(t, d, 3)
+	seedSummaryHour(t, d, base, 1, 300, "10.0.0.3")
+
+	flowSummaryBucketHook = func(interval string, _ time.Time) error {
+		if interval == "1h" {
+			panic("nil map")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle() // must not panic out of the cycle
+	st := summaryState(t, d)
+	if h := st.Tiers["1h"]; h == nil || h.LastErrorClass != flowSummaryErrPanic || h.FailingSince.IsZero() {
+		t.Fatalf("hourly tier after a panic: %+v", h)
+	}
+	if day := st.Tiers["1d"]; day == nil || day.LastPassAt.IsZero() || !day.FailingSince.IsZero() {
+		t.Fatalf("daily tier did not complete its own pass: %+v", day)
+	}
+}
+
+// TestFlowSummaryState_OwnsNothingIsCaughtUp: a tier with nothing to build is
+// not "rebuilding". Both shapes: no rollups at all, and (the daily tier here)
+// rollups it does not own.
+func TestFlowSummaryState_OwnsNothingIsCaughtUp(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	start := now.Add(-time.Minute)
+
+	d.RunFlowSummaryCycle()
+	for _, iv := range []string{"1h", "1d"} {
+		if ts := summaryState(t, d).Tiers[iv]; ts == nil || !ts.CaughtUp {
+			t.Fatalf("no rollups: %s tier caught_up = %+v", iv, ts)
+		}
+	}
+	h := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
+	for iv, th := range h.Tiers {
+		if th.Verdict != FlowSummaryOK {
+			t.Fatalf("no rollups: %s verdict = %q, want ok", iv, th.Verdict)
+		}
+	}
+
+	builtSummary(t, d, 3)
+	if ts := summaryState(t, d).Tiers["1d"]; !ts.CaughtUp {
+		t.Fatalf("5m rows only: the daily tier reads as not caught up: %+v", ts)
+	}
+	h = d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
+	if v := h.Tiers["1d"].Verdict; v != FlowSummaryOK {
+		t.Fatalf("5m rows only: daily verdict = %q, want ok", v)
+	}
+}
+
+// TestFlowSummaryState_LongBackfillIsNotAStall: passes that end on the time
+// bound before the history is built are SUCCESSES. Hours of that must read as
+// rebuilding and never as stalled.
+func TestFlowSummaryState_LongBackfillIsNotAStall(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	start := *now
+	base := time.Now().UTC().Add(-30 * time.Hour).Truncate(time.Hour)
+	for h := 0; h < 6; h++ {
+		seedSummaryHour(t, d, base, h, 100, "10.0.0.1")
+	}
+
+	flowSummaryMaxCycleDuration = 0 // every pass stops on the bound at once
+	for i := 0; i < 30; i++ {       // 2.5 hours of cycles
+		d.RunFlowSummaryCycle()
+		*now = now.Add(5 * time.Minute)
+	}
+	st := summaryState(t, d).Tiers["1h"]
+	if st.CaughtUp || !st.FailingSince.IsZero() {
+		t.Fatalf("precondition: want a successful, unfinished backfill, got %+v", st)
+	}
+	h := d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
+	if v := h.Tiers["1h"].Verdict; v != FlowSummaryCatchingUp {
+		t.Fatalf("after 2.5 h of bounded passes the verdict is %q, want catching_up", v)
+	}
+
+	flowSummaryMaxCycleDuration = time.Minute
+	d.RunFlowSummaryCycle()
+	h = d.EvaluateFlowSummaryHealth(context.Background(), *now, 60, start)
+	if v := h.Tiers["1h"].Verdict; v != FlowSummaryOK {
+		t.Fatalf("after the backfill finished the verdict is %q, want ok", v)
+	}
+}
+
+// TestFlowSummaryVerdict walks the ordered rules. Times are minutes relative
+// to `now`; the threshold is 60.
+func TestFlowSummaryVerdict(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	ago := func(min int) time.Time { return now.Add(-time.Duration(min) * time.Minute) }
+	var never time.Time
+	tier := func(lastPass, lastOK, failingSince time.Time, caughtUp bool) *FlowSummaryTierState {
+		return &FlowSummaryTierState{LastPassAt: lastPass, LastOKAt: lastOK, FailingSince: failingSince, CaughtUp: caughtUp}
+	}
+	state := func(cycleAt time.Time, hourly *FlowSummaryTierState) *FlowSummaryState {
+		st := &FlowSummaryState{CycleProgressAt: cycleAt, Tiers: map[string]*FlowSummaryTierState{}}
+		if hourly != nil {
+			st.Tiers["1h"] = hourly
+		}
+		return st
+	}
+	longUp := ago(600) // the poller has been running for ten hours
+
+	cases := []struct {
+		name    string
+		st      *FlowSummaryState
+		start   time.Time
+		rollups bool
+		want    string
+	}{
+		{"healthy between cycles", state(ago(4), tier(ago(4), ago(4), never, true)), longUp, true, FlowSummaryOK},
+		// The pass has been running 20 minutes; the tier's own record is 20
+		// minutes old and says caught up. A routine pass is not a rebuild.
+		{"pass in flight on a caught-up tier", state(ago(1), tier(ago(20), ago(20), never, true)), longUp, true, FlowSummaryOK},
+		{"single failure", state(ago(2), tier(ago(2), ago(7), ago(2), true)), longUp, true, FlowSummaryFailing},
+		// One poison bucket: every pass fails, and every pass is busy.
+		{"failing every pass with fresh progress", state(ago(1), tier(ago(1), ago(90), ago(85), true)), longUp, true, FlowSummaryStalled},
+		{"hung pass", state(ago(75), tier(ago(80), ago(80), never, true)), longUp, true, FlowSummaryStalled},
+		// The hourly tier has been walking a backlog for 90 minutes; the daily
+		// tier (judged here as "1h" for brevity) finished at the cycle's start
+		// and has done nothing since. The cycle is alive, so it is not stalled.
+		{"idle tier while the other walks", state(ago(1), tier(ago(90), ago(90), never, true)), longUp, true, FlowSummaryOK},
+		{"never ran, rollups, before the threshold", nil, ago(30), true, FlowSummaryUnknown},
+		{"never ran, rollups, after the threshold", nil, ago(61), true, FlowSummaryStalled},
+		{"never ran, no rollups", nil, longUp, false, FlowSummaryUnknown},
+		// The record says ok, but it was written before this process started.
+		{"record older than the process", state(ago(300), tier(ago(300), ago(300), never, true)), ago(1), true, FlowSummaryUnknown},
+		// Down for five hours with a failing tier: no page at boot.
+		{"failing before a restart", state(ago(300), tier(ago(300), ago(400), ago(390), true)), ago(1), true, FlowSummaryUnknown},
+		{"failing through a restart, an hour on", state(ago(2), tier(ago(2), ago(400), ago(390), true)), ago(61), true, FlowSummaryStalled},
+		{"rebuilding", state(ago(2), tier(ago(2), ago(2), never, false)), longUp, true, FlowSummaryCatchingUp},
+		{"no pass recorded for the tier", state(ago(2), nil), longUp, true, FlowSummaryUnknown},
+	}
+	for _, c := range cases {
+		if got := flowSummaryVerdict(c.st, "1h", now, time.Hour, c.start, c.rollups); got != c.want {
+			t.Errorf("%s: verdict = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// TestFlowSummaryHealth_Evaluation: an unreadable record is "unknown" for
+// every tier; a threshold of 0 (alerting off) still judges, against the
+// default; and what the poller stores is what a reader gets back, marked stale
+// once it is old.
+func TestFlowSummaryHealth_Evaluation(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	ctx := context.Background()
+	start := now.Add(-10 * time.Hour)
+	builtSummary(t, d, 3)
+
+	for _, minutes := range []int{60, 0} {
+		h := d.EvaluateFlowSummaryHealth(ctx, *now, minutes, start)
+		if v := h.Tiers["1h"].Verdict; v != FlowSummaryOK {
+			t.Fatalf("threshold %d, healthy: verdict = %q, want ok", minutes, v)
+		}
+	}
+
+	// Fail the hourly tier for two hours.
+	flowSummaryDirtyHook = func(interval string) error {
+		if interval == "1h" {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	for i := 0; i < 25; i++ {
+		*now = now.Add(5 * time.Minute)
+		d.RunFlowSummaryCycle()
+	}
+	for _, minutes := range []int{60, 0} {
+		h := d.EvaluateFlowSummaryHealth(ctx, *now, minutes, start)
+		if v := h.Tiers["1h"].Verdict; v != FlowSummaryStalled {
+			t.Fatalf("threshold %d, failing two hours: verdict = %q, want stalled", minutes, v)
+		}
+		if th := h.Tiers["1h"]; th.LastErrorClass != flowSummaryErrQuery || th.LastOKAt.IsZero() {
+			t.Fatalf("the evaluation lacks what the banner needs: %+v", th)
+		}
+	}
+
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, FlowSummaryStateKey) {
+			return errors.New("connection reset")
+		}
+		return nil
+	}
+	h := d.EvaluateFlowSummaryHealth(ctx, *now, 60, start)
+	for iv, th := range h.Tiers {
+		if th.Verdict != FlowSummaryUnknown {
+			t.Fatalf("unreadable record: %s verdict = %q, want unknown", iv, th.Verdict)
+		}
+	}
+	flowSummarySettingsHook = nil
+
+	stalled := d.EvaluateFlowSummaryHealth(ctx, *now, 60, start)
+	if err := d.SaveFlowSummaryHealth(ctx, stalled); err != nil {
+		t.Fatal(err)
+	}
+	// The reader repeats the stored verdict even when a fresh evaluation
+	// would differ: repair the tier, do not re-store.
+	flowSummaryDirtyHook = nil
+	d.RunFlowSummaryCycle()
+	got, err := d.GetFlowSummaryHealth(ctx)
+	if err != nil || got.Stale || got.Tiers["1h"].Verdict != FlowSummaryStalled {
+		t.Fatalf("stored evaluation: stale=%v verdict=%q err=%v, want the stored stalled verdict", got.Stale, got.Tiers["1h"].Verdict, err)
+	}
+	*now = now.Add(16 * time.Minute)
+	if got, _ = d.GetFlowSummaryHealth(ctx); !got.Stale {
+		t.Fatal("an evaluation 16 minutes old is not marked stale")
+	}
+}
+
+// TestFlowSummaryHealth_NothingStored: before the poller's first evaluation a
+// reader gets "unknown" for every tier, not an error and not stale.
+func TestFlowSummaryHealth_NothingStored(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	h, err := d.GetFlowSummaryHealth(context.Background())
+	if err != nil || h.Stale || len(h.Tiers) != len(flowSummaryTiers) {
+		t.Fatalf("nothing stored: %+v err=%v", h, err)
+	}
+	for iv, th := range h.Tiers {
+		if th.Verdict != FlowSummaryUnknown {
+			t.Fatalf("%s verdict = %q, want unknown", iv, th.Verdict)
+		}
+	}
+}
+
+// TestGetFlowStats_SaysWhichReadServedIt covers every value of ServedFrom and
+// the bypass reason.
+func TestGetFlowStats_SaysWhichReadServedIt(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	useSummaryClock(t)
+	builtSummary(t, d, 4)
+	origMin := flowSummaryMinHours
+	t.Cleanup(func() { flowSummaryMinHours = origMin })
+
+	served := func(hours int, f FlowStatsFilter) (string, string) {
+		t.Helper()
+		res, err := d.GetFlowStats(hours, f)
+		if err != nil {
+			t.Fatalf("GetFlowStats(%d): %v", hours, err)
+		}
+		return res.ServedFrom, res.SummaryBypassReason
+	}
+	if from, why := served(1, FlowStatsFilter{}); from != FlowServedRaw || why != "" {
+		t.Fatalf("1 h: served_from=%q reason=%q, want raw", from, why)
+	}
+	// Below the summary's minimum: live, and the summary was never a candidate.
+	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != "" {
+		t.Fatalf("24 h: served_from=%q reason=%q, want live with no reason", from, why)
+	}
+	flowSummaryMinHours = 1
+	if from, why := served(24, FlowStatsFilter{}); from != FlowServedSummary || why != "" {
+		t.Fatalf("summary window: served_from=%q reason=%q, want summary", from, why)
+	}
+	d.clearSummaryFillMarker("1h")
+	if from, why := served(24, FlowStatsFilter{}); from != FlowServedLive || why != FlowBypassSummaryBehind {
+		t.Fatalf("summary behind: served_from=%q reason=%q, want live + %q", from, why, FlowBypassSummaryBehind)
+	}
+	if from, why := served(24, FlowStatsFilter{SrcAddr: "10.0.0.1"}); from != FlowServedMaterialized || why != "" {
+		t.Fatalf("address filter: served_from=%q reason=%q, want materialized", from, why)
+	}
+}

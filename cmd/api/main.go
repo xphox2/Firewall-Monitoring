@@ -1326,6 +1326,8 @@ func setupRoutes(router *gin.Engine, cfg *config.Config, handler *handlers.Handl
 		// adminOnlyRoutes keys on the path for every method.
 		admin.GET("/api/flows/reclassify/status", handler.GetFlowReclassStatus)
 		admin.POST("/api/flows/reclassify", handler.ReapplyFlowClassification)
+		// Whether the flow summary is keeping up (viewer: the Flows page shows it).
+		admin.GET("/api/flows/summary/status", handler.GetFlowSummaryStatus)
 		admin.GET("/api/flows/detections", handler.GetFlowDetections)
 		admin.POST("/api/flows/detections/:id/ack", handler.AckFlowDetection)
 		admin.GET("/api/noc/stream", handler.GetNOCStream)

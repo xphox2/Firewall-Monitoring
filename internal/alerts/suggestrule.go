@@ -431,7 +431,7 @@ func ruleSourceForAlertType(at models.AlertType) string {
 	case models.AlertTypeDeviceOffline, models.AlertTypeTelemetryStale, models.AlertTypeInterfaceErrors,
 		models.AlertTypeConfigChange, models.AlertTypeSSHHostKeyChanged,
 		models.AlertTypeProbeDataLag, models.AlertTypeProbeDataTruncated,
-		models.AlertTypeServerDiskHigh,
+		models.AlertTypeServerDiskHigh, models.AlertTypeFlowSummaryStalled,
 		models.AlertTypeArchiveLag, models.AlertTypeArchiveNeedsAttention, models.AlertTypeArchiveSealOverdue,
 		models.AlertTypeRetentionHeld, models.AlertTypeArchiveUnsettledLong, models.AlertTypeArchiveGateUnreadable:
 		return "device"

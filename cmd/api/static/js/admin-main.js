@@ -72,7 +72,7 @@
     // Alert types raised by the Firewall-Mon server about itself (device 0):
     // its own disk volumes and its raw archive. Their rows carry no device.
     var SERVER_ALERT_TYPES = {
-        SERVER_DISK_HIGH: true, ARCHIVE_LAG: true, ARCHIVE_NEEDS_ATTENTION: true,
+        SERVER_DISK_HIGH: true, FLOW_SUMMARY_STALLED: true, ARCHIVE_LAG: true, ARCHIVE_NEEDS_ATTENTION: true,
         ARCHIVE_SEAL_OVERDUE: true, RETENTION_HELD: true, ARCHIVE_UNSETTLED_LONG: true, ARCHIVE_GATE_UNREADABLE: true
     };
 

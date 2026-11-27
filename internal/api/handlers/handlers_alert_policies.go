@@ -440,12 +440,15 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 		// The fwmon server's own volumes; see serverhealth.
 		"server_disk_threshold":     85,
 		"server_disk_free_floor_gb": 5,
+		// FLOW_SUMMARY_STALLED; the poller's default (cmd/poller/flowsummaryalerts.go).
+		"flow_summary_stall_alert_minutes": database.FlowSummaryDefaultStallMinutes,
 	}
 	keys := []string{
 		"cpu_threshold", "memory_threshold", "disk_threshold", "session_threshold",
 		"spike_alert_enabled", "spike_stddev_threshold", "spike_min_duration_minutes",
 		"spike_min_throughput_mbps", "telemetry_stale_minutes",
 		"server_disk_threshold", "server_disk_free_floor_gb",
+		"flow_summary_stall_alert_minutes",
 	}
 	// The raw archive's alert thresholds (archive/status), integers. Named
 	// here (not ranged over status.ThresholdDefaults) so the alerting-page
@@ -470,7 +473,7 @@ func (h *Handler) alertGlobalDefaults(db database.Store) gin.H {
 				g[s.Key] = v
 			}
 		case "session_threshold", "spike_min_duration_minutes", "telemetry_stale_minutes",
-			"server_disk_free_floor_gb":
+			"server_disk_free_floor_gb", "flow_summary_stall_alert_minutes":
 			if v, err := strconv.Atoi(s.Value); err == nil {
 				g[s.Key] = v
 			}

@@ -113,6 +113,24 @@
         });
     }
 
+    // Flow summary status line: shown when the pre-aggregate behind the long
+    // windows is stalled, failing or rebuilding — the reason a 7-day window
+    // can be slow or partial, which the page could not say before. Hidden
+    // when it is healthy. Once per page visit, like the line above.
+    function loadSummaryStatus() {
+        var el = document.getElementById('flows-summary-status');
+        var AC = window.AdminCommon;
+        if (!el || !AC || !AC.apiFetch) return;
+        AC.apiFetch('/admin/api/flows/summary/status').then(function(result) {
+            var text = AC.flowSummaryStatusText(result && result.data);
+            el.textContent = text;
+            el.hidden = !text;
+        }).catch(function(e) {
+            el.hidden = true;
+            if (window.fwmonLog) fwmonLog.warn('Flows: summary status unavailable', e);
+        });
+    }
+
     // ----------------------------------------------------------------------
     // Boot
     // ----------------------------------------------------------------------
@@ -124,6 +142,7 @@
             applyStateToControls();
             reload();
             loadReclassStatus();
+            loadSummaryStatus();
             return;
         }
         inited = true;
@@ -132,6 +151,7 @@
         applyStateToControls();
         reload();
         loadReclassStatus();
+        loadSummaryStatus();
         // Rebuild the bandwidth uPlot on Day/Night toggle (canvas axes can't
         // be restyled in place) from the cached payload — no refetch.
         if (!themeWired) {

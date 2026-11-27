@@ -735,6 +735,46 @@
         }
     }
 
+    // flowSummaryStatusText describes the flow summary's health for the Flows
+    // page status line; '' when there is nothing to say (every tier healthy,
+    // or not judged yet). v is GET /admin/api/flows/summary/status.
+    //
+    // The worst tier speaks: stalled, then failing, then rebuilding. "Read
+    // live" is only claimed for a tier that is not caught up — a tier can fail
+    // every pass on one bucket while the rest of the summary is still served.
+    function flowSummaryStatusText(v) {
+        if (!v || !v.tiers) return '';
+        function when(ts) {
+            var d = ts ? new Date(ts) : null;
+            return d && !isNaN(d.getTime()) && d.getFullYear() > 2000 ? d.toLocaleString() : '';
+        }
+        if (v.stale) {
+            var seen = when(v.evaluated_at);
+            return 'Flow summary status has not been reported' + (seen ? ' since ' + seen : '') +
+                ' — the poller may be stopped. Long ranges may be slow or incomplete.';
+        }
+        var names = { '1h': 'hourly', '1d': 'daily' };
+        var rank = { stalled: 3, failing: 2, catching_up: 1 };
+        var worst = null, worstName = '';
+        Object.keys(names).forEach(function(k) {
+            var t = v.tiers[k];
+            if (t && rank[t.verdict] && (!worst || rank[t.verdict] > rank[worst.verdict])) { worst = t; worstName = names[k]; }
+        });
+        if (!worst) return '';
+        var live = worst.caught_up ? '' : ' Long ranges are read live meanwhile and may be slow or incomplete.';
+        var ok = when(worst.last_ok_at);
+        switch (worst.verdict) {
+            case 'stalled':
+                return 'The ' + worstName + ' flow summary has not updated' + (ok ? ' since ' + ok : '') + '.' + live + ' See the poller log.';
+            case 'failing':
+                return 'The ' + worstName + ' flow summary failed its last update' + (ok ? ' (last good ' + ok + ')' : '') + '; retrying.' + live;
+            default: {
+                var through = when(worst.filled_to);
+                return 'The ' + worstName + ' flow summary is rebuilding' + (through ? ' (built through ' + through + ')' : '') + '.' + live;
+            }
+        }
+    }
+
     function purgeProgressText(job) {
         if (!job) return '';
         var parts = [formatNum(job.rows_deleted || 0) + ' rows removed'];
@@ -2392,6 +2432,7 @@
         purgeJobActive: purgeJobActive,
         purgeProgressText: purgeProgressText,
         flowReclassText: flowReclassText,
+        flowSummaryStatusText: flowSummaryStatusText,
         apiFetch: apiFetch,
         doLogout: doLogout,
         delegateEvent: delegateEvent,

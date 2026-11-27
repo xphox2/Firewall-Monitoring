@@ -273,3 +273,68 @@ export function exportFlowsCsv(rows: Array<Record<string, unknown>>): string {
   }
   return lines.join('\r\n');
 }
+
+/** GET /admin/api/flows/summary/status — the poller's last judgement of the flow summary. */
+export interface FlowSummaryTierHealth {
+  verdict: 'ok' | 'failing' | 'catching_up' | 'stalled' | 'unknown';
+  last_ok_at?: string;
+  failing_since?: string;
+  caught_up?: boolean;
+  filled_to?: string;
+  owned_to?: string;
+  last_error_class?: string;
+}
+
+export interface FlowSummaryHealth {
+  evaluated_at?: string;
+  stale?: boolean;
+  tiers?: Record<string, FlowSummaryTierHealth>;
+}
+
+function summaryWhen(ts?: string): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return !Number.isNaN(d.getTime()) && d.getFullYear() > 2000 ? d.toLocaleString() : '';
+}
+
+/**
+ * One line describing the flow summary's health, or '' when there is nothing
+ * to say (every tier healthy, or not judged yet). The worst tier speaks:
+ * stalled, then failing, then rebuilding. "Read live" is only claimed for a
+ * tier that is not caught up — a tier can fail every pass on one bucket while
+ * the rest of the summary is still served. Mirrors AC.flowSummaryStatusText in
+ * the classic console.
+ */
+export function flowSummaryStatusText(v?: FlowSummaryHealth | null): string {
+  if (!v || !v.tiers) return '';
+  if (v.stale) {
+    const seen = summaryWhen(v.evaluated_at);
+    return `Flow summary status has not been reported${seen ? ` since ${seen}` : ''} — the poller may be stopped. Long ranges may be slow or incomplete.`;
+  }
+  const names: Record<string, string> = { '1h': 'hourly', '1d': 'daily' };
+  const rank: Record<string, number> = { stalled: 3, failing: 2, catching_up: 1 };
+  let worst: FlowSummaryTierHealth | null = null;
+  let worstName = '';
+  for (const key of Object.keys(names)) {
+    const t = v.tiers[key];
+    if (t && rank[t.verdict] && (!worst || rank[t.verdict] > rank[worst.verdict])) {
+      worst = t;
+      worstName = names[key];
+    }
+  }
+  if (!worst) return '';
+  const live = worst.caught_up
+    ? ''
+    : ' Long ranges are read live meanwhile and may be slow or incomplete.';
+  const ok = summaryWhen(worst.last_ok_at);
+  switch (worst.verdict) {
+    case 'stalled':
+      return `The ${worstName} flow summary has not updated${ok ? ` since ${ok}` : ''}.${live} See the poller log.`;
+    case 'failing':
+      return `The ${worstName} flow summary failed its last update${ok ? ` (last good ${ok})` : ''}; retrying.${live}`;
+    default: {
+      const through = summaryWhen(worst.filled_to);
+      return `The ${worstName} flow summary is rebuilding${through ? ` (built through ${through})` : ''}.${live}`;
+    }
+  }
+}

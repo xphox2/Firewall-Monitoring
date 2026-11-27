@@ -89,6 +89,9 @@ func (p *Poller) checkServerHealth() {
 	// The raw archive's alerts ride the same tick (archivealerts.go), after
 	// this tick's metrics sample is recorded.
 	defer p.checkArchiveAlerts(vols, dataOK)
+	// So does the flow summary's (flowsummaryalerts.go). Deferred for the same
+	// reason: the early return below must not skip it.
+	defer p.checkFlowSummaryHealth()
 	if len(vols) == 0 {
 		log.Printf("server health: no volume could be probed; the server is UNMONITORED")
 		return

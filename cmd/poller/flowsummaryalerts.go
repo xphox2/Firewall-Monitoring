@@ -1,0 +1,131 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
+	"firewall-mon/internal/alerts"
+	"firewall-mon/internal/database"
+	"firewall-mon/internal/models"
+)
+
+// The flow summary's health: evaluated here, on the server-health tick, stored
+// for the API (the Flows page banner) and turned into FLOW_SUMMARY_STALLED.
+//
+// WHY the poller evaluates and the API only repeats it: a verdict depends on
+// when THIS process started. A record written before a restart says nothing
+// about whether the summariser works now — treating it as current would
+// resolve an open alert at boot on the strength of an old "ok", or page at
+// boot for the hours the poller was down. The API is another binary and has
+// no idea when the poller started. (database/flow_summary_state.go has the
+// rules.)
+
+// FlowSummaryStallMinutesKey is the alert threshold: minutes a tier may go
+// without a successful pass. 0 turns the alert off — the banner still works.
+const FlowSummaryStallMinutesKey = "flow_summary_stall_alert_minutes"
+
+// flowSummaryProcessStart is when this poller started; flowSummaryAlertClock
+// is the tick's clock. Variables so tests can set both.
+var (
+	flowSummaryProcessStart = time.Now()
+	flowSummaryAlertClock   = time.Now
+)
+
+// flowSummaryTierNames are the summary's tiers and how an alert names them.
+var flowSummaryTierNames = []struct{ interval, name string }{
+	{"1h", "hourly"},
+	{"1d", "daily"},
+}
+
+// checkFlowSummaryHealth evaluates, stores and alerts.
+func (p *Poller) checkFlowSummaryHealth() {
+	if p.db == nil || p.alertManager == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	now := flowSummaryAlertClock()
+
+	// Read strictly: a failed read must not be taken for "0, alerting off",
+	// which would resolve an open alert.
+	minutes, readErr := flowSummaryStallMinutes(ctx, p.db)
+	if readErr != nil {
+		log.Printf("flow summary health: read the threshold: %v (alerts left as they are)", readErr)
+	}
+
+	// The verdict is computed whatever the threshold says (0 uses the default).
+	h := p.db.EvaluateFlowSummaryHealth(ctx, now, minutes, flowSummaryProcessStart)
+	if err := p.db.SaveFlowSummaryHealth(ctx, h); err != nil {
+		log.Printf("flow summary health: store the evaluation: %v", err)
+	}
+	if readErr != nil {
+		return
+	}
+	p.alertManager.CheckServerConditions(flowSummaryConditions(h, minutes))
+}
+
+// flowSummaryStallMinutes reads the threshold; absent means the default.
+func flowSummaryStallMinutes(ctx context.Context, db *database.Database) (int, error) {
+	vals, err := db.SettingValues(ctx, []string{FlowSummaryStallMinutesKey})
+	if err != nil {
+		return 0, err
+	}
+	raw := strings.TrimSpace(vals[FlowSummaryStallMinutesKey])
+	if raw == "" {
+		return database.FlowSummaryDefaultStallMinutes, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s = %q is not a number of minutes", FlowSummaryStallMinutesKey, raw)
+	}
+	return n, nil
+}
+
+// flowSummaryConditions turns verdicts into conditions, one per tier.
+//
+// A verdict that cannot say either way produces NO condition, so the alert is
+// neither fired nor resolved: "unknown" (the record is unreadable, or no cycle
+// has run since this process started) and "failing" (the last pass failed, but
+// not for long enough yet) both leave an open alert open.
+func flowSummaryConditions(h database.FlowSummaryHealth, minutes int) []alerts.ServerCondition {
+	var out []alerts.ServerCondition
+	for _, t := range flowSummaryTierNames {
+		th, ok := h.Tiers[t.interval]
+		if !ok {
+			continue
+		}
+		c := alerts.ServerCondition{
+			Type:     models.AlertTypeFlowSummaryStalled,
+			Key:      "flow_summary_stalled_" + t.interval,
+			Metric:   "flow_summary_" + t.interval,
+			Fields:   map[string]string{"tier": t.interval},
+			Recovery: fmt.Sprintf("The %s flow summary is updating again.", t.name),
+		}
+		switch {
+		case minutes <= 0:
+			// Alerting is off: resolve whatever is open.
+		case th.Verdict == database.FlowSummaryStalled:
+			c.Breached = true
+			since := "since the poller started"
+			if !th.LastOKAt.IsZero() {
+				since = "since " + th.LastOKAt.UTC().Format("2006-01-02 15:04 UTC")
+			}
+			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). "+
+				"Long windows on the Flows page are read live meanwhile: slow, and possibly partial. "+
+				"See the poller log for \"Flow summary:\" lines.", t.name, since, minutes)
+			if th.LastErrorClass != "" {
+				c.Fields["error_class"] = th.LastErrorClass
+			}
+		case th.Verdict == database.FlowSummaryOK, th.Verdict == database.FlowSummaryCatchingUp:
+			// Healthy, or rebuilding with passes succeeding: resolve.
+		default:
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
