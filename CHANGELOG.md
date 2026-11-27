@@ -1,6 +1,53 @@
 # Changelog
 All notable changes to this project are documented in this file.
 
+## [0.11.461] - 2026-11-26
+
+### Fixed — The Flows page could not load 7-day, 30-day or 90-day windows
+
+- Long Flows windows are served from the flow summary tables. The summary
+  finds what changed since its last pass by reading the `flow_rollups` ids
+  above a stored watermark, and it did that in **one statement** whose cost
+  grew with how far behind it was. A statement that hit the 30 s
+  `statement_timeout` left the watermark where it was, so the next pass
+  issued a larger one: one slow pass became a permanent failure.
+- On a production install this happened on 2026-10-25, when a database
+  backend was killed, the cache came back cold and the midnight promotion
+  added a day of rows. The hourly tier then failed every five minutes for a
+  month (`Flow summary: 1h tier: dirty buckets: … SQLSTATE 57014`), its scan
+  range grew to 245 million ids over a 50 GB table, its rows were superseded
+  day by day until none were left, and every window above 48 hours fell back
+  to a live scan that the 20 s budget cuts off.
+- The scan is now issued in fixed-width id pieces (250,000 ids; measured at
+  0.16 s cold on that table), merged and sorted in Go. No statement's cost
+  depends on the backlog any more, so a slow pass can no longer make the
+  next one impossible, and a tier that is already stalled catches up by
+  itself after the upgrade. The walk over the changed buckets is unchanged:
+  it still runs to completion and the watermark still advances once, after
+  it.
+- `docs/OPERATIONS.md` (Failure modes) describes the symptom. Do not edit
+  the `flow_summary_*` settings by hand.
+
+### Security
+
+- `go.mod`'s `go` directive moves from 1.26.10 to 1.26.11 for GO-2026-6859
+  (`net/http`), and the OpenTelemetry modules from 1.45.0 to 1.47.0 for
+  GO-2026-6974 and GO-2026-6975. All three were published after 0.11.460
+  and were reported by the `govulncheck` gate as reachable from this code.
+
+### Tests
+
+- `flow_summary_dirty_scan_test.go`: the scan covers `(watermark, ceiling]`
+  exactly in pieces no wider than the chunk; each changed bucket is
+  recomputed once however many pieces its rows span; a failing piece fails
+  the scan and holds the watermark; a query error is returned, not read as
+  "no rows"; the default width stays within the measured range; and a tier
+  in the stalled production state recovers unaided. Each was checked
+  against the mutation it exists to catch.
+- `TestFlowSummaryIntegration_ChunkedDirtyScan` runs the same scan on
+  PostgreSQL, and `TestFlowSummaryDirtyScanIsBoundedPerStatement` is a
+  static guard against reassembling the single statement.
+
 ## [0.11.460] - 2026-10-27
 
 ### Fixed — An emptied revealed credential turned back into a password box

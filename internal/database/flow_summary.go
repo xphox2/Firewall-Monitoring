@@ -3,6 +3,7 @@ package database
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +78,36 @@ var flowSummaryFloorProbeHook func() error
 // flowSummaryDirtyHook is a test-only injection point that fails a tier's
 // dirty-bucket scan.
 var flowSummaryDirtyHook func(interval string) error
+
+// flowSummaryDirtyChunkHook is a test-only injection point called before each
+// statement of a tier's dirty-bucket scan with that statement's id range
+// (lo, hi]. Either tier may scan in a cycle, the daily one first, so it carries
+// the interval.
+var flowSummaryDirtyChunkHook func(interval string, lo, hi int64) error
+
+// flowSummaryDirtyScanChunkDefault is how many ids one statement of the
+// dirty-bucket scan may cover.
+//
+// The bound is the point, not the number. The scan used to be ONE statement
+// over (watermark, ceiling], so its cost grew with how far the tier was behind
+// — and a statement that timed out left the watermark where it was, so the
+// next cycle issued a larger one. On production, 2026-10-25: a backend was
+// OOM-killed, the cache came back cold, the midnight promotion added a day of
+// rows, and the hourly tier's scan crossed the 30s statement_timeout once. It
+// then failed every five minutes for a month, the range growing to 245M ids
+// (a parallel sequential scan of a 50 GB table), while the daily tier
+// superseded the hourly rows day by day until none were left and every long
+// Flows window fell back to the live path it cannot finish.
+//
+// Measured on that table, cold: a 250k-id range is a primary-key range scan of
+// 0.16s and a 1M-id range 0.20s (the id space is about 2.8x the row count; a
+// dense stretch costs several times that). 250k keeps a wide margin under the
+// timeout on a slower disk. Do not raise it past 1,000,000 without measuring.
+const flowSummaryDirtyScanChunkDefault int64 = 250_000
+
+// flowSummaryDirtyScanChunk is the width in use; a var so tests can make a
+// handful of rows span many statements. Zero or negative means the default.
+var flowSummaryDirtyScanChunk = flowSummaryDirtyScanChunkDefault
 
 // flowSummaryBucketHook is a test-only injection point (see summariseBucket).
 var flowSummaryBucketHook func(interval string, bucket time.Time) error
@@ -466,10 +497,12 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	//
 	// Be honest about the remaining cost: a PERMANENTLY failing bucket is retried
 	// every cycle, everything after it is recomputed every cycle up to the time
-	// bound, and firstErr pins the watermark so the dirty scan keeps widening.
-	// That is a deliberate trade — loud and degrading beats silent and wrong —
-	// but it is not free, and an operator seeing this log line repeatedly should
-	// act on it.
+	// bound, and firstErr pins the watermark so the dirty scan's RANGE keeps
+	// widening. Each of its statements does not (see
+	// flowSummaryDirtyScanChunkDefault), so the scan gets longer, never
+	// impossible. That is a deliberate trade — loud and degrading beats silent
+	// and wrong — but it is not free, and an operator seeing this log line
+	// repeatedly should act on it.
 	// run summarises one bucket. wrote is false for a bucket that had nothing to
 	// do (no source rows and no stale summary rows), which the backfill walks
 	// do not count against the per-tier cap.
@@ -620,6 +653,11 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 	// After an outage it is larger — and it still has to be done, because those
 	// buckets are genuinely stale. The pass holds its own advisory lock, so a
 	// long walk delays nothing but itself.
+	//
+	// What must NOT grow with the backlog is any single statement: finding the
+	// list is a scan of the ids since the watermark, issued in fixed-width
+	// pieces (dirtyBuckets). As one statement it timed out once, could never
+	// advance the watermark afterwards, and stalled this tier for a month.
 	//
 	// Detection reads EVERY tier this bucket sums, not just the range sources:
 	// late data replayed into the 1h tier must redirty a day the daily tier owns,
@@ -812,39 +850,89 @@ func (d *Database) summariseTier(tier flowSummaryTier, deadline time.Time) (int,
 }
 
 // dirtyBuckets lists the buckets touched by rows newer than the watermark and
-// not newer than this pass's id ceiling. Rows above the ceiling arrived after
-// the ownership snapshot was taken and may describe a ladder the snapshot has
-// not seen (a promotion that has just moved a day between tiers); they are
-// next pass's work, and the watermark stops at the ceiling so they are not
-// lost.
+// not newer than this pass's id ceiling, oldest first. Rows above the ceiling
+// arrived after the ownership snapshot was taken and may describe a ladder the
+// snapshot has not seen (a promotion that has just moved a day between tiers);
+// they are next pass's work, and the watermark stops at the ceiling so they
+// are not lost.
+//
+// The range is read in pieces of flowSummaryDirtyScanChunk ids, each a
+// primary-key range scan whose cost is set by the piece and not by how far
+// behind the tier is (see flowSummaryDirtyScanChunkDefault for the incident).
+// Any piece failing fails the whole scan: a partial list would let the caller
+// advance the watermark past ids nobody looked at.
+//
+// One statement was one snapshot; this is many. A row at or below the ceiling
+// that promotion deletes before its piece is read therefore no longer marks its
+// bucket. That window already existed between reading the ceiling and running
+// the scan; it is now as long as the scan (minutes, on a tier far behind).
+// Correctness does not rest on it: promotion writes the replacement rows in
+// the same transaction with higher ids, so what they touch is dirty on the
+// next pass, and which tier owns a bucket is decided by the ownership probes,
+// not here.
 func (d *Database) dirtyBuckets(tier flowSummaryTier, watermark, ceiling int64) ([]time.Time, error) {
 	if flowSummaryDirtyHook != nil {
 		if err := flowSummaryDirtyHook(tier.interval); err != nil {
 			return nil, err
 		}
 	}
-	var stamps []time.Time
-	rows, err := d.db.Session(&gorm.Session{}).Model(&models.FlowRollup{}).
-		Where("interval_type IN ? AND id > ? AND id <= ?", tier.sumSources, watermark, ceiling).
-		Select("DISTINCT timestamp").Order("timestamp ASC").Rows()
+	chunk := flowSummaryDirtyScanChunk
+	if chunk <= 0 {
+		chunk = flowSummaryDirtyScanChunkDefault
+	}
+	// ONE seen-set across every piece, keyed on the bucket: an hour's rows are
+	// spread over many pieces (twelve 5m stamps, then its 1h row days later),
+	// and each bucket is recomputed from live rows, so once is enough.
+	seen := map[time.Time]bool{}
+	var buckets []time.Time
+	for lo := watermark; lo < ceiling; {
+		// Written as a subtraction so the last piece cannot overflow.
+		hi := ceiling
+		if ceiling-lo > chunk {
+			hi = lo + chunk
+		}
+		if flowSummaryDirtyChunkHook != nil {
+			if err := flowSummaryDirtyChunkHook(tier.interval, lo, hi); err != nil {
+				return nil, err
+			}
+		}
+		stamps, err := dirtyChunkStamps(d.db.Session(&gorm.Session{}), tier.sumSources, lo, hi)
+		if err != nil {
+			return nil, fmt.Errorf("ids %d-%d: %w", lo, hi, err)
+		}
+		for _, ts := range stamps {
+			if b := tier.bucketOf(ts); !seen[b] {
+				seen[b] = true
+				buckets = append(buckets, b)
+			}
+		}
+		lo = hi
+	}
+	// The pieces arrive in id order, which is not time order (a replayed spool
+	// has new ids and old stamps). The walk has always gone oldest first.
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i].Before(buckets[j]) })
+	return buckets, nil
+}
+
+// dirtyChunkStamps returns the distinct timestamps of the source rows with an
+// id in (lo, hi]. It is the only statement of the dirty scan, and its id range
+// is always one piece — never a tier's whole backlog.
+func dirtyChunkStamps(h *gorm.DB, sources []string, lo, hi int64) ([]time.Time, error) {
+	rows, err := h.Model(&models.FlowRollup{}).
+		Where("interval_type IN ? AND id > ? AND id <= ?", sources, lo, hi).
+		Select("DISTINCT timestamp").Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	seen := map[time.Time]bool{}
+	var stamps []time.Time
 	for rows.Next() {
 		var raw any
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		ts, ok := coerceDBTime(raw)
-		if !ok {
-			continue
-		}
-		b := tier.bucketOf(ts)
-		if !seen[b] {
-			seen[b] = true
-			stamps = append(stamps, b)
+		if ts, ok := coerceDBTime(raw); ok {
+			stamps = append(stamps, ts)
 		}
 	}
 	return stamps, rows.Err()
