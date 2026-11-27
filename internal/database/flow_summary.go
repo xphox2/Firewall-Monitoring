@@ -1032,6 +1032,11 @@ func dirtyChunkStamps(h *gorm.DB, sources []string, lo, hi int64) ([]time.Time, 
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
+		if raw == nil {
+			// A row with no timestamp belongs to no bucket, so there is
+			// nothing to mark and nothing lost by passing it.
+			continue
+		}
 		ts, ok := coerceDBTime(raw)
 		if !ok {
 			// Dropping it would let the caller advance the watermark past a

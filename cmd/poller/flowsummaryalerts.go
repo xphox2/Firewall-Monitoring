@@ -130,11 +130,14 @@ func flowSummaryConditions(h database.FlowSummaryHealth, minutes int, processSta
 			}
 			// What a reader of the Flows page gets is a property of the whole
 			// summary, not of this tier (see FlowSummaryHealth.LongWindowsLive).
-			effect := "Long windows on the Flows page still use the summary, with figures that may be out of date."
-			if h.LongWindowsLive {
-				effect = "Long windows on the Flows page are read live meanwhile: slow, and possibly partial."
+			// Unknown (the probe failed) says nothing rather than guess.
+			effect := ""
+			if h.LongWindowsLive != nil && *h.LongWindowsLive {
+				effect = "Long windows on the Flows page are read live meanwhile: slow, and possibly partial. "
+			} else if h.LongWindowsLive != nil {
+				effect = "Long windows on the Flows page still use the summary, with figures that may be out of date. "
 			}
-			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). %s "+
+			c.Message = fmt.Sprintf("The %s flow summary has had no successful update %s (threshold %d minutes). %s"+
 				"See the poller log for \"Flow summary:\" lines.", name, since, minutes, effect)
 			if th.LastErrorClass != "" {
 				c.Message += " Last failure: " + th.LastErrorClass + "."

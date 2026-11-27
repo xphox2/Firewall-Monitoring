@@ -41,7 +41,7 @@ const (
 // Verdicts, in the order flowSummaryVerdict decides them.
 const (
 	FlowSummaryUnknown    = "unknown"     // cannot be judged: neither alert nor all-clear
-	FlowSummaryStalled    = "stalled"     // no successful pass for the threshold
+	FlowSummaryStalled    = "stalled"     // failing for the threshold, or no cycle alive for it
 	FlowSummaryFailing    = "failing"     // the latest pass failed, more recently than that
 	FlowSummaryCatchingUp = "catching_up" // passes succeed; history is still being built
 	FlowSummaryOK         = "ok"
@@ -122,33 +122,49 @@ type summaryReporter struct {
 	d         *Database
 	state     FlowSummaryState
 	lastWrite time.Time
+	// loaded is false until the previous record has been read. Nothing is
+	// written before that (see load).
+	loaded bool
 }
 
-// newSummaryReporter loads the previous record and stamps the cycle's start.
-// If the previous record cannot be READ the cycle records nothing: writing a
-// fresh one would erase last_ok_at, and with it the evidence of how long a
-// tier has been failing. A record that was read but does not PARSE is
-// different — it will never parse, so it is replaced; left alone it would make
-// every verdict "unknown" for good.
+// newSummaryReporter starts the cycle's record: load the previous one and
+// stamp the cycle's start.
 func (d *Database) newSummaryReporter() *summaryReporter {
-	st, present, err := d.flowSummaryState(context.Background())
+	r := &summaryReporter{d: d}
+	if r.load() {
+		r.write(flowSummaryNow())
+	}
+	return r
+}
+
+// load reads the previous record, once. While it cannot be READ, nothing is
+// written: a fresh record would erase last_ok_at, and with it the evidence of
+// how long a tier has been failing. It is tried again on every later call, so
+// one failed read at the start of an hour-long pass does not leave the whole
+// pass looking dead. A record that was read but does not PARSE is different —
+// it never will, so it is replaced; left alone it would make every verdict
+// "unknown" for good.
+func (r *summaryReporter) load() bool {
+	if r.loaded {
+		return true
+	}
+	st, present, err := r.d.flowSummaryState(context.Background())
 	if err != nil && !present {
-		log.Printf("Flow summary: health record unreadable, not updated this cycle: %v", err)
-		return nil
+		log.Printf("Flow summary: health record unreadable, not updated yet: %v", err)
+		return false
 	}
 	if err != nil {
 		log.Printf("Flow summary: health record corrupt, starting a new one: %v", err)
 		st = nil
 	}
-	r := &summaryReporter{d: d}
 	if st != nil {
 		r.state = *st
 	}
 	if r.state.Tiers == nil {
 		r.state.Tiers = map[string]*FlowSummaryTierState{}
 	}
-	r.write(flowSummaryNow())
-	return r
+	r.loaded = true
+	return true
 }
 
 // progress records that the cycle is alive, at most once per
@@ -158,13 +174,18 @@ func (r *summaryReporter) progress() {
 		return
 	}
 	if now := flowSummaryNow(); now.Sub(r.lastWrite) >= flowSummaryProgressEvery {
-		r.write(now)
+		// lastWrite moves even when the load fails, so an unreadable record
+		// is retried at the throttle's pace and not once per bucket.
+		r.lastWrite = now
+		if r.load() {
+			r.write(now)
+		}
 	}
 }
 
 // tierDone records the outcome of one tier's pass.
 func (r *summaryReporter) tierDone(interval string, b tierBounds, err error) {
-	if r == nil {
+	if r == nil || !r.load() {
 		return
 	}
 	now := flowSummaryNow().UTC()
@@ -197,7 +218,7 @@ func (r *summaryReporter) tierDone(interval string, b tierBounds, err error) {
 }
 
 func (r *summaryReporter) flush() {
-	if r != nil {
+	if r != nil && r.load() {
 		r.write(flowSummaryNow())
 	}
 }
@@ -271,11 +292,13 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	}
 	failing := tier != nil && !tier.FailingSince.IsZero()
 
-	// 1. The latest pass failed and there has been no success for the
-	// threshold. Progress does NOT excuse this: a pass that fails still walks
-	// its other buckets, so a tier with one poison bucket is busy every cycle
-	// and broken every cycle.
-	if failing && now.Sub(laterOf(tier.LastOKAt, processStart)) >= threshold {
+	// 1. The latest pass — one made by THIS process — failed, and there has
+	// been no success for the threshold. Progress does NOT excuse this: a pass
+	// that fails still walks its other buckets, so a tier with one poison
+	// bucket is busy every cycle and broken every cycle. A failure recorded
+	// before a restart is not evidence about this process (rule 4 still shows
+	// it as failing).
+	if failing && tier.LastPassAt.After(processStart) && now.Sub(laterOf(tier.LastOKAt, processStart)) >= threshold {
 		return FlowSummaryStalled
 	}
 	// 2. No cycle has run in this process yet. The record is from before the
@@ -294,12 +317,17 @@ func flowSummaryVerdict(st *FlowSummaryState, interval string, now time.Time, th
 	if failing {
 		return FlowSummaryFailing
 	}
-	// 5. No pass has completed for this tier IN THIS PROCESS. Rule 2 is not
-	// enough on its own: a cycle that has merely started stamps
-	// cycle_progress_at, and if it then hangs the tier's record is still the
-	// "ok" from before the restart — which would resolve an open alert that
-	// rule 3 is about to raise again.
-	if tier == nil || !tier.LastPassAt.After(processStart) {
+	// 5. The tier's last good pass is not RECENT evidence: it predates this
+	// process, or it is older than the threshold. A cycle that has merely
+	// started stamps cycle_progress_at, so rules 2 and 3 pass while this
+	// tier's record is still an old "ok" — from before a restart, or from
+	// before a hang that rule 3 alerted on. Calling that ok would resolve the
+	// open alert with no pass since; if the pass now under way then failed,
+	// the alert's cooldown would keep it from being raised again for hours.
+	// Unknown neither raises nor resolves. (A tier idle behind the other
+	// tier's hours-long walk lands here too, which is right: nothing has been
+	// learned about it.)
+	if tier == nil || !tier.LastPassAt.After(processStart) || now.Sub(tier.LastPassAt) >= threshold {
 		return FlowSummaryUnknown
 	}
 	// 6. Passes succeed but history is still being built; long windows are
@@ -327,7 +355,10 @@ type FlowSummaryHealth struct {
 	// fails on one bucket is still served — unless the daily tier is behind,
 	// in which case nothing is. Judging "is it read live?" per tier told the
 	// operator the opposite of what the page was doing in exactly that case.
-	LongWindowsLive bool                             `json:"long_windows_live"`
+	//
+	// A pointer: nil when the probe behind it failed, so that one failed
+	// query is not written into an alert as "read live".
+	LongWindowsLive *bool                            `json:"long_windows_live,omitempty"`
 	Tiers           map[string]FlowSummaryTierHealth `json:"tiers"`
 }
 
@@ -355,7 +386,12 @@ func (d *Database) EvaluateFlowSummaryHealth(ctx context.Context, now time.Time,
 	}
 	threshold := time.Duration(thresholdMinutes) * time.Minute
 	h := FlowSummaryHealth{EvaluatedAt: now.UTC(), Tiers: map[string]FlowSummaryTierHealth{}}
-	h.LongWindowsLive = !d.WithContext(ctx).summaryBackfillComplete()
+	if complete, err := d.WithContext(ctx).summaryBackfillState(); err == nil {
+		live := !complete
+		h.LongWindowsLive = &live
+	} else {
+		log.Printf("Flow summary: read-path probe failed: %v", err)
+	}
 
 	st, _, stErr := d.flowSummaryState(ctx)
 	rollupsExist, probeErr := d.flowRollupsExist(ctx)

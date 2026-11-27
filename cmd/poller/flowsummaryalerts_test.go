@@ -214,7 +214,8 @@ func TestCheckServerHealth_RunsTheFlowSummaryCheck(t *testing.T) {
 func TestFlowSummaryConditions_MessageSaysWhatTheReaderGets(t *testing.T) {
 	start := time.Date(2026, 11, 27, 8, 0, 0, 0, time.UTC)
 	lastOK := time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)
-	tiers := func(live bool, hourlyOK time.Time) database.FlowSummaryHealth {
+	yes, no := true, false
+	tiers := func(live *bool, hourlyOK time.Time) database.FlowSummaryHealth {
 		return database.FlowSummaryHealth{LongWindowsLive: live, Tiers: map[string]database.FlowSummaryTierHealth{
 			"1h": {Verdict: database.FlowSummaryStalled, LastOKAt: hourlyOK, CaughtUp: true, LastErrorClass: "timeout"},
 			"1d": {Verdict: database.FlowSummaryCatchingUp, CaughtUp: false},
@@ -235,7 +236,7 @@ func TestFlowSummaryConditions_MessageSaysWhatTheReaderGets(t *testing.T) {
 		return alerts.ServerCondition{}
 	}
 
-	served := hourlyOf(tiers(false, lastOK), 60)
+	served := hourlyOf(tiers(&no, lastOK), 60)
 	if !served.Breached || served.Fields["error_class"] != "timeout" {
 		t.Fatalf("stalled hourly tier: %+v", served)
 	}
@@ -249,20 +250,27 @@ func TestFlowSummaryConditions_MessageSaysWhatTheReaderGets(t *testing.T) {
 	}
 
 	// The same caught-up hourly tier, with the daily tier behind.
-	live := hourlyOf(tiers(true, lastOK), 60)
+	live := hourlyOf(tiers(&yes, lastOK), 60)
 	if !strings.Contains(live.Message, "read live") || strings.Contains(live.Message, "still use the summary") {
 		t.Errorf("with the summary bypassed the message says: %s", live.Message)
 	}
 
 	// Last success before this process started.
-	old := hourlyOf(tiers(false, start.Add(-5*time.Hour)), 60)
+	old := hourlyOf(tiers(&no, start.Add(-5*time.Hour)), 60)
 	for _, want := range []string{"since the poller started at 2026-11-27 08:00 UTC", "(last success 2026-11-27 03:00 UTC)"} {
 		if !strings.Contains(old.Message, want) {
 			t.Errorf("message lacks %q: %s", want, old.Message)
 		}
 	}
 
-	off := hourlyOf(tiers(false, lastOK), 0)
+	// The read-path probe failed: the message does not guess.
+	unsure := hourlyOf(tiers(nil, lastOK), 60)
+	if strings.Contains(unsure.Message, "read live") || strings.Contains(unsure.Message, "still use the summary") ||
+		!strings.Contains(unsure.Message, "(threshold 60 minutes). See the poller log") {
+		t.Errorf("with the read path undetermined the message says: %s", unsure.Message)
+	}
+
+	off := hourlyOf(tiers(&no, lastOK), 0)
 	if off.Breached || !strings.Contains(off.Recovery, "switched off") {
 		t.Errorf("threshold 0: breached=%v recovery=%q", off.Breached, off.Recovery)
 	}

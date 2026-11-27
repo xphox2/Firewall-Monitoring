@@ -762,8 +762,9 @@
             if (t && rank[t.verdict] && (!worst || rank[t.verdict] > rank[worst.verdict])) { worst = t; worstName = names[k]; }
         });
         if (!worst) return '';
-        var live = v.long_windows_live ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
-            : (worst.verdict === 'catching_up' ? '' : ' Long ranges may show out-of-date figures.');
+        // long_windows_live is absent when the server could not tell.
+        var live = v.long_windows_live === true ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
+            : (v.long_windows_live === false && worst.verdict !== 'catching_up' ? ' Long ranges may show out-of-date figures.' : '');
         var ok = when(worst.last_ok_at);
         switch (worst.verdict) {
             case 'stalled':

@@ -334,8 +334,17 @@ func TestFlowSummaryVerdict(t *testing.T) {
 		{"hung pass", state(ago(75), tier(ago(80), ago(80), never, true)), longUp, true, FlowSummaryStalled},
 		// The hourly tier has been walking a backlog for 90 minutes; the daily
 		// tier (judged here as "1h" for brevity) finished at the cycle's start
-		// and has done nothing since. The cycle is alive, so it is not stalled.
-		{"idle tier while the other walks", state(ago(1), tier(ago(90), ago(90), never, true)), longUp, true, FlowSummaryOK},
+		// and has done nothing since. The cycle is alive, so it is not stalled
+		// — and its 90-minute-old "ok" is not evidence that it is fine either.
+		{"idle tier while the other walks", state(ago(1), tier(ago(90), ago(90), never, true)), longUp, true, FlowSummaryUnknown},
+		{"idle tier, the walk still short", state(ago(1), tier(ago(40), ago(40), never, true)), longUp, true, FlowSummaryOK},
+		// A cycle hung for 95 minutes (rule 3 alerted) and has just come back
+		// to life. This tier has not passed since: its old "ok" must not
+		// clear the alert.
+		{"cycle revived, tier not passed since the hang", state(ago(0), tier(ago(95), ago(95), never, true)), longUp, true, FlowSummaryUnknown},
+		// Failing before the restart and not reached since, an hour on: the
+		// failure is not this process's evidence, so it is not yet a stall.
+		{"failing before a restart, not reached for an hour", state(ago(1), tier(ago(300), ago(400), ago(390), true)), ago(61), true, FlowSummaryFailing},
 		{"never ran, rollups, before the threshold", nil, ago(30), true, FlowSummaryUnknown},
 		{"never ran, rollups, after the threshold", nil, ago(61), true, FlowSummaryStalled},
 		{"never ran, no rollups", nil, longUp, false, FlowSummaryUnknown},
@@ -374,8 +383,8 @@ func TestFlowSummaryHealth_Evaluation(t *testing.T) {
 		if v := h.Tiers["1h"].Verdict; v != FlowSummaryOK {
 			t.Fatalf("threshold %d, healthy: verdict = %q, want ok", minutes, v)
 		}
-		if h.LongWindowsLive {
-			t.Fatal("a built summary is reported as read live")
+		if h.LongWindowsLive == nil || *h.LongWindowsLive {
+			t.Fatalf("a built summary is reported as read live or undetermined: %v", h.LongWindowsLive)
 		}
 	}
 
@@ -415,16 +424,19 @@ func TestFlowSummaryHealth_Evaluation(t *testing.T) {
 	flowSummarySettingsHook = nil
 
 	stalled := d.EvaluateFlowSummaryHealth(ctx, *now, 60, start)
-	// The hourly tier fails its dirty scan but its history is built, so the
-	// summary is still what long windows are served from...
-	if stalled.LongWindowsLive {
-		t.Fatal("a stalled but built summary is reported as read live")
+	// In this fixture nothing newer has been rolled up, so the fill marker is
+	// still at the newest bucket and the summary is still what long windows
+	// are served from. (On a live system a failing dirty scan also stops the
+	// backfill, so the marker falls behind within the hour.)
+	if stalled.LongWindowsLive == nil || *stalled.LongWindowsLive {
+		t.Fatalf("a stalled but built summary is reported as read live or undetermined: %v", stalled.LongWindowsLive)
 	}
-	// ...until ANY tier's fill marker falls behind: the read path is
-	// all-or-nothing, whichever tier the alert is about.
+	// Once ANY tier's fill marker is behind, nothing is served from the
+	// summary: the read path is all-or-nothing, whichever tier the alert is
+	// about.
 	d.clearSummaryFillMarker("1h")
-	if !d.EvaluateFlowSummaryHealth(ctx, *now, 60, start).LongWindowsLive {
-		t.Fatal("with a tier's history incomplete, long windows are not reported as read live")
+	if live := d.EvaluateFlowSummaryHealth(ctx, *now, 60, start).LongWindowsLive; live == nil || !*live {
+		t.Fatalf("with a tier's history incomplete, long windows are not reported as read live: %v", live)
 	}
 	if err := d.SaveFlowSummaryHealth(ctx, stalled); err != nil {
 		t.Fatal(err)
@@ -527,5 +539,56 @@ func TestFlowSummaryState_CorruptRecordIsReplaced(t *testing.T) {
 	d.RunFlowSummaryCycle()
 	if after, _ := d.GetSettingValue(FlowSummaryStateKey); after != before {
 		t.Fatal("a cycle that could not read the record overwrote it")
+	}
+}
+
+// TestFlowSummaryState_RecordReadIsRetriedWithinTheCycle: one failed read of
+// the previous record at the START of a cycle must not silence the whole
+// cycle — a long pass would then show no sign of life and read as stalled
+// while it is working. Nothing is written until the read succeeds (a fresh
+// record would erase last_ok_at); after that the cycle records as usual.
+func TestFlowSummaryState_RecordReadIsRetriedWithinTheCycle(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	base, _ := builtSummary(t, d, 3)
+	okBefore := summaryState(t, d).Tiers["1h"].LastOKAt
+	seedSummaryHour(t, d, base, 1, 400, "10.0.0.4")
+	*now = now.Add(5 * time.Minute)
+
+	failed := 0
+	flowSummarySettingsHook = func(keys []string) error {
+		if settingKeyIn(keys, FlowSummaryStateKey) && failed == 0 {
+			failed++
+			return errors.New("connection reset")
+		}
+		return nil
+	}
+	d.RunFlowSummaryCycle()
+	if failed != 1 {
+		t.Fatalf("precondition: the record read failed %d time(s), want 1", failed)
+	}
+	st := summaryState(t, d)
+	if h := st.Tiers["1h"]; !h.LastOKAt.Equal(*now) || !h.LastOKAt.After(okBefore) {
+		t.Fatalf("the cycle recorded nothing after one failed read: last_ok_at %v (before %v, now %v)", h.LastOKAt, okBefore, *now)
+	}
+	if !st.CycleProgressAt.Equal(*now) {
+		t.Fatalf("cycle_progress_at = %v, want %v", st.CycleProgressAt, *now)
+	}
+}
+
+// TestFlowSummaryHealth_ReadPathProbeFailureIsNotReadLive: when the probe
+// behind long_windows_live fails, the evaluation says nothing. Recording
+// "read live" would put one failed query into an alert's text.
+func TestFlowSummaryHealth_ReadPathProbeFailureIsNotReadLive(t *testing.T) {
+	d := NewDatabaseForTesting(t)
+	now := useSummaryClock(t)
+	builtSummary(t, d, 3)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := d.WithContext(ctx).summaryBackfillState(); err == nil {
+		t.Fatal("precondition: the probe did not fail on a cancelled context")
+	}
+	if h := d.EvaluateFlowSummaryHealth(ctx, *now, 60, now.Add(-time.Hour)); h.LongWindowsLive != nil {
+		t.Fatalf("a failed probe was recorded as long_windows_live=%v", *h.LongWindowsLive)
 	}
 }

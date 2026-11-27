@@ -324,11 +324,13 @@ export function flowSummaryStatusText(v?: FlowSummaryHealth | null): string {
     }
   }
   if (!worst) return '';
-  const live = v.long_windows_live
-    ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
-    : worst.verdict === 'catching_up'
-      ? ''
-      : ' Long ranges may show out-of-date figures.';
+  // long_windows_live is absent when the server could not tell.
+  const live =
+    v.long_windows_live === true
+      ? ' Long ranges are read live meanwhile and may be slow or incomplete.'
+      : v.long_windows_live === false && worst.verdict !== 'catching_up'
+        ? ' Long ranges may show out-of-date figures.'
+        : '';
   const ok = summaryWhen(worst.last_ok_at);
   switch (worst.verdict) {
     case 'stalled':

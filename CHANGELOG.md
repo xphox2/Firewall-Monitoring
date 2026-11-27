@@ -21,12 +21,15 @@ All notable changes to this project are documented in this file.
   itself like `SERVER_DISK_HIGH`. Threshold: Alerting → global thresholds →
   "Flow summary stalled after" (`flow_summary_stall_alert_minutes`, default
   60; 0 turns the alert off; otherwise 30–1440). A rebuild never alerts. The
-  alert resolves at the first check after a successful pass. A seeded event rule ("Default:
+  alert resolves at the first check after the tier completes a successful
+  pass — never on an older record. A seeded event rule ("Default:
   Flow summary stalled", 6 h re-notify) lets it be re-graded or scoped by
   `tier`.
 - A restart does not page: time without a success is counted from the
   poller's start at the earliest, and until a tier has completed a pass in
   the new process its alert is neither raised on old evidence nor cleared.
+  (If no summary cycle runs at all for the threshold after the restart, that
+  does alert.)
 - The flow statistics response now says which read produced it
   (`served_from`: `raw`, `live`, `summary` or `materialized`) and, when a
   window the summary could have served was read live instead, why
