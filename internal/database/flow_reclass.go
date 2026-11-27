@@ -150,10 +150,13 @@ type FlowReclassStatus struct {
 
 // FlowReclassDoneRev is the last revision a run completed.
 func (d *Database) FlowReclassDoneRev() uint16 {
-	raw, ok := d.GetSettingValue(FlowReclassDoneRevKey)
-	if !ok {
-		return 0
-	}
+	raw, _ := d.GetSettingValue(FlowReclassDoneRevKey)
+	return parseDoneRev(raw)
+}
+
+// parseDoneRev is the one rule for reading the completed revision: absent,
+// unparseable or out of range means 0 (nothing completed).
+func parseDoneRev(raw string) uint16 {
 	v, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || v < 0 || v > 65535 {
 		return 0

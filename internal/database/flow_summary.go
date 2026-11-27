@@ -221,7 +221,14 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	defer rep.flush()
 	// A reclassification that re-stamped rollups in place asks for its
 	// buckets to be recomputed (flow_summary_recompute.go).
-	d.consumeRecomputeRequest()
+	//
+	// This step and the recompute step at the end run OUTSIDE any tier, so a
+	// panic in either used to end the cycle under the poller's recover with
+	// nothing recorded for any tier — while the cycle's own start stamp kept
+	// saying the summariser was alive. Each is contained: the tiers still run
+	// after a failed request step, and a failed recompute step costs only
+	// that step.
+	summaryStepRecovered("recompute request", d.consumeRecomputeRequest)
 
 	// The daily tier runs FIRST: it establishes the floor the hourly tier is
 	// anchored on (see dailyFloor) and clears any hourly rows left over from
@@ -256,10 +263,23 @@ func (d *Database) RunFlowSummaryCycle() bool {
 	// routine work: run inside the daily tier it would spend the shared
 	// deadline before the hourly backfill, stalling the hourly fill marker and
 	// switching the summary read path off for the whole rebuild.
-	if n := d.runSummaryRecompute(ordered, bounds, deadline, rep); n > 0 {
-		wrote = true
-	}
+	summaryStepRecovered("recompute", func() {
+		if n := d.runSummaryRecompute(ordered, bounds, deadline, rep); n > 0 {
+			wrote = true
+		}
+	})
 	return wrote
+}
+
+// summaryStepRecovered runs one non-tier step of the cycle and turns a panic
+// in it into a log line.
+func summaryStepRecovered(name string, step func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Flow summary: the %s step panicked: %v (the cycle continues)", name, r)
+		}
+	}()
+	step()
 }
 
 // aggregateTimestamp runs a MIN/MAX timestamp aggregate and coerces the result.

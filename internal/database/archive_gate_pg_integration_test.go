@@ -258,8 +258,16 @@ func TestArchiveGate_Syslog_PG(t *testing.T) {
 			if err := d.CleanupOldData(ret); err != nil {
 				t.Fatal(err)
 			}
+			// The cutoffs are computed the way production computes them:
+			// SyslogWindow.Cutoff on the LOCAL calendar (cleanup and the
+			// aggregation both pass time.Now()). Counting the days on the UTC
+			// calendar instead is an hour off whenever a daylight-saving
+			// change falls inside the window, and this then reported the
+			// hour of rows production rightly kept as "expired rows left" —
+			// on any machine not in UTC, for a month after each autumn change.
+			ln := now.Local()
 			if n := gatePGCount(t, d, `SELECT count(*) FROM syslog_messages WHERE ("timestamp" < ? AND severity <= 5) OR ("timestamp" < ? AND severity >= 6)`,
-				now.AddDate(0, 0, -30).Add(-time.Minute), now.AddDate(0, 0, -7).Add(-time.Minute)); n != 0 {
+				SyslogWindow{Days: 30}.Cutoff(ln).Add(-time.Minute), SyslogWindow{Days: 7}.Cutoff(ln).Add(-time.Minute)); n != 0 {
 				t.Fatalf("%d expired rows left after the archive caught up", n)
 			}
 			if partitioned && gatePGLeaves(t, d, "syslog_messages")[cut] {
